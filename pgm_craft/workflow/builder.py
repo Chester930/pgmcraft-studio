@@ -10,6 +10,7 @@ from pgm_craft.workflow.audio_nodes import (
     BeatNetNode,
     LibrosaBeatNode,
     BeatValidationNode,
+    MeasureMapNode,
     KeyChordAnalysisNode,
     ClickSynthesisNode,
     MIDIExportNode
@@ -27,6 +28,7 @@ def build_pgm_workflow_tree():
     │   ├── BeatNetNode
     │   └── LibrosaBeatNode (Fallback)
     ├── BeatValidationNode
+    ├── MeasureMapNode
     ├── KeyChordAnalysisNode
     ├── ClickSynthesisNode
     └── MIDIExportNode
@@ -42,6 +44,7 @@ def build_pgm_workflow_tree():
         DemucsStemNode(),
         beat_tracking_fallback,
         BeatValidationNode(),
+        MeasureMapNode(),
         KeyChordAnalysisNode(),
         ClickSynthesisNode(),
         MIDIExportNode()

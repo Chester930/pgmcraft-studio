@@ -32,6 +32,9 @@ class PGMCraftEngine:
         chords = blackboard.get_val("chord_progression", [])
         stems = blackboard.get_val("stems", {})
         beat_validation = blackboard.get_val("beat_validation", {})
+        measure_map = blackboard.get_val("measure_map", [])
+        measure_map_status = blackboard.get_val("measure_map_status", "UNKNOWN")
+        measure_map_warnings = blackboard.get_val("measure_map_warnings", [])
 
         # Calculate BPM stats & measures
         diffs = np.diff(beats[:, 0]) if beats is not None else np.array([0.5])
@@ -65,8 +68,11 @@ class PGMCraftEngine:
             "min_bpm": round(min_bpm, 1),
             "max_bpm": round(max_bpm, 1),
             "total_beats": len(beats) if beats is not None else 0,
-            "total_measures": downbeat_count if downbeat_count > 0 else (len(beats) // 4 if beats is not None else 0),
+            "total_measures": len(measure_map) if measure_map else (downbeat_count if downbeat_count > 0 else (len(beats) // 4 if beats is not None else 0)),
             "beat_validation": beat_validation,
+            "measure_map_status": measure_map_status,
+            "measure_map_warnings": measure_map_warnings,
+            "measure_map": measure_map,
             "chord_progression": chords,
             "stems": stems,
             "outputs": {

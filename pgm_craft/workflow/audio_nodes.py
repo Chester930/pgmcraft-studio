@@ -246,6 +246,151 @@ class BeatValidationNode(BaseNode):
         }
 
 
+class MeasureMapNode(BaseNode):
+    """將 beat/downbeat 資料整理成允許變動小節長度的 measure map。"""
+    FALLBACK_MEASURE_LENGTH = 4
+
+    def __init__(self):
+        super().__init__("MeasureMapNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beat_validation = blackboard.get_val("beat_validation", {})
+        if beat_validation.get("status") == "FAIL":
+            blackboard.set_val("measure_map_status", "FAIL")
+            blackboard.set_val("measure_map_warnings", ["beat validation 失敗，無法建立 measure map。"])
+            return NodeStatus.FAILURE
+
+        beats = blackboard.get_val("beats")
+        measure_map, status, warnings = self.build_measure_map(beats, beat_validation)
+        blackboard.set_val("measure_map", measure_map)
+        blackboard.set_val("measure_map_status", status)
+        blackboard.set_val("measure_map_warnings", warnings)
+
+        if status == "FAIL":
+            print(f"[BT Node: {self.name}] Measure map failed: {warnings}")
+            return NodeStatus.FAILURE
+
+        if warnings:
+            print(f"[BT Node: {self.name}] Measure map warnings: {warnings}")
+        print(f"[BT Node: {self.name}] Built {len(measure_map)} measures.")
+        return NodeStatus.SUCCESS
+
+    def build_measure_map(self, beats, beat_validation=None):
+        warnings = []
+        beat_rows = self._normalize_beats(beats)
+        if not beat_rows:
+            return [], "FAIL", ["沒有可用 beat，無法建立 measure map。"]
+
+        downbeat_indexes = [index for index, row in enumerate(beat_rows) if row["beat"] == 1]
+        if len(downbeat_indexes) >= 2:
+            measure_map = self._build_from_downbeats(beat_rows, downbeat_indexes)
+            status = "PASS"
+        else:
+            measure_map = self._build_fallback_4beat(beat_rows)
+            status = "WARN"
+            warnings.append("沒有足夠 downbeat 標籤，已使用每 4 拍 fallback 切小節。")
+
+        if beat_validation and beat_validation.get("warnings"):
+            warnings.extend(beat_validation["warnings"])
+
+        return measure_map, status, warnings
+
+    def _normalize_beats(self, beats):
+        if beats is None:
+            return []
+        rows = []
+        for row in np.asarray(beats):
+            if len(row) < 2:
+                continue
+            rows.append({"time": float(row[0]), "beat": int(row[1])})
+        return sorted(rows, key=lambda item: item["time"])
+
+    def _build_from_downbeats(self, beat_rows, downbeat_indexes):
+        common_length = self._common_measure_length(downbeat_indexes)
+        measures = []
+
+        for measure_index, start_index in enumerate(downbeat_indexes):
+            next_index = downbeat_indexes[measure_index + 1] if measure_index + 1 < len(downbeat_indexes) else len(beat_rows)
+            measure_beats = beat_rows[start_index:next_index]
+            if not measure_beats:
+                continue
+
+            beat_count = len(measure_beats)
+            end_time = self._measure_end_time(beat_rows, next_index, measure_beats)
+            is_last_measure = measure_index == len(downbeat_indexes) - 1
+            measures.append(self._measure_entry(
+                measure_number=len(measures) + 1,
+                measure_beats=measure_beats,
+                beat_count=beat_count,
+                end_time=end_time,
+                is_variable_length=beat_count != common_length,
+                is_incomplete=is_last_measure and beat_count < common_length,
+                source="downbeat",
+            ))
+
+        return measures
+
+    def _build_fallback_4beat(self, beat_rows):
+        measures = []
+        for start_index in range(0, len(beat_rows), self.FALLBACK_MEASURE_LENGTH):
+            measure_beats = beat_rows[start_index:start_index + self.FALLBACK_MEASURE_LENGTH]
+            if not measure_beats:
+                continue
+
+            next_index = start_index + len(measure_beats)
+            beat_count = len(measure_beats)
+            measures.append(self._measure_entry(
+                measure_number=len(measures) + 1,
+                measure_beats=measure_beats,
+                beat_count=beat_count,
+                end_time=self._measure_end_time(beat_rows, next_index, measure_beats),
+                is_variable_length=beat_count != self.FALLBACK_MEASURE_LENGTH,
+                is_incomplete=beat_count < self.FALLBACK_MEASURE_LENGTH,
+                source="fallback_4beat",
+            ))
+        return measures
+
+    def _measure_entry(self, measure_number, measure_beats, beat_count, end_time, is_variable_length, is_incomplete, source):
+        return {
+            "measure": measure_number,
+            "start_time": round(float(measure_beats[0]["time"]), 6),
+            "end_time": round(float(end_time), 6),
+            "beat_count": beat_count,
+            "beats": [
+                {"beat": index + 1, "time": round(float(row["time"]), 6)}
+                for index, row in enumerate(measure_beats)
+            ],
+            "is_variable_length": bool(is_variable_length),
+            "is_incomplete": bool(is_incomplete),
+            "source": source,
+        }
+
+    def _common_measure_length(self, downbeat_indexes):
+        lengths = [
+            downbeat_indexes[index + 1] - downbeat_indexes[index]
+            for index in range(len(downbeat_indexes) - 1)
+        ]
+        if not lengths:
+            return self.FALLBACK_MEASURE_LENGTH
+        values, counts = np.unique(lengths, return_counts=True)
+        max_count = int(np.max(counts))
+        candidates = [int(value) for value, count in zip(values, counts) if int(count) == max_count]
+        if self.FALLBACK_MEASURE_LENGTH in candidates:
+            return self.FALLBACK_MEASURE_LENGTH
+        return candidates[0]
+
+    def _measure_end_time(self, beat_rows, next_index, measure_beats):
+        if next_index < len(beat_rows):
+            return beat_rows[next_index]["time"]
+
+        if len(beat_rows) > 1:
+            intervals = np.diff([row["time"] for row in beat_rows])
+            median_interval = float(np.median(intervals[intervals > 0])) if np.any(intervals > 0) else 0.5
+        else:
+            median_interval = 0.5
+        return measure_beats[-1]["time"] + median_interval
+
+
 class KeyChordAnalysisNode(BaseNode):
     def __init__(self):
         super().__init__("KeyChordAnalysisNode")

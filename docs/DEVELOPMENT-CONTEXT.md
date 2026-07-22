@@ -25,7 +25,7 @@ python -m pytest -q
 最近觀察到的結果：
 
 ```text
-36 passed, 1 skipped
+38 passed, 1 skipped
 ```
 
 觀察到的警告：
@@ -42,6 +42,7 @@ python -m pytest -q
 - 本地音訊分析
 - BeatNet 與 Librosa fallback
 - BeatValidationNode v1
+- MeasureMapNode v1
 - 調性與和弦參考分析
 - Click Track WAV 合成
 - 原曲加 Click 的 WAV 輸出

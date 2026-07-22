@@ -4,7 +4,14 @@ import shutil
 import tempfile
 import numpy as np
 from pgm_craft.workflow.nodes import SequenceNode, FallbackNode, Blackboard, NodeStatus
-from pgm_craft.workflow.audio_nodes import VideoURLDownloadNode, AudioLoadNode, BeatNetNode, LibrosaBeatNode, BeatValidationNode
+from pgm_craft.workflow.audio_nodes import (
+    VideoURLDownloadNode,
+    AudioLoadNode,
+    BeatNetNode,
+    LibrosaBeatNode,
+    BeatValidationNode,
+    MeasureMapNode,
+)
 from pgm_craft.workflow.builder import BTWorkflowEngine
 
 class TestBTWorkflowEngine(unittest.TestCase):
@@ -116,6 +123,56 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertEqual(blackboard.get_val("beat_confidence_level"), "FAIL")
         self.assertGreater(len(blackboard.get_val("beat_errors")), 0)
 
+    def test_measure_map_uses_downbeats_and_variable_lengths(self):
+        """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節並保留變動拍數"""
+        node = MeasureMapNode()
+        blackboard = Blackboard()
+        blackboard.set_val("beat_validation", {"status": "PASS", "warnings": []})
+        blackboard.set_val("beats", np.array([
+            [0.0, 1],
+            [0.5, 2],
+            [1.0, 3],
+            [1.5, 1],
+            [2.0, 2],
+            [2.5, 3],
+            [3.0, 4],
+            [3.5, 1],
+        ]))
+
+        status = node.execute(blackboard)
+        measure_map = blackboard.get_val("measure_map")
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual(blackboard.get_val("measure_map_status"), "PASS")
+        self.assertEqual([measure["beat_count"] for measure in measure_map], [3, 4, 1])
+        self.assertTrue(measure_map[0]["is_variable_length"])
+        self.assertFalse(measure_map[1]["is_variable_length"])
+        self.assertTrue(measure_map[2]["is_incomplete"])
+        self.assertEqual(measure_map[0]["source"], "downbeat")
+
+    def test_measure_map_falls_back_without_downbeats(self):
+        """測試 MeasureMapNode：缺少 downbeat 時以 4 拍 fallback 並標記警告"""
+        node = MeasureMapNode()
+        blackboard = Blackboard()
+        blackboard.set_val("beat_validation", {"status": "WARN", "warnings": ["沒有偵測到 downbeat 標籤。"]})
+        blackboard.set_val("beats", np.array([
+            [0.0, 2],
+            [0.5, 3],
+            [1.0, 4],
+            [1.5, 2],
+            [2.0, 3],
+        ]))
+
+        status = node.execute(blackboard)
+        measure_map = blackboard.get_val("measure_map")
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual(blackboard.get_val("measure_map_status"), "WARN")
+        self.assertEqual([measure["beat_count"] for measure in measure_map], [4, 1])
+        self.assertEqual(measure_map[0]["source"], "fallback_4beat")
+        self.assertTrue(measure_map[1]["is_incomplete"])
+        self.assertGreater(len(blackboard.get_val("measure_map_warnings")), 0)
+
     def test_bt_engine_full_run(self):
         """測試 BT 引擎完整行為樹節點執行流水線 (包含 VideoURLDownloadNode 進入點)"""
         bt_engine = BTWorkflowEngine()
@@ -123,6 +180,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
 
         self.assertIsNotNone(blackboard.get_val("beats"))
         self.assertIsNotNone(blackboard.get_val("beat_validation"))
+        self.assertIsNotNone(blackboard.get_val("measure_map"))
         self.assertIsNotNone(blackboard.get_val("estimated_key"))
         self.assertTrue(os.path.exists(blackboard.get_val("click_track")))
         self.assertTrue(os.path.exists(blackboard.get_val("tempo_map_midi")))

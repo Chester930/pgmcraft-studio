@@ -231,13 +231,15 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
 - **總小節數**: `{report['total_measures']}` 小節
 - **總拍數**: `{report['total_beats']}` 拍
 - **節拍檢查**: `{report.get('beat_validation', {}).get('status', 'UNKNOWN')}`
+- **小節地圖**: `{report.get('measure_map_status', 'UNKNOWN')}`
 
 ---
 ### 🎸 抓譜和弦進行預覽 (前 16 小節):
 """
     warnings = report.get("beat_validation", {}).get("warnings", [])
+    warnings += report.get("measure_map_warnings", [])
     if warnings:
-        summary += "\n### ⚠️ 節拍檢查警告\n"
+        summary += "\n### ⚠️ 時間結構檢查警告\n"
         for warning in warnings:
             summary += f"- {warning}\n"
         summary += "\n---\n"

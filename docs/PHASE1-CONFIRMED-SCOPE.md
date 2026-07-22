@@ -15,6 +15,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 -> 音訊載入與必要下載
 -> beat / downbeat 偵測
 -> beat 品質檢查
+-> 可變小節地圖
 -> BPM 與 tempo curve
 -> click WAV
 -> mix preview WAV
@@ -31,6 +32,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 | Mix Preview | `mix_with_click.wav` | 檢查 click 是否貼合原曲 | 已實作 |
 | Tempo Curve | `tempo_curve.png` | 檢視 BPM 浮動 | 已實作 |
 | Beat Validation | `beat_validation` | 判斷 beat 是否可用於 DAW/PGM 輸出 | 已新增 v1 |
+| Measure Map | `measure_map` | 建立允許變動拍數的小節地圖 | 已新增 v1 |
 | Tempo Map MIDI | `tempo_map.mid` | 匯入 DAW 建立速度圖 | 已優化 |
 | MIDI Click Guide | `click_guide.mid` | 匯入 DAW 取得逐拍 click note | 已新增 |
 | JSON Report | `pgm_report.json` | 機器可讀分析結果 | 已實作並補輸出欄位 |
@@ -63,6 +65,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 - 測試加入 MIDI tempo event 與 click note 驗證。
 - `mido` 補為正式依賴，避免隱性依賴。
 - `BeatValidationNode` 已新增 v1，支援 `PASS` / `WARN` / `FAIL`。
+- `MeasureMapNode` 已新增 v1，支援 downbeat 切小節與 4 拍 fallback。
 
 ## BeatValidationNode v1 規格
 
@@ -86,11 +89,48 @@ Blackboard 輸出：
 - 同一首歌可以同時存在 3 拍、4 拍、5 拍或其他長度的小節。
 - 4 拍只能作為常見參考值，不能作為整首歌的硬性假設。
 
+## MeasureMapNode v1 規格
+
+`MeasureMapNode` 將 `beats` 整理成小節地圖，並保留每一小節自己的拍數。
+
+輸出：
+
+- `measure_map`
+- `measure_map_status`
+- `measure_map_warnings`
+
+主要規則：
+
+- 有足夠 downbeat 時，以 `beat_num == 1` 切分小節。
+- 每一小節都有自己的 `beat_count`，不要求全曲固定 4 拍。
+- 變動小節不視為錯誤。
+- 沒有足夠 downbeat 時，使用每 4 拍 fallback，`source` 標記為 `fallback_4beat`，`measure_map_status` 標記為 `WARN`。
+- 最後一個小節如果少於常見小節長度，保留並標記 `is_incomplete`。
+
+單一小節資料格式：
+
+```json
+{
+  "measure": 1,
+  "start_time": 0.0,
+  "end_time": 1.5,
+  "beat_count": 3,
+  "beats": [
+    {"beat": 1, "time": 0.0},
+    {"beat": 2, "time": 0.5},
+    {"beat": 3, "time": 1.0}
+  ],
+  "is_variable_length": true,
+  "is_incomplete": false,
+  "source": "downbeat"
+}
+```
+
 ## 目前已知限制
 
 - 目前尚未完整推定拍號；4 拍只作為常見小節長度參考，資料結構必須允許變動小節。
 - tempo map 由相鄰 beat 間距推算，已加入初版 beat validation，但尚未做自動修拍。
-- downbeat refine 與 measure map 仍是下一階段需要明確化的節點。
+- measure map 已可保留變動小節長度，但 downbeat refine 仍是下一階段需要明確化的節點。
 - 舊版 `beat_tracker.py` / `web_app.py` 尚未整理，公開前應決定移入 `legacy/` 或與正式 BT 管線合併。
 - DAW 匯入行為可能因軟體不同而有差異，下一階段應建立 `IMPORT_GUIDE.md` 範本。
 
@@ -100,7 +140,6 @@ Blackboard 輸出：
 
 ```text
 DownbeatRefineNode
--> MeasureMapNode
 ```
 
-這兩個節點會決定 tempo map、click guide、報告、和弦小節對齊是否可靠。
+這個節點會決定下游 measure map、tempo map、click guide、報告、和弦小節對齊是否更可靠。

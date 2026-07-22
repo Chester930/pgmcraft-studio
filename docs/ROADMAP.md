@@ -38,7 +38,8 @@
 - 音訊載入與驗證
 - BeatNet beat tracking 與 Librosa fallback
 - Beat validation
-- Downbeat 與可變小節長度推算
+- Measure map 與可變小節長度整理
+- Downbeat refine
 - BPM 統計
 - 速度曲線圖
 - Click Track WAV
