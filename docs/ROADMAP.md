@@ -173,10 +173,11 @@ project-name/
 - core / optional dependencies 已初步拆分
 - legacy 入口已文件化，第一版暫時保留根目錄相容入口
 - 模型與第三方工具授權邊界已新增文件
+- release tag 已建立：`v1.0.0`
 
 目前剩餘：
 
-- 建立 release tag
+- Public 前可選決策：repository 命名與 visibility
 
 ## Phase 5：AI 輔助音樂模組
 

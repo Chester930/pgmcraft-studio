@@ -24,10 +24,16 @@
 - 核心依賴與 optional downloader / AI 依賴已拆分。
 - Legacy 入口已決定暫時保留於根目錄，並以文件標示定位。
 - 模型與第三方工具授權邊界已新增文件。
+- Release tag 已建立：`v1.0.0`。
 
 ## 尚未完成
 
-- 尚未建立 release tag。
+目前無第一版 private release 前的必要阻塞項目。
+
+## Public 前可選決策
+
+- 是否將 repository 名稱從 `-----` 改為更可讀的名稱，例如 `pgm-craft`。
+- 是否將 repository visibility 從 private 改為 public。
 
 ## GitHub Remote 狀態
 

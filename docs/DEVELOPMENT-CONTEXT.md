@@ -96,6 +96,7 @@ python -m pytest -q
 - `CONTRIBUTING.md` 已加入
 - 加入 DAW 工程素材包匯入說明
 - 加入模型與第三方工具注意事項
+- 第一版 release tag 已建立：`v1.0.0`
 
 ## 既有未提交變更注意
 
