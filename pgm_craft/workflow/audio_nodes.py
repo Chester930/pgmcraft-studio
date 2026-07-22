@@ -136,6 +136,7 @@ class BeatValidationNode(BaseNode):
     MIN_BPM = 30.0
     MAX_BPM = 300.0
     MAX_BPM_JUMP_RATIO = 0.35
+    COMMON_MEASURE_LENGTH = 4
 
     def __init__(self):
         super().__init__("BeatValidationNode")
@@ -203,9 +204,11 @@ class BeatValidationNode(BaseNode):
             if jump_count:
                 warnings.append(f"偵測到 {jump_count} 次相鄰 BPM 跳動超過 {self.MAX_BPM_JUMP_RATIO:.0%}。")
 
-        has_downbeat = bool(np.any(beat_numbers == 1))
+        measure_lengths = self._measure_lengths_from_downbeats(beat_numbers)
+        has_downbeat = bool(measure_lengths)
+        has_variable_measure_lengths = len(set(measure_lengths)) > 1 if measure_lengths else False
         if not has_downbeat:
-            warnings.append("沒有偵測到 downbeat 標籤，後續小節會先以每 4 拍推定。")
+            warnings.append("沒有偵測到 downbeat 標籤，後續小節結構需要由 DownbeatRefineNode 或人工檢查確認。")
 
         status = "WARN" if warnings else "PASS"
         return self._result(
@@ -218,8 +221,20 @@ class BeatValidationNode(BaseNode):
             max_bpm=float(np.max(bpms)),
             bpm_jump_count=jump_count,
             has_downbeat=has_downbeat,
-            assumed_meter="4/4",
+            measure_lengths=measure_lengths,
+            common_measure_length=self.COMMON_MEASURE_LENGTH,
+            has_variable_measure_lengths=has_variable_measure_lengths,
+            meter_status="detected_variable" if has_variable_measure_lengths else ("detected" if has_downbeat else "unknown"),
         )
+
+    def _measure_lengths_from_downbeats(self, beat_numbers):
+        downbeat_indexes = np.where(beat_numbers == 1)[0].tolist()
+        if len(downbeat_indexes) < 2:
+            return []
+        return [
+            downbeat_indexes[index + 1] - downbeat_indexes[index]
+            for index in range(len(downbeat_indexes) - 1)
+        ]
 
     def _result(self, status, warnings, errors, **stats):
         return {

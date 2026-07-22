@@ -90,6 +90,7 @@ Root Sequence
 - BeatNet 是優先方案
 - Librosa 是 fallback
 - beat validation 會在分析後先判斷是否可繼續輸出
+- 小節資料模型需要允許同一首歌內出現不同小節長度
 - 匯出節點只在分析成功後執行
 
 ## 節點分類

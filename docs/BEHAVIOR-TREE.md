@@ -70,7 +70,7 @@ flowchart TD
 | `DemucsStemNode` | Optional Action | 依 `enable_stem` 決定是否跑分軌 | 已實作流程，分軌品質目前仍偏 placeholder |
 | `BeatNetNode` | Action | 優先使用 BeatNet 偵測節拍 | 已實作，依賴不足時會失敗 |
 | `LibrosaBeatNode` | Fallback Action | BeatNet 不可用時改用 Librosa | 已實作 |
-| `BeatValidationNode` | Guard / Action | 檢查 beat 數量、timestamp、BPM 範圍、BPM 跳動與 downbeat 標籤 | 已實作 v1 |
+| `BeatValidationNode` | Guard / Action | 檢查 beat 數量、timestamp、BPM 範圍、BPM 跳動、downbeat 標籤與變動小節長度 | 已實作 v1 |
 | `KeyChordAnalysisNode` | Action | 估算調性與小節和弦 | 已實作基礎版本 |
 | `ClickSynthesisNode` | Action | 產生 click WAV 與原曲加 click 預聽檔 | 已實作 |
 | `MIDIExportNode` | Action | 產生 `tempo_map.mid` 與 `click_guide.mid` | 已優化為 DAW tempo map + MIDI click guide |
@@ -91,6 +91,7 @@ flowchart TD
 | `beat_confidence_level` | `BeatValidationNode` | `PASS`、`WARN` 或 `FAIL` |
 | `beat_warnings` | `BeatValidationNode` | 可繼續但需人工確認的警告 |
 | `beat_errors` | `BeatValidationNode` | 需停止流程的錯誤 |
+| `beat_validation.stats.measure_lengths` | `BeatValidationNode` | 相鄰 downbeat 間的拍數統計，允許同曲變動 |
 | `estimated_key` | `KeyChordAnalysisNode` | 推定調性 |
 | `chord_progression` | `KeyChordAnalysisNode` | 小節和弦參考 |
 | `click_track` | `ClickSynthesisNode` | click WAV 路徑 |
@@ -226,7 +227,7 @@ flowchart TD
 
 | Key | 來源節點 | 用途 |
 |-----|----------|------|
-| `beat_validation` | `BeatValidationNode` | beat 數量、間距、BPM 範圍是否合理 |
+| `beat_validation` | `BeatValidationNode` | beat 數量、間距、BPM 範圍、小節長度變化是否可追蹤 |
 | `beat_confidence_level` | `BeatValidationNode` | `PASS`、`WARN` 或 `FAIL` |
 | `beat_warnings` | `BeatValidationNode` | 可繼續但需人工確認的警告 |
 | `beat_errors` | `BeatValidationNode` | 需停止流程的錯誤 |
@@ -256,4 +257,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-下一輪應先確認 `DownbeatRefineNode` 與 `MeasureMapNode` 的資料格式，因為這兩個節點會影響後續 MIDI、Click、報告與工程素材包的小節對齊可信度。
+下一輪應先確認 `DownbeatRefineNode` 與 `MeasureMapNode` 的資料格式，尤其要支援同一首歌內不同小節長度，不能把整首曲子硬套成固定 4 拍小節。

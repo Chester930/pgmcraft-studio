@@ -25,7 +25,7 @@ python -m pytest -q
 最近觀察到的結果：
 
 ```text
-35 passed, 1 skipped
+36 passed, 1 skipped
 ```
 
 觀察到的警告：
@@ -70,6 +70,7 @@ python -m pytest -q
 - 系統應設計為節點式音訊工作流。
 - Behavior Tree 負責串接節點、guard condition 與 fallback。
 - beat tracking 後應先經過 validation，只有 `FAIL` 會停止後續輸出，`WARN` 會繼續但寫入報告。
+- 小節推定不能硬套整首 4/4；同一首歌內可能有不同拍數的小節，後續 `MeasureMapNode` 必須支援可變小節長度。
 - AI 分軌與 Podcast 工作流在完成真實整合前，應維持為 extension module。
 - 開發階段預設使用繁體中文撰寫討論與文件，除非另有英文版需求。
 

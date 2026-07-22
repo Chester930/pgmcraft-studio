@@ -75,6 +75,30 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertEqual(blackboard.get_val("beat_confidence_level"), "WARN")
         self.assertGreater(len(blackboard.get_val("beat_warnings")), 0)
 
+    def test_beat_validation_allows_variable_measure_lengths(self):
+        """測試 BeatValidationNode：同一首內不同小節長度應保留資訊，不視為錯誤"""
+        node = BeatValidationNode()
+        blackboard = Blackboard()
+        blackboard.set_val("beats", np.array([
+            [0.0, 1],
+            [0.5, 2],
+            [1.0, 3],
+            [1.5, 1],
+            [2.0, 2],
+            [2.5, 3],
+            [3.0, 4],
+            [3.5, 1],
+        ]))
+
+        status = node.execute(blackboard)
+        stats = blackboard.get_val("beat_validation")["stats"]
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual(blackboard.get_val("beat_confidence_level"), "PASS")
+        self.assertEqual(stats["measure_lengths"], [3, 4])
+        self.assertTrue(stats["has_variable_measure_lengths"])
+        self.assertEqual(stats["meter_status"], "detected_variable")
+
     def test_beat_validation_fails_on_invalid_timestamps(self):
         """測試 BeatValidationNode：timestamp 錯序時停止流程"""
         node = BeatValidationNode()

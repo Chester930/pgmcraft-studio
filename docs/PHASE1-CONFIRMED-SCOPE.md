@@ -79,9 +79,16 @@ Blackboard 輸出：
 - `beat_warnings`
 - `beat_errors`
 
+補充：
+
+- `BeatValidationNode` 不應把非 4 拍小節視為錯誤。
+- 若 downbeat 標籤足夠，validation 會記錄相鄰 downbeat 之間的 `measure_lengths`。
+- 同一首歌可以同時存在 3 拍、4 拍、5 拍或其他長度的小節。
+- 4 拍只能作為常見參考值，不能作為整首歌的硬性假設。
+
 ## 目前已知限制
 
-- 目前假設拍號為 4/4。
+- 目前尚未完整推定拍號；4 拍只作為常見小節長度參考，資料結構必須允許變動小節。
 - tempo map 由相鄰 beat 間距推算，已加入初版 beat validation，但尚未做自動修拍。
 - downbeat refine 與 measure map 仍是下一階段需要明確化的節點。
 - 舊版 `beat_tracker.py` / `web_app.py` 尚未整理，公開前應決定移入 `legacy/` 或與正式 BT 管線合併。
