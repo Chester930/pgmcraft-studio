@@ -277,4 +277,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-GitHub remote、CI 與 release 前檢查已完成。下一輪可聚焦是否將 repository visibility 從 private 切為 public。
+GitHub remote、CI、release 與 public visibility 檢查已完成。下一輪可聚焦公開後回饋與 Phase 2 節點工作流強化。

@@ -168,7 +168,7 @@ project-name/
 - GitHub Actions CI workflow 已新增
 - legacy GUI 的本機絕對輸出路徑已移除
 - GUI experimental 功能已標示
-- GitHub remote 已設定，repository 目前為 private
+- GitHub remote 已設定，repository 目前為 public
 - GitHub repository 已改名為 `Chester930/pgmcraft-studio`
 - GitHub Actions CI 已在遠端執行通過
 - core / optional dependencies 已初步拆分
@@ -178,7 +178,7 @@ project-name/
 
 目前剩餘：
 
-- Public 前可選決策：repository visibility
+- 第一版公開發布後觀察使用者回饋與 CI 狀態
 
 ## Phase 5：AI 輔助音樂模組
 

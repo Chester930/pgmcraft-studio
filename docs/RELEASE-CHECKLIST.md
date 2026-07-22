@@ -2,7 +2,7 @@
 
 **最後更新：** 2026-07-23
 
-本文件記錄 PGMCraft Studio 進入 GitHub public repository 前的檢查狀態。
+本文件記錄 PGMCraft Studio 進入 GitHub public repository 的檢查狀態。
 
 ## 已完成
 
@@ -19,7 +19,7 @@
 - `CONTRIBUTING.md` 已加入。
 - 本地測試通過：`python -m pytest -q`。
 - GitHub remote 已設定：`https://github.com/Chester930/pgmcraft-studio.git`。
-- GitHub repository 已建立，目前狀態為 private。
+- GitHub repository 已建立，目前狀態為 public。
 - GitHub repository 已改名為 `Chester930/pgmcraft-studio`。
 - GitHub Actions CI 已在遠端執行通過。
 - 核心依賴與 optional downloader / AI 依賴已拆分。
@@ -29,11 +29,11 @@
 
 ## 尚未完成
 
-目前無第一版 private release 前的必要阻塞項目。
+目前無第一版 public release 的必要阻塞項目。
 
-## Public 前可選決策
+## Public 狀態
 
-- 是否將 repository visibility 從 private 改為 public。
+Repository visibility 已切換為 public。
 
 ## GitHub Remote 狀態
 
@@ -41,16 +41,16 @@
 
 - GitHub owner：`Chester930`
 - Repository：`https://github.com/Chester930/pgmcraft-studio`
-- Visibility：private
+- Visibility：public
 - Default branch：`main`
 
-若公開前要改成更可讀的名稱，建議名稱：
+已使用可讀名稱：
 
 ```text
-pgm-craft
+pgmcraft-studio
 ```
 
-建議維持 private，等 legacy 入口與模型授權整理完成後再切 public。
+第一版公開時的 legacy 入口與模型授權邊界已整理完成。
 
 ## 發布前必要命令
 

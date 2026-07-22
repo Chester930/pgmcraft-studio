@@ -12,7 +12,7 @@
 - 已有專案目標與架構文件 commit：`2460e17 docs: define project goals and architecture`。
 - 根目錄 README 已改為 Phase 1 實作現況導向。
 - GitHub remote 已設定為 `https://github.com/Chester930/pgmcraft-studio.git`。
-- GitHub repository 已建立，目前為 private。
+- GitHub repository 已建立並公開，目前為 public。
 - GitHub CLI 已登入 `Chester930`。
 - GitHub Actions CI 已由 push 觸發，遠端執行結果為通過。
 
@@ -81,9 +81,9 @@ python -m pytest -q
 - AI 分軌與 Podcast 工作流在完成真實整合前，應維持為 extension module。
 - 開發階段預設使用繁體中文撰寫討論與文件，除非另有英文版需求。
 
-## 公開發布前需要整理
+## 公開發布整理狀態
 
-公開前應處理：
+公開發布整理項目：
 
 - README 已依照實際 MVP 重寫
 - README 中的範例 clone placeholder 已移除

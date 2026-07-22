@@ -187,7 +187,7 @@ pgm_project_package/
 - 目前尚未完整推定拍號；4 拍只作為常見小節長度參考，資料結構必須允許變動小節。
 - tempo map 由相鄰 beat 間距推算，已加入初版 beat validation，但尚未做自動修拍。
 - downbeat refine 目前是保守候選補強，尚未使用音訊能量、鼓點重音或 AI 模型重新判斷強拍。
-- 舊版 `beat_tracker.py` / `web_app.py` 尚未整理，公開前應決定移入 `legacy/` 或與正式 BT 管線合併。
+- 舊版 `beat_tracker.py` / `web_app.py` 已在 `docs/LEGACY-ENTRYPOINTS.md` 中定位為 legacy 入口，第一版暫時保留根目錄相容入口。
 - DAW 匯入行為可能因軟體不同而有差異，目前 `IMPORT_GUIDE.md` 是通用版，尚未分 DAW profile。
 
 ## 第一階段下一個技術焦點
@@ -199,4 +199,4 @@ README 公開版整理
 -> Legacy entry 整理
 ```
 
-接下來應把公開 README、legacy 入口與 GUI 預設路徑整理好，讓目前完成的 Phase 1 能安全公開。
+公開 README、legacy 入口與 GUI 預設路徑已整理完成。接下來可進入公開後回饋整理與 Phase 2 節點工作流強化。
