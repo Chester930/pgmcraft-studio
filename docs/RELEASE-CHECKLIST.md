@@ -43,6 +43,7 @@ Repository visibility 已切換為 public。
 - Repository：`https://github.com/Chester930/pgmcraft-studio`
 - Visibility：public
 - Default branch：`main`
+- Release：`https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.0.0`
 
 已使用可讀名稱：
 

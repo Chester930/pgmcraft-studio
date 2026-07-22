@@ -1,8 +1,18 @@
 # PGMCraft Studio
 
+[![CI](https://github.com/Chester930/pgmcraft-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Chester930/pgmcraft-studio/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Chester930/pgmcraft-studio)](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.0.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 PGMCraft Studio 是一套以節點式音訊工作流與 Behavior Tree 編排為核心的 DAW / PGM 工程素材產生工具。
 
 目前第一階段的穩定目標是：給定本地音檔或支援的媒體 URL，產生可用於 DAW、練團、採譜與 Live PGM 準備的工程素材包。
+
+## 專案連結
+
+- Repository: [Chester930/pgmcraft-studio](https://github.com/Chester930/pgmcraft-studio)
+- Release: [v1.0.0](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.0.0)
+- 文件入口：[docs/README.md](docs/README.md)
 
 ## 目前穩定功能
 
@@ -64,6 +74,8 @@ pgm_project_package/
 建議使用 Python 3.11 或更新版本。
 
 ```bash
+git clone https://github.com/Chester930/pgmcraft-studio.git
+cd pgmcraft-studio
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
