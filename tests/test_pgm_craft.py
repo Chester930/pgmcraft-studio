@@ -46,13 +46,15 @@ class TestPGMCraftPackage(unittest.TestCase):
 
     def test_engine_pipeline(self):
         """測試 PGMCraftEngine 完整 Pipeline"""
-        engine = PGMCraftEngine(enable_stem_separation=False)
+        engine = PGMCraftEngine(enable_stem_separation=False, validate_contracts=True)
         report = engine.run(self.test_audio, output_dir=self.temp_dir)
 
         self.assertIn("estimated_key", report)
         self.assertIn("average_bpm", report)
         self.assertEqual(report["workflow_status"], "SUCCESS")
         self.assertGreater(len(report["workflow_trace"]), 0)
+        self.assertIn("contract_validation", report)
+        self.assertGreater(len(report["contract_validation"]), 0)
         self.assertTrue(os.path.exists(os.path.join(self.temp_dir, "pgm_report.json")))
         self.assertIn("project_package", report)
         package = report["project_package"]
@@ -69,6 +71,7 @@ class TestPGMCraftPackage(unittest.TestCase):
         self.assertIn("project_package", packaged_report)
         self.assertEqual(packaged_report["workflow_status"], "SUCCESS")
         self.assertGreater(len(packaged_report["workflow_trace"]), 0)
+        self.assertIn("contract_validation", packaged_report)
 
 if __name__ == '__main__':
     unittest.main()

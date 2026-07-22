@@ -72,6 +72,8 @@ Blackboard 是節點之間共享的工作流狀態。
 - `stems`
 - `workflow_status`
 - `workflow_trace`
+- `validate_contracts`
+- `contract_validation`
 
 主要 key 已在 `docs/BLACKBOARD-CONTRACT.md` 文件化。後續可進一步轉成型別化 schema，降低隱性耦合。
 
@@ -109,6 +111,7 @@ Root Sequence
 - measure map 會保留每一小節自己的 `beat_count`，缺 downbeat 時只能標記為 fallback
 - 匯出節點只在分析成功後執行
 - `BaseNode.run()` 會記錄 `workflow_trace`，讓執行後可檢查節點順序、狀態與耗時。
+- `validate_contracts=True` 時會記錄非阻斷式 `contract_validation`，協助開發時檢查節點 required key。
 
 ## 節點分類
 

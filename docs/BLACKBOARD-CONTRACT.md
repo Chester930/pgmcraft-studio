@@ -14,6 +14,19 @@
 
 這些欄位用於文件、測試與後續 GUI/debug 顯示。節點實際邏輯仍以目前 `execute()` 行為為準。
 
+## Optional Validation
+
+若 blackboard 中的 `validate_contracts` 為 `True`，`BaseNode.run()` 會在節點執行前檢查 `required_keys` 是否存在，並將結果追加到 `contract_validation`。
+
+可透過 `BTWorkflowEngine.run(..., validate_contracts=True)` 或 `PGMCraftEngine(validate_contracts=True)` 啟用。
+
+此檢查在 v1 為非阻斷式：
+
+- 缺少 required key 時，`contract_validation.status` 會是 `WARN`。
+- 節點仍會照原本 `execute()` 行為執行。
+- 若節點本身因缺 key 或其他原因失敗，仍由原本節點邏輯回傳 `FAILURE` 或丟出例外。
+- `PGMCraftEngine` 只有在存在 validation 結果時，才會將 `contract_validation` 寫入 `pgm_report.json`。
+
 ## Workflow Entry Keys
 
 | Key | 型態 | 來源 | 說明 |
@@ -22,6 +35,7 @@
 | `output_dir` | `str` | CLI / GUI / `BTWorkflowEngine` | 產出目錄 |
 | `enable_stem` | `bool` | CLI / GUI / `BTWorkflowEngine` | 是否啟用 experimental 分軌 |
 | `demix_steps` | `list[str]` | optional caller | 分軌步驟，未提供時使用節點預設 |
+| `validate_contracts` | `bool` | optional caller / `BTWorkflowEngine` | 是否啟用非阻斷式 contract validation |
 
 ## Audio Preparation Keys
 
@@ -73,6 +87,23 @@
 |-----|------|------|------|
 | `workflow_status` | `str` | `BTWorkflowEngine` | 整體 BT 執行狀態 |
 | `workflow_trace` | `list[dict]` | `BaseNode.run()` | 節點執行順序、狀態、父節點與耗時 |
+| `contract_validation` | `list[dict]` | `BaseNode.run()` | 非阻斷式節點契約檢查結果 |
+
+Validation entry 格式：
+
+```json
+{
+  "index": 0,
+  "node": "AudioLoadNode",
+  "node_type": "AudioLoadNode",
+  "parent": "PGMCraftWorkflowRoot",
+  "status": "PASS",
+  "missing_required_keys": [],
+  "required_keys": ["audio_path"],
+  "optional_keys": [],
+  "output_keys": ["y", "sr", "target_analysis_path"]
+}
+```
 
 ## 主要節點契約
 
@@ -93,5 +124,5 @@
 ## 後續方向
 
 - 將契約轉成型別化 schema。
-- 在 debug/dev 模式加入 optional runtime validation。
+- 將目前非阻斷式 validation 接到 GUI/debug 面板。
 - 讓 GUI 顯示節點缺少的 required key 與最近 trace entry。

@@ -23,6 +23,11 @@ class Blackboard(dict):
         entry["index"] = len(trace)
         trace.append(entry)
 
+    def append_contract_validation(self, entry):
+        validations = self.setdefault("contract_validation", [])
+        entry["index"] = len(validations)
+        validations.append(entry)
+
 
 class BaseNode:
     """Abstract Base Class for Behavior Tree & State Machine Nodes."""
@@ -35,6 +40,9 @@ class BaseNode:
 
     def run(self, blackboard: Blackboard, parent=None) -> NodeStatus:
         """Executes a node and records one workflow trace entry."""
+        if blackboard.get_val("validate_contracts", False):
+            blackboard.append_contract_validation(self.validate_contract(blackboard, parent=parent))
+
         started_at = time.perf_counter()
         try:
             status = self.execute(blackboard)
@@ -57,6 +65,22 @@ class BaseNode:
             "duration_ms": round((time.perf_counter() - started_at) * 1000, 3),
         })
         return status
+
+    def validate_contract(self, blackboard: Blackboard, parent=None):
+        missing_required_keys = [
+            key for key in self.required_keys
+            if key not in blackboard
+        ]
+        return {
+            "node": self.name,
+            "node_type": self.__class__.__name__,
+            "parent": parent,
+            "status": "WARN" if missing_required_keys else "PASS",
+            "missing_required_keys": missing_required_keys,
+            "required_keys": list(self.required_keys),
+            "optional_keys": list(self.optional_keys),
+            "output_keys": list(self.output_keys),
+        }
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         raise NotImplementedError

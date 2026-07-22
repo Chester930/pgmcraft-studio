@@ -177,6 +177,7 @@ project-name/
 - release tag 已建立：`v1.0.0`
 - workflow trace log 已新增 v1，並寫入 `pgm_report.json`
 - Blackboard key 契約已新增 v1 文件與節點 metadata
+- 非阻斷式 contract validation 已新增 v1
 
 目前剩餘：
 

@@ -61,11 +61,12 @@ class BTWorkflowEngine:
     def __init__(self):
         self.tree = build_pgm_workflow_tree()
 
-    def run(self, audio_path, output_dir="outputs", enable_stem=False):
+    def run(self, audio_path, output_dir="outputs", enable_stem=False, validate_contracts=False):
         blackboard = Blackboard()
         blackboard.set_val("audio_path", audio_path)
         blackboard.set_val("output_dir", output_dir)
         blackboard.set_val("enable_stem", enable_stem)
+        blackboard.set_val("validate_contracts", validate_contracts)
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow for {audio_path} ===")
         status = self.tree.run(blackboard)

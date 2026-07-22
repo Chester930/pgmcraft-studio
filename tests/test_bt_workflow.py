@@ -25,6 +25,11 @@ class StaticStatusNode(BaseNode):
         return self.status
 
 
+class RequiredInputNode(StaticStatusNode):
+    required_keys = ["required_input"]
+    output_keys = ["static_status"]
+
+
 class TestBTWorkflowEngine(unittest.TestCase):
     def setUp(self):
         self.test_audio = "sample_test.wav"
@@ -77,10 +82,47 @@ class TestBTWorkflowEngine(unittest.TestCase):
             "measure_map",
             "workflow_status",
             "workflow_trace",
+            "validate_contracts",
+            "contract_validation",
             "tempo_map_midi",
             "click_guide_midi",
         ):
             self.assertIn(f"`{key}`", contract)
+
+    def test_contract_validation_records_missing_keys_without_blocking(self):
+        """測試 contract validation：缺 key 時只記錄，不主動中斷節點執行"""
+        node = RequiredInputNode("NeedsInput", NodeStatus.SUCCESS)
+        blackboard = Blackboard()
+        blackboard.set_val("validate_contracts", True)
+
+        status = node.run(blackboard)
+        validations = blackboard.get_val("contract_validation")
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual(validations[0]["node"], "NeedsInput")
+        self.assertEqual(validations[0]["status"], "WARN")
+        self.assertEqual(validations[0]["missing_required_keys"], ["required_input"])
+        self.assertEqual(blackboard.get_val("workflow_trace")[-1]["status"], "SUCCESS")
+
+    def test_bt_engine_contract_validation_passes_on_full_run(self):
+        """測試完整 BT run 啟用 contract validation 時會記錄每個節點契約狀態"""
+        bt_engine = BTWorkflowEngine()
+        blackboard = bt_engine.run(
+            self.test_audio,
+            output_dir=self.temp_dir,
+            enable_stem=False,
+            validate_contracts=True,
+        )
+        validations = blackboard.get_val("contract_validation")
+
+        self.assertEqual(blackboard.get_val("workflow_status"), "SUCCESS")
+        self.assertIsInstance(validations, list)
+        self.assertGreater(len(validations), 0)
+        self.assertEqual(validations[0]["node"], "PGMCraftWorkflowRoot")
+        self.assertEqual(
+            [entry for entry in validations if entry["missing_required_keys"]],
+            [],
+        )
 
     def _flatten_tree(self, node):
         nodes = [node]

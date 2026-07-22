@@ -14,8 +14,9 @@ from pgm_craft.workflow.builder import BTWorkflowEngine
 from pgm_craft.packager import PGMProjectPackager
 
 class PGMCraftEngine:
-    def __init__(self, enable_stem_separation=False):
+    def __init__(self, enable_stem_separation=False, validate_contracts=False):
         self.enable_stem_separation = enable_stem_separation
+        self.validate_contracts = validate_contracts
         self.bt_engine = BTWorkflowEngine()
         self.packager = PGMProjectPackager()
 
@@ -26,7 +27,8 @@ class PGMCraftEngine:
         blackboard = self.bt_engine.run(
             audio_path=audio_path,
             output_dir=output_dir,
-            enable_stem=self.enable_stem_separation
+            enable_stem=self.enable_stem_separation,
+            validate_contracts=self.validate_contracts,
         )
 
         original_beats = blackboard.get_val("beats")
@@ -41,6 +43,7 @@ class PGMCraftEngine:
         measure_map_warnings = blackboard.get_val("measure_map_warnings", [])
         workflow_status = blackboard.get_val("workflow_status", "UNKNOWN")
         workflow_trace = blackboard.get_val("workflow_trace", [])
+        contract_validation = blackboard.get_val("contract_validation", [])
 
         # Calculate BPM stats & measures
         diffs = np.diff(beats[:, 0]) if beats is not None else np.array([0.5])
@@ -94,6 +97,8 @@ class PGMCraftEngine:
                 "json_report": json_report_path,
             }
         }
+        if contract_validation:
+            report["contract_validation"] = contract_validation
 
         # Write JSON metadata report
         with open(json_report_path, "w", encoding="utf-8") as f:
