@@ -13,7 +13,7 @@ from pgm_craft.workflow.audio_nodes import (
     DownbeatRefineNode,
     MeasureMapNode,
 )
-from pgm_craft.workflow.builder import BTWorkflowEngine
+from pgm_craft.workflow.builder import BTWorkflowEngine, build_pgm_workflow_tree
 
 
 class StaticStatusNode(BaseNode):
@@ -41,6 +41,52 @@ class TestBTWorkflowEngine(unittest.TestCase):
         status = node.execute(blackboard)
         self.assertEqual(status, NodeStatus.SUCCESS)
         self.assertEqual(blackboard.get_val("audio_path"), self.test_audio)
+
+    def test_main_workflow_nodes_expose_blackboard_contract_metadata(self):
+        """測試主要 BT 節點都有 blackboard 契約 metadata"""
+        tree = build_pgm_workflow_tree()
+        nodes = self._flatten_tree(tree)
+        concrete_nodes = [
+            node for node in nodes
+            if node.__class__.__name__ not in {"SequenceNode", "FallbackNode"}
+        ]
+
+        for node in concrete_nodes:
+            self.assertIsInstance(node.required_keys, list, node.name)
+            self.assertIsInstance(node.optional_keys, list, node.name)
+            self.assertIsInstance(node.output_keys, list, node.name)
+            self.assertGreater(len(node.output_keys), 0, node.name)
+
+        contract_by_name = {node.name: node for node in nodes}
+        self.assertEqual(contract_by_name["AudioLoadNode"].required_keys, ["audio_path"])
+        self.assertIn("target_analysis_path", contract_by_name["AudioLoadNode"].output_keys)
+        self.assertIn("beats", contract_by_name["BeatNetNode"].output_keys)
+        self.assertIn("workflow_trace", contract_by_name["PGMCraftWorkflowRoot"].output_keys)
+
+    def test_blackboard_contract_document_lists_core_keys(self):
+        """測試 blackboard contract 文件保留核心 key"""
+        contract_path = os.path.join("docs", "BLACKBOARD-CONTRACT.md")
+        with open(contract_path, "r", encoding="utf-8") as f:
+            contract = f.read()
+
+        for key in (
+            "audio_path",
+            "target_analysis_path",
+            "beats",
+            "beat_validation",
+            "measure_map",
+            "workflow_status",
+            "workflow_trace",
+            "tempo_map_midi",
+            "click_guide_midi",
+        ):
+            self.assertIn(f"`{key}`", contract)
+
+    def _flatten_tree(self, node):
+        nodes = [node]
+        for child in getattr(node, "children", []):
+            nodes.extend(self._flatten_tree(child))
+        return nodes
 
     def test_bt_fallback_selector(self):
         """測試 BT Selector/Fallback 控制節點：當第一個失敗時自動降級跑第二個"""

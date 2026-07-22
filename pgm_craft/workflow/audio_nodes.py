@@ -19,6 +19,10 @@ class VideoURLDownloadNode(BaseNode):
     下載線上影片 URL (YouTube/Bilibili/Niconico/直連音檔 等) 節點。
     透過 URLDownloaderDispatcher 分發至專屬的下載策略 (Strategy Pattern)。
     """
+    required_keys = ["audio_path"]
+    optional_keys = ["output_dir"]
+    output_keys = ["audio_path", "downloaded_video_path"]
+
     def __init__(self):
         super().__init__("VideoURLDownloadNode")
         self.dispatcher = URLDownloaderDispatcher()
@@ -55,6 +59,9 @@ class VideoURLDownloadNode(BaseNode):
 
 
 class AudioLoadNode(BaseNode):
+    required_keys = ["audio_path"]
+    output_keys = ["y", "sr", "target_analysis_path"]
+
     def __init__(self):
         super().__init__("AudioLoadNode")
 
@@ -74,6 +81,10 @@ class AudioLoadNode(BaseNode):
 
 class DemucsStemNode(BaseNode):
     """多階層遞迴剝離分軌節點 (Multi-pass Cascaded Demixing Node)"""
+    required_keys = ["audio_path", "enable_stem"]
+    optional_keys = ["output_dir", "demix_steps"]
+    output_keys = ["stems", "target_analysis_path"]
+
     def __init__(self):
         super().__init__("DemucsStemNode")
         self.separator = CascadedStemSeparator()
@@ -98,6 +109,9 @@ class DemucsStemNode(BaseNode):
 
 
 class BeatNetNode(BaseNode):
+    required_keys = ["target_analysis_path"]
+    output_keys = ["beats"]
+
     def __init__(self):
         super().__init__("BeatNetNode")
         self.analyzer = MusicAnalyzer(use_beatnet=True)
@@ -118,6 +132,9 @@ class BeatNetNode(BaseNode):
 
 
 class LibrosaBeatNode(BaseNode):
+    required_keys = ["target_analysis_path"]
+    output_keys = ["beats"]
+
     def __init__(self):
         super().__init__("LibrosaBeatNode")
         self.analyzer = MusicAnalyzer(use_beatnet=False)
@@ -132,6 +149,9 @@ class LibrosaBeatNode(BaseNode):
 
 class BeatValidationNode(BaseNode):
     """檢查 beat 結果是否足以支撐 DAW/PGM 匯出。"""
+    required_keys = ["beats"]
+    output_keys = ["beat_validation", "beat_confidence_level", "beat_warnings", "beat_errors"]
+
     MIN_BEATS = 4
     MIN_BPM = 30.0
     MAX_BPM = 300.0
@@ -248,6 +268,15 @@ class BeatValidationNode(BaseNode):
 
 class DownbeatRefineNode(BaseNode):
     """保守補強 downbeat 標籤；不移動 beat timestamp。"""
+    required_keys = ["beats", "beat_validation"]
+    output_keys = [
+        "refined_beats",
+        "downbeat_refinement",
+        "downbeat_refine_status",
+        "downbeat_refine_warnings",
+        "downbeat_candidates",
+    ]
+
     FALLBACK_MEASURE_LENGTH = 4
     MIN_REASONABLE_MEASURE_LENGTH = 2
     MAX_REASONABLE_MEASURE_LENGTH = 8
@@ -357,6 +386,10 @@ class DownbeatRefineNode(BaseNode):
 
 class MeasureMapNode(BaseNode):
     """將 beat/downbeat 資料整理成允許變動小節長度的 measure map。"""
+    required_keys = ["beats", "beat_validation"]
+    optional_keys = ["refined_beats", "downbeat_refinement"]
+    output_keys = ["measure_map", "measure_map_status", "measure_map_warnings"]
+
     FALLBACK_MEASURE_LENGTH = 4
 
     def __init__(self):
@@ -512,6 +545,10 @@ class MeasureMapNode(BaseNode):
 
 
 class KeyChordAnalysisNode(BaseNode):
+    required_keys = ["audio_path", "beats"]
+    optional_keys = ["refined_beats"]
+    output_keys = ["estimated_key", "chord_progression"]
+
     def __init__(self):
         super().__init__("KeyChordAnalysisNode")
         self.analyzer = MusicAnalyzer()
@@ -530,6 +567,10 @@ class KeyChordAnalysisNode(BaseNode):
 
 
 class ClickSynthesisNode(BaseNode):
+    required_keys = ["audio_path", "beats", "output_dir"]
+    optional_keys = ["refined_beats"]
+    output_keys = ["click_track", "mix_with_click"]
+
     def __init__(self):
         super().__init__("ClickSynthesisNode")
         self.synthesizer = PGMSynthesizer()
@@ -547,6 +588,10 @@ class ClickSynthesisNode(BaseNode):
 
 
 class MIDIExportNode(BaseNode):
+    required_keys = ["beats", "output_dir"]
+    optional_keys = ["refined_beats"]
+    output_keys = ["tempo_map_midi", "click_guide_midi"]
+
     def __init__(self):
         super().__init__("MIDIExportNode")
         self.synthesizer = PGMSynthesizer()

@@ -26,6 +26,10 @@ class Blackboard(dict):
 
 class BaseNode:
     """Abstract Base Class for Behavior Tree & State Machine Nodes."""
+    required_keys = []
+    optional_keys = []
+    output_keys = []
+
     def __init__(self, name="BaseNode"):
         self.name = name
 
@@ -60,6 +64,8 @@ class BaseNode:
 
 class SequenceNode(BaseNode):
     """Executes child nodes in order. Fails immediately if any child fails."""
+    output_keys = ["workflow_trace"]
+
     def __init__(self, name="Sequence", children=None):
         super().__init__(name)
         self.children = children if children else []
@@ -74,6 +80,8 @@ class SequenceNode(BaseNode):
 
 class FallbackNode(BaseNode):
     """Executes child nodes in order until one succeeds (Selector / Fallback pattern)."""
+    output_keys = ["workflow_trace"]
+
     def __init__(self, name="Fallback", children=None):
         super().__init__(name)
         self.children = children if children else []

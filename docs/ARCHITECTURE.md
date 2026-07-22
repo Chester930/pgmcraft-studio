@@ -73,7 +73,7 @@ Blackboard 是節點之間共享的工作流狀態。
 - `workflow_status`
 - `workflow_trace`
 
-隨著專案成熟，這些 key 應該文件化或型別化，降低隱性耦合。
+主要 key 已在 `docs/BLACKBOARD-CONTRACT.md` 文件化。後續可進一步轉成型別化 schema，降低隱性耦合。
 
 ### Behavior Tree
 
