@@ -3,6 +3,7 @@ scipy
 soundfile
 librosa
 pretty_midi
+mido
 matplotlib
 gradio
 BeatNet

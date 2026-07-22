@@ -43,7 +43,7 @@
 - Click Track WAV
 - 原曲加 Click 的預聽 WAV
 - `tempo_map.mid`
-- 若從 tempo map 拆分，加入初版 `click_guide.mid`
+- `click_guide.mid`
 - JSON 與文字報告
 - CLI 與 Gradio GUI 執行
 

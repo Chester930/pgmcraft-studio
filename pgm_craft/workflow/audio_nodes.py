@@ -174,7 +174,10 @@ class MIDIExportNode(BaseNode):
         beats = blackboard.get_val("beats")
         output_dir = blackboard.get_val("output_dir", "outputs")
 
-        midi_path = self.synthesizer.export_midi_tempo_map(beats, output_dir=output_dir)
-        blackboard.set_val("tempo_map_midi", midi_path)
-        print(f"[BT Node: {self.name}] Exported MIDI Tempo Map to {midi_path}.")
+        tempo_map_path = self.synthesizer.export_midi_tempo_map(beats, output_dir=output_dir)
+        click_guide_path = self.synthesizer.export_midi_click_guide(beats, output_dir=output_dir)
+        blackboard.set_val("tempo_map_midi", tempo_map_path)
+        blackboard.set_val("click_guide_midi", click_guide_path)
+        print(f"[BT Node: {self.name}] Exported MIDI Tempo Map to {tempo_map_path}.")
+        print(f"[BT Node: {self.name}] Exported MIDI Click Guide to {click_guide_path}.")
         return NodeStatus.SUCCESS

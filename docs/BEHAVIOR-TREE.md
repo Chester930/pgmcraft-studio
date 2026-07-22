@@ -48,7 +48,7 @@ flowchart TD
     Librosa["LibrosaBeatNode<br/>Librosa fallback"]
     KeyChord["KeyChordAnalysisNode<br/>調性與和弦參考"]
     Click["ClickSynthesisNode<br/>Click WAV 與 mix preview"]
-    Midi["MIDIExportNode<br/>tempo_map.mid"]
+    Midi["MIDIExportNode<br/>tempo_map.mid + click_guide.mid"]
 
     Root --> Download --> Load --> Stem --> BeatFallback
     BeatFallback --> BeatNet
@@ -69,7 +69,7 @@ flowchart TD
 | `LibrosaBeatNode` | Fallback Action | BeatNet 不可用時改用 Librosa | 已實作 |
 | `KeyChordAnalysisNode` | Action | 估算調性與小節和弦 | 已實作基礎版本 |
 | `ClickSynthesisNode` | Action | 產生 click WAV 與原曲加 click 預聽檔 | 已實作 |
-| `MIDIExportNode` | Action | 產生 `tempo_map.mid` | 已實作基礎版本 |
+| `MIDIExportNode` | Action | 產生 `tempo_map.mid` 與 `click_guide.mid` | 已優化為 DAW tempo map + MIDI click guide |
 
 ## 目前 Blackboard 主要資料
 
@@ -88,6 +88,7 @@ flowchart TD
 | `click_track` | `ClickSynthesisNode` | click WAV 路徑 |
 | `mix_with_click` | `ClickSynthesisNode` | 原曲加 click 預聽檔 |
 | `tempo_map_midi` | `MIDIExportNode` | MIDI 匯出路徑 |
+| `click_guide_midi` | `MIDIExportNode` | MIDI click guide 路徑 |
 
 ## Phase 1 目標 BT
 
@@ -207,12 +208,11 @@ flowchart TD
 建議依以下順序開發，因為每一步都會讓輸出更接近 DAW-ready：
 
 1. `BeatValidationNode`
-2. `MeasureMapNode`
-3. `TempoMapMidiNode`
-4. `MidiClickGuideNode`
-5. `ProjectPackageNode`
-6. `ImportGuideNode`
-7. `ReportJsonNode` / `ReportTextNode` 整理
+2. `DownbeatRefineNode`
+3. `MeasureMapNode`
+4. `ProjectPackageNode`
+5. `ImportGuideNode`
+6. `ReportJsonNode` / `ReportTextNode` 整理
 
 ## Phase 1 新增 Blackboard Key 草案
 
@@ -245,4 +245,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-下一輪應先確認 `BeatValidationNode` 與 `MeasureMapNode` 的資料格式，因為這兩個節點會影響後續 MIDI、Click、報告與工程素材包。
+下一輪應先確認 `BeatValidationNode`、`DownbeatRefineNode` 與 `MeasureMapNode` 的資料格式，因為這三個節點會影響後續 MIDI、Click、報告與工程素材包的可信度。

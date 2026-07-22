@@ -71,6 +71,7 @@ class PGMCraftEngine:
                 "click_track": blackboard.get_val("click_track"),
                 "mix_with_click": blackboard.get_val("mix_with_click"),
                 "tempo_map_midi": blackboard.get_val("tempo_map_midi"),
+                "click_guide_midi": blackboard.get_val("click_guide_midi"),
                 "tempo_curve_plot": plot_path
             }
         }

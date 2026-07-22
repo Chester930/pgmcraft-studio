@@ -47,6 +47,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertIsNotNone(blackboard.get_val("estimated_key"))
         self.assertTrue(os.path.exists(blackboard.get_val("click_track")))
         self.assertTrue(os.path.exists(blackboard.get_val("tempo_map_midi")))
+        self.assertTrue(os.path.exists(blackboard.get_val("click_guide_midi")))
 
 if __name__ == '__main__':
     unittest.main()

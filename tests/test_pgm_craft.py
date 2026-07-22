@@ -36,10 +36,12 @@ class TestPGMCraftPackage(unittest.TestCase):
         synth = PGMSynthesizer()
         click_path, mix_path = synth.synthesize_click(self.test_audio, beats, output_dir=self.temp_dir)
         midi_path = synth.export_midi_tempo_map(beats, output_dir=self.temp_dir)
+        click_guide_path = synth.export_midi_click_guide(beats, output_dir=self.temp_dir)
 
         self.assertTrue(os.path.exists(click_path))
         self.assertTrue(os.path.exists(mix_path))
         self.assertTrue(os.path.exists(midi_path))
+        self.assertTrue(os.path.exists(click_guide_path))
 
     def test_engine_pipeline(self):
         """測試 PGMCraftEngine 完整 Pipeline"""

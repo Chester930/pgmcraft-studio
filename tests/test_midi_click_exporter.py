@@ -3,7 +3,9 @@ import os
 import tempfile
 import numpy as np
 import soundfile as sf
-import pretty_midi
+import mido
+
+from pgm_craft.synthesizer import PGMSynthesizer
 
 class TestMidiClickExporter(unittest.TestCase):
     def setUp(self):
@@ -45,27 +47,41 @@ class TestMidiClickExporter(unittest.TestCase):
         self.assertGreater(np.max(np.abs(read_data)), 0.1, "Click 音軌振幅應包含合成訊號")
 
     def test_midi_export(self):
-        """測試 Pretty_MIDI Tempo Map / Beat Note 寫入能力"""
-        pm = pretty_midi.PrettyMIDI()
-        inst = pretty_midi.Instrument(program=115) # Woodblock / Percussion
-        
-        for timestamp, beat_num in self.fake_beats:
-            pitch = 76 if int(beat_num) == 1 else 77
-            note = pretty_midi.Note(
-                velocity=110 if int(beat_num) == 1 else 80,
-                pitch=pitch,
-                start=timestamp,
-                end=timestamp + 0.05
-            )
-            inst.notes.append(note)
-
-        pm.instruments.append(inst)
-        output_mid = os.path.join(self.temp_dir, "test_tempo_map.mid")
-        pm.write(output_mid)
+        """測試 tempo_map.mid 真的包含 DAW 可讀的 tempo meta event"""
+        synth = PGMSynthesizer()
+        output_mid = synth.export_midi_tempo_map(self.fake_beats, output_dir=self.temp_dir)
 
         self.assertTrue(os.path.exists(output_mid))
-        loaded_pm = pretty_midi.PrettyMIDI(output_mid)
-        self.assertEqual(len(loaded_pm.instruments[0].notes), len(self.fake_beats))
+        loaded_mid = mido.MidiFile(output_mid)
+        tempo_events = [
+            msg
+            for track in loaded_mid.tracks
+            for msg in track
+            if msg.type == "set_tempo"
+        ]
+        anchor_notes = [
+            msg
+            for track in loaded_mid.tracks
+            for msg in track
+            if msg.type == "note_on" and msg.velocity > 0
+        ]
+        self.assertGreaterEqual(len(tempo_events), 1)
+        self.assertGreaterEqual(len(anchor_notes), 1)
+
+    def test_midi_click_guide_export(self):
+        """測試 click_guide.mid 保留逐拍 MIDI click notes"""
+        synth = PGMSynthesizer()
+        output_mid = synth.export_midi_click_guide(self.fake_beats, output_dir=self.temp_dir)
+
+        self.assertTrue(os.path.exists(output_mid))
+        loaded_mid = mido.MidiFile(output_mid)
+        click_notes = [
+            msg
+            for track in loaded_mid.tracks
+            for msg in track
+            if msg.type == "note_on" and msg.velocity > 0
+        ]
+        self.assertEqual(len(click_notes), len(self.fake_beats))
 
 if __name__ == '__main__':
     unittest.main()

@@ -7,10 +7,12 @@
 ## 閱讀順序
 
 1. [專案目標](PROJECT-GOALS.md)：專案要解決什麼問題、服務誰、第一版要做到什麼。
-2. [開發路線圖](ROADMAP.md)：從 MVP 到公開發布，再到未來 AI 模組的階段規劃。
-3. [系統架構](ARCHITECTURE.md)：節點式工作流與 Behavior Tree 編排模型。
-4. [Behavior Tree 設計圖](BEHAVIOR-TREE.md)：目前已實作 BT 與 Phase 1 目標 BT。
-5. [開發脈絡](DEVELOPMENT-CONTEXT.md)：目前程式狀態、實作現實、已形成的設計方向。
+2. [Phase 1 已確定範圍](PHASE1-CONFIRMED-SCOPE.md)：目前已確認的核心功能、輸出契約與本輪優化結果。
+3. [開發路線圖](ROADMAP.md)：從 MVP 到公開發布，再到未來 AI 模組的階段規劃。
+4. [系統架構](ARCHITECTURE.md)：節點式工作流與 Behavior Tree 編排模型。
+5. [Behavior Tree 設計圖](BEHAVIOR-TREE.md)：目前已實作 BT 與 Phase 1 目標 BT。
+6. [開發脈絡](DEVELOPMENT-CONTEXT.md)：目前程式狀態、實作現實、已形成的設計方向。
+7. [相關說明文獻與參考專案](REFERENCES.md)：DAW MIDI、beat tracking 與驗證工具參考。
 
 ## 文件語言
 

@@ -54,6 +54,7 @@ Blackboard 是節點之間共享的工作流狀態。
 - `click_track`
 - `mix_with_click`
 - `tempo_map_midi`
+- `click_guide_midi`
 - `stems`
 
 隨著專案成熟，這些 key 應該文件化或型別化，降低隱性耦合。

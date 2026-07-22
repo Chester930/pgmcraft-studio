@@ -213,7 +213,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
         input_source = audio_file
 
     if not input_source:
-        return "⚠️ 請輸入影片/音訊 URL 或選擇上傳本地檔！", None, None, None, None, None, None
+        return "⚠️ 請輸入影片/音訊 URL 或選擇上傳本地檔！", None, None, None, None, None, None, None
 
     output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
     os.makedirs(output_dir, exist_ok=True)
@@ -253,6 +253,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
         report["outputs"]["click_track"],
         report["outputs"]["mix_with_click"],
         report["outputs"]["tempo_map_midi"],
+        report["outputs"]["click_guide_midi"],
         report_txt_path
     )
 
@@ -393,6 +394,7 @@ with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作�
             with gr.Row():
                 file_mix_download = gr.File(label="下載 mix_with_click.wav")
                 file_midi_download = gr.File(label="下載 tempo_map.mid (DAW 速度軌)")
+                file_click_midi_download = gr.File(label="下載 click_guide.mid (MIDI Click)")
                 file_report_download = gr.File(label="下載 PGM 分析報告")
 
             pgm_browse_btn.click(
@@ -411,6 +413,7 @@ with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作�
                     click_audio_player,
                     file_mix_download,
                     file_midi_download,
+                    file_click_midi_download,
                     file_report_download
                 ]
             )
