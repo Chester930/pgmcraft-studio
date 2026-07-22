@@ -1,0 +1,8 @@
+numpy
+scipy
+soundfile
+librosa
+pretty_midi
+matplotlib
+gradio
+BeatNet
