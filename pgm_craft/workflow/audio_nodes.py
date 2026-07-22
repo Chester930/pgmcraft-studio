@@ -130,6 +130,107 @@ class LibrosaBeatNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class BeatValidationNode(BaseNode):
+    """檢查 beat 結果是否足以支撐 DAW/PGM 匯出。"""
+    MIN_BEATS = 4
+    MIN_BPM = 30.0
+    MAX_BPM = 300.0
+    MAX_BPM_JUMP_RATIO = 0.35
+
+    def __init__(self):
+        super().__init__("BeatValidationNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats")
+        validation = self.validate(beats)
+        blackboard.set_val("beat_validation", validation)
+        blackboard.set_val("beat_confidence_level", validation["status"])
+        blackboard.set_val("beat_warnings", validation["warnings"])
+        blackboard.set_val("beat_errors", validation["errors"])
+
+        if validation["status"] == "FAIL":
+            print(f"[BT Node: {self.name}] Beat validation failed: {validation['errors']}")
+            return NodeStatus.FAILURE
+
+        if validation["status"] == "WARN":
+            print(f"[BT Node: {self.name}] Beat validation warnings: {validation['warnings']}")
+        else:
+            print(f"[BT Node: {self.name}] Beat validation passed.")
+        return NodeStatus.SUCCESS
+
+    def validate(self, beats):
+        warnings = []
+        errors = []
+
+        beat_array = np.asarray(beats) if beats is not None else np.empty((0, 2))
+        if beat_array.ndim != 2 or beat_array.shape[1] < 2:
+            errors.append("beats 必須是 Nx2 結構，包含 timestamp 與 beat number。")
+            return self._result("FAIL", warnings, errors)
+
+        if len(beat_array) < self.MIN_BEATS:
+            errors.append(f"beat 數量不足，至少需要 {self.MIN_BEATS} 拍。")
+            return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
+
+        try:
+            timestamps = beat_array[:, 0].astype(float)
+            beat_numbers = beat_array[:, 1].astype(int)
+        except (TypeError, ValueError):
+            errors.append("beats 內容必須能轉換為數字。")
+            return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
+
+        if not np.all(np.isfinite(timestamps)):
+            errors.append("beat timestamp 包含非有限數值。")
+            return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
+
+        intervals = np.diff(timestamps)
+        if np.any(intervals <= 0):
+            errors.append("beat timestamp 必須嚴格遞增。")
+            return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
+
+        bpms = 60.0 / intervals
+        out_of_range = (bpms < self.MIN_BPM) | (bpms > self.MAX_BPM)
+        if np.any(out_of_range):
+            warnings.append(
+                f"偵測到 {int(np.sum(out_of_range))} 個 BPM 區段超出 {self.MIN_BPM:.0f}-{self.MAX_BPM:.0f} 範圍。"
+            )
+
+        jump_count = 0
+        if len(bpms) > 1:
+            previous = bpms[:-1]
+            current = bpms[1:]
+            ratios = np.abs(current - previous) / np.maximum(previous, 1e-9)
+            jump_count = int(np.sum(ratios > self.MAX_BPM_JUMP_RATIO))
+            if jump_count:
+                warnings.append(f"偵測到 {jump_count} 次相鄰 BPM 跳動超過 {self.MAX_BPM_JUMP_RATIO:.0%}。")
+
+        has_downbeat = bool(np.any(beat_numbers == 1))
+        if not has_downbeat:
+            warnings.append("沒有偵測到 downbeat 標籤，後續小節會先以每 4 拍推定。")
+
+        status = "WARN" if warnings else "PASS"
+        return self._result(
+            status,
+            warnings,
+            errors,
+            total_beats=len(beat_array),
+            average_bpm=float(np.mean(bpms)),
+            min_bpm=float(np.min(bpms)),
+            max_bpm=float(np.max(bpms)),
+            bpm_jump_count=jump_count,
+            has_downbeat=has_downbeat,
+            assumed_meter="4/4",
+        )
+
+    def _result(self, status, warnings, errors, **stats):
+        return {
+            "status": status,
+            "is_valid": status != "FAIL",
+            "warnings": warnings,
+            "errors": errors,
+            "stats": stats,
+        }
+
+
 class KeyChordAnalysisNode(BaseNode):
     def __init__(self):
         super().__init__("KeyChordAnalysisNode")

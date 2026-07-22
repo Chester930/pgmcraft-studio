@@ -49,6 +49,10 @@ Blackboard 是節點之間共享的工作流狀態。
 - `sr`
 - `target_analysis_path`
 - `beats`
+- `beat_validation`
+- `beat_confidence_level`
+- `beat_warnings`
+- `beat_errors`
 - `estimated_key`
 - `chord_progression`
 - `click_track`
@@ -73,6 +77,7 @@ Root Sequence
 ├── Fallback: BeatTrackingSelector
 │   ├── BeatNetNode
 │   └── LibrosaBeatNode
+├── BeatValidationNode
 ├── KeyChordAnalysisNode
 ├── ClickSynthesisNode
 └── MIDIExportNode
@@ -84,6 +89,7 @@ Root Sequence
 - 選用 stem separation 可以跳過
 - BeatNet 是優先方案
 - Librosa 是 fallback
+- beat validation 會在分析後先判斷是否可繼續輸出
 - 匯出節點只在分析成功後執行
 
 ## 節點分類

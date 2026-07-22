@@ -14,6 +14,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 音訊或影片來源
 -> 音訊載入與必要下載
 -> beat / downbeat 偵測
+-> beat 品質檢查
 -> BPM 與 tempo curve
 -> click WAV
 -> mix preview WAV
@@ -29,6 +30,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 | Click WAV | `click_track.wav` | 練團、耳監、Live click | 已實作 |
 | Mix Preview | `mix_with_click.wav` | 檢查 click 是否貼合原曲 | 已實作 |
 | Tempo Curve | `tempo_curve.png` | 檢視 BPM 浮動 | 已實作 |
+| Beat Validation | `beat_validation` | 判斷 beat 是否可用於 DAW/PGM 輸出 | 已新增 v1 |
 | Tempo Map MIDI | `tempo_map.mid` | 匯入 DAW 建立速度圖 | 已優化 |
 | MIDI Click Guide | `click_guide.mid` | 匯入 DAW 取得逐拍 click note | 已新增 |
 | JSON Report | `pgm_report.json` | 機器可讀分析結果 | 已實作並補輸出欄位 |
@@ -60,11 +62,27 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 - Gradio PGM 介面新增 `click_guide.mid` 下載欄位。
 - 測試加入 MIDI tempo event 與 click note 驗證。
 - `mido` 補為正式依賴，避免隱性依賴。
+- `BeatValidationNode` 已新增 v1，支援 `PASS` / `WARN` / `FAIL`。
+
+## BeatValidationNode v1 規格
+
+| 結果 | 行為 | 條件 |
+|------|------|------|
+| `PASS` | 繼續後續流程 | beat 數量足夠、timestamp 遞增、BPM 與 downbeat 資訊沒有明顯異常 |
+| `WARN` | 繼續後續流程，但 report 顯示警告 | BPM 超出 30-300、相鄰 BPM 跳動超過 35%、缺少 downbeat 標籤 |
+| `FAIL` | 停止後續 BT 流程 | 無 beat、beat 少於 4 個、timestamp 不遞增、資料結構錯誤 |
+
+Blackboard 輸出：
+
+- `beat_validation`
+- `beat_confidence_level`
+- `beat_warnings`
+- `beat_errors`
 
 ## 目前已知限制
 
 - 目前假設拍號為 4/4。
-- tempo map 由相鄰 beat 間距推算，尚未加入異常 beat validation。
+- tempo map 由相鄰 beat 間距推算，已加入初版 beat validation，但尚未做自動修拍。
 - downbeat refine 與 measure map 仍是下一階段需要明確化的節點。
 - 舊版 `beat_tracker.py` / `web_app.py` 尚未整理，公開前應決定移入 `legacy/` 或與正式 BT 管線合併。
 - DAW 匯入行為可能因軟體不同而有差異，下一階段應建立 `IMPORT_GUIDE.md` 範本。
@@ -74,9 +92,8 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 下一個應討論與設計的區塊是：
 
 ```text
-BeatValidationNode
--> DownbeatRefineNode
+DownbeatRefineNode
 -> MeasureMapNode
 ```
 
-這三個節點會決定 tempo map、click guide、報告、和弦小節對齊是否可靠。
+這兩個節點會決定 tempo map、click guide、報告、和弦小節對齊是否可靠。

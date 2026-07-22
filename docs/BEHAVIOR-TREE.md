@@ -30,6 +30,7 @@ PGMCraftWorkflowRoot [Sequence]
 ├── BeatTrackingSelector [Fallback]
 │   ├── BeatNetNode
 │   └── LibrosaBeatNode
+├── BeatValidationNode
 ├── KeyChordAnalysisNode
 ├── ClickSynthesisNode
 └── MIDIExportNode
@@ -46,6 +47,7 @@ flowchart TD
     BeatFallback{"BeatTrackingSelector<br/>Fallback"}
     BeatNet["BeatNetNode<br/>優先 beat/downbeat 偵測"]
     Librosa["LibrosaBeatNode<br/>Librosa fallback"]
+    BeatCheck["BeatValidationNode<br/>PASS/WARN/FAIL 品質檢查"]
     KeyChord["KeyChordAnalysisNode<br/>調性與和弦參考"]
     Click["ClickSynthesisNode<br/>Click WAV 與 mix preview"]
     Midi["MIDIExportNode<br/>tempo_map.mid + click_guide.mid"]
@@ -53,8 +55,9 @@ flowchart TD
     Root --> Download --> Load --> Stem --> BeatFallback
     BeatFallback --> BeatNet
     BeatFallback --> Librosa
-    BeatNet --> KeyChord
-    Librosa --> KeyChord
+    BeatNet --> BeatCheck
+    Librosa --> BeatCheck
+    BeatCheck --> KeyChord
     KeyChord --> Click --> Midi
 ```
 
@@ -67,6 +70,7 @@ flowchart TD
 | `DemucsStemNode` | Optional Action | 依 `enable_stem` 決定是否跑分軌 | 已實作流程，分軌品質目前仍偏 placeholder |
 | `BeatNetNode` | Action | 優先使用 BeatNet 偵測節拍 | 已實作，依賴不足時會失敗 |
 | `LibrosaBeatNode` | Fallback Action | BeatNet 不可用時改用 Librosa | 已實作 |
+| `BeatValidationNode` | Guard / Action | 檢查 beat 數量、timestamp、BPM 範圍、BPM 跳動與 downbeat 標籤 | 已實作 v1 |
 | `KeyChordAnalysisNode` | Action | 估算調性與小節和弦 | 已實作基礎版本 |
 | `ClickSynthesisNode` | Action | 產生 click WAV 與原曲加 click 預聽檔 | 已實作 |
 | `MIDIExportNode` | Action | 產生 `tempo_map.mid` 與 `click_guide.mid` | 已優化為 DAW tempo map + MIDI click guide |
@@ -83,6 +87,10 @@ flowchart TD
 | `target_analysis_path` | `AudioLoadNode` / `DemucsStemNode` | beat 分析目標音檔 |
 | `stems` | `DemucsStemNode` | 分軌結果 |
 | `beats` | `BeatNetNode` / `LibrosaBeatNode` | 節拍與拍號標籤 |
+| `beat_validation` | `BeatValidationNode` | beat 品質檢查結果 |
+| `beat_confidence_level` | `BeatValidationNode` | `PASS`、`WARN` 或 `FAIL` |
+| `beat_warnings` | `BeatValidationNode` | 可繼續但需人工確認的警告 |
+| `beat_errors` | `BeatValidationNode` | 需停止流程的錯誤 |
 | `estimated_key` | `KeyChordAnalysisNode` | 推定調性 |
 | `chord_progression` | `KeyChordAnalysisNode` | 小節和弦參考 |
 | `click_track` | `ClickSynthesisNode` | click WAV 路徑 |
@@ -207,7 +215,7 @@ flowchart TD
 
 建議依以下順序開發，因為每一步都會讓輸出更接近 DAW-ready：
 
-1. `BeatValidationNode`
+1. `BeatValidationNode`：已完成 v1
 2. `DownbeatRefineNode`
 3. `MeasureMapNode`
 4. `ProjectPackageNode`
@@ -219,6 +227,9 @@ flowchart TD
 | Key | 來源節點 | 用途 |
 |-----|----------|------|
 | `beat_validation` | `BeatValidationNode` | beat 數量、間距、BPM 範圍是否合理 |
+| `beat_confidence_level` | `BeatValidationNode` | `PASS`、`WARN` 或 `FAIL` |
+| `beat_warnings` | `BeatValidationNode` | 可繼續但需人工確認的警告 |
+| `beat_errors` | `BeatValidationNode` | 需停止流程的錯誤 |
 | `measure_map` | `MeasureMapNode` | 小節、拍點、downbeat 的結構化資料 |
 | `tempo_events` | `TempoMapMidiNode` | MIDI tempo map 所需事件 |
 | `click_guide_midi` | `MidiClickGuideNode` | DAW click guide MIDI 路徑 |
@@ -245,4 +256,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-下一輪應先確認 `BeatValidationNode`、`DownbeatRefineNode` 與 `MeasureMapNode` 的資料格式，因為這三個節點會影響後續 MIDI、Click、報告與工程素材包的可信度。
+下一輪應先確認 `DownbeatRefineNode` 與 `MeasureMapNode` 的資料格式，因為這兩個節點會影響後續 MIDI、Click、報告與工程素材包的小節對齊可信度。

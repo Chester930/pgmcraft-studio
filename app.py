@@ -230,10 +230,18 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
 - **平均速度 (BPM)**: `{report['average_bpm']}` (`{report['min_bpm']}` ~ `{report['max_bpm']}`)
 - **總小節數**: `{report['total_measures']}` 小節
 - **總拍數**: `{report['total_beats']}` 拍
+- **節拍檢查**: `{report.get('beat_validation', {}).get('status', 'UNKNOWN')}`
 
 ---
 ### 🎸 抓譜和弦進行預覽 (前 16 小節):
 """
+    warnings = report.get("beat_validation", {}).get("warnings", [])
+    if warnings:
+        summary += "\n### ⚠️ 節拍檢查警告\n"
+        for warning in warnings:
+            summary += f"- {warning}\n"
+        summary += "\n---\n"
+
     chords_preview = ""
     for c in report['chord_progression'][:16]:
         chords_preview += f"- **第 {c['measure']:02d} 小節** ({c['start_time']}s ~ {c['end_time']}s): `{c['chord']}`\n"

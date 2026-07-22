@@ -31,6 +31,7 @@ class PGMCraftEngine:
         estimated_key = blackboard.get_val("estimated_key", "C Major")
         chords = blackboard.get_val("chord_progression", [])
         stems = blackboard.get_val("stems", {})
+        beat_validation = blackboard.get_val("beat_validation", {})
 
         # Calculate BPM stats & measures
         diffs = np.diff(beats[:, 0]) if beats is not None else np.array([0.5])
@@ -65,6 +66,7 @@ class PGMCraftEngine:
             "max_bpm": round(max_bpm, 1),
             "total_beats": len(beats) if beats is not None else 0,
             "total_measures": downbeat_count if downbeat_count > 0 else (len(beats) // 4 if beats is not None else 0),
+            "beat_validation": beat_validation,
             "chord_progression": chords,
             "stems": stems,
             "outputs": {

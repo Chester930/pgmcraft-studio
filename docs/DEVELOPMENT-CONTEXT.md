@@ -25,7 +25,7 @@ python -m pytest -q
 最近觀察到的結果：
 
 ```text
-28 passed, 1 skipped
+35 passed, 1 skipped
 ```
 
 觀察到的警告：
@@ -41,10 +41,12 @@ python -m pytest -q
 
 - 本地音訊分析
 - BeatNet 與 Librosa fallback
+- BeatValidationNode v1
 - 調性與和弦參考分析
 - Click Track WAV 合成
 - 原曲加 Click 的 WAV 輸出
-- MIDI 輸出
+- `tempo_map.mid` MIDI tempo map 輸出
+- `click_guide.mid` MIDI click guide 輸出
 - 速度曲線圖
 - JSON report
 - Gradio GUI 外殼
@@ -67,6 +69,7 @@ python -m pytest -q
 - 可匯入 DAW 的 MIDI 輸出是核心產品功能。
 - 系統應設計為節點式音訊工作流。
 - Behavior Tree 負責串接節點、guard condition 與 fallback。
+- beat tracking 後應先經過 validation，只有 `FAIL` 會停止後續輸出，`WARN` 會繼續但寫入報告。
 - AI 分軌與 Podcast 工作流在完成真實整合前，應維持為 extension module。
 - 開發階段預設使用繁體中文撰寫討論與文件，除非另有英文版需求。
 

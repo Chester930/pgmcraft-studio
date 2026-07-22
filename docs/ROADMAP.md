@@ -37,6 +37,7 @@
 - URL 輸入與下載工作流
 - 音訊載入與驗證
 - BeatNet beat tracking 與 Librosa fallback
+- Beat validation
 - Downbeat 與小節推算
 - BPM 統計
 - 速度曲線圖
