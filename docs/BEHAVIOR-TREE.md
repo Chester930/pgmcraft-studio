@@ -31,6 +31,7 @@ PGMCraftWorkflowRoot [Sequence]
 │   ├── BeatNetNode
 │   └── LibrosaBeatNode
 ├── BeatValidationNode
+├── DownbeatRefineNode
 ├── MeasureMapNode
 ├── KeyChordAnalysisNode
 ├── ClickSynthesisNode
@@ -49,6 +50,7 @@ flowchart TD
     BeatNet["BeatNetNode<br/>優先 beat/downbeat 偵測"]
     Librosa["LibrosaBeatNode<br/>Librosa fallback"]
     BeatCheck["BeatValidationNode<br/>PASS/WARN/FAIL 品質檢查"]
+    DownbeatRefine["DownbeatRefineNode<br/>保守補強 downbeat"]
     MeasureMap["MeasureMapNode<br/>可變小節地圖"]
     KeyChord["KeyChordAnalysisNode<br/>調性與和弦參考"]
     Click["ClickSynthesisNode<br/>Click WAV 與 mix preview"]
@@ -59,7 +61,7 @@ flowchart TD
     BeatFallback --> Librosa
     BeatNet --> BeatCheck
     Librosa --> BeatCheck
-    BeatCheck --> MeasureMap --> KeyChord
+    BeatCheck --> DownbeatRefine --> MeasureMap --> KeyChord
     KeyChord --> Click --> Midi
 ```
 
@@ -73,6 +75,7 @@ flowchart TD
 | `BeatNetNode` | Action | 優先使用 BeatNet 偵測節拍 | 已實作，依賴不足時會失敗 |
 | `LibrosaBeatNode` | Fallback Action | BeatNet 不可用時改用 Librosa | 已實作 |
 | `BeatValidationNode` | Guard / Action | 檢查 beat 數量、timestamp、BPM 範圍、BPM 跳動、downbeat 標籤與變動小節長度 | 已實作 v1 |
+| `DownbeatRefineNode` | Action | 保留可信 downbeat；downbeat 不足時產生 4 拍候選並標記警告 | 已實作 v1 |
 | `MeasureMapNode` | Action | 依 downbeat 切小節；缺 downbeat 時使用 4 拍 fallback 並標警告 | 已實作 v1 |
 | `KeyChordAnalysisNode` | Action | 估算調性與小節和弦 | 已實作基礎版本 |
 | `ClickSynthesisNode` | Action | 產生 click WAV 與原曲加 click 預聽檔 | 已實作 |
@@ -95,6 +98,11 @@ flowchart TD
 | `beat_warnings` | `BeatValidationNode` | 可繼續但需人工確認的警告 |
 | `beat_errors` | `BeatValidationNode` | 需停止流程的錯誤 |
 | `beat_validation.stats.measure_lengths` | `BeatValidationNode` | 相鄰 downbeat 間的拍數統計，允許同曲變動 |
+| `refined_beats` | `DownbeatRefineNode` | 補強 downbeat 標籤後的 beat 陣列，timestamp 不變 |
+| `downbeat_refinement` | `DownbeatRefineNode` | downbeat 補強摘要、來源、警告與候選 |
+| `downbeat_refine_status` | `DownbeatRefineNode` | `PASS`、`WARN` 或 `FAIL` |
+| `downbeat_refine_warnings` | `DownbeatRefineNode` | downbeat 補強警告 |
+| `downbeat_candidates` | `DownbeatRefineNode` | downbeat 候選位置 |
 | `measure_map` | `MeasureMapNode` | 小節地圖，每一小節保留自己的 `beat_count` |
 | `measure_map_status` | `MeasureMapNode` | `PASS`、`WARN` 或 `FAIL` |
 | `measure_map_warnings` | `MeasureMapNode` | 小節地圖 fallback 或待人工確認警告 |
@@ -223,8 +231,8 @@ flowchart TD
 建議依以下順序開發，因為每一步都會讓輸出更接近 DAW-ready：
 
 1. `BeatValidationNode`：已完成 v1
-2. `MeasureMapNode`：已完成 v1
-3. `DownbeatRefineNode`
+2. `DownbeatRefineNode`：已完成 v1
+3. `MeasureMapNode`：已完成 v1
 4. `ProjectPackageNode`
 5. `ImportGuideNode`
 6. `ReportJsonNode` / `ReportTextNode` 整理
@@ -237,6 +245,8 @@ flowchart TD
 | `beat_confidence_level` | `BeatValidationNode` | `PASS`、`WARN` 或 `FAIL` |
 | `beat_warnings` | `BeatValidationNode` | 可繼續但需人工確認的警告 |
 | `beat_errors` | `BeatValidationNode` | 需停止流程的錯誤 |
+| `refined_beats` | `DownbeatRefineNode` | 補強 downbeat 標籤後的 beat 陣列，timestamp 不變 |
+| `downbeat_refinement` | `DownbeatRefineNode` | downbeat 補強摘要、來源、警告與候選 |
 | `measure_map` | `MeasureMapNode` | 小節、拍點、downbeat 的結構化資料 |
 | `measure_map_status` | `MeasureMapNode` | `PASS`、`WARN` 或 `FAIL` |
 | `measure_map_warnings` | `MeasureMapNode` | 小節地圖 fallback 或待人工確認警告 |
@@ -265,4 +275,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-下一輪應先確認 `DownbeatRefineNode` 的策略。它應該只修正或補強 downbeat，不應破壞 `MeasureMapNode` 已支援的可變小節長度資料模型。
+下一輪應先確認 `ProjectPackageNode` 與 `ImportGuideNode` 的輸出結構，讓目前已完成的 beat validation、downbeat refinement、measure map、MIDI 與報告可以被整理成穩定工程素材包。

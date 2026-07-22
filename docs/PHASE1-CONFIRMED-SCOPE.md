@@ -15,6 +15,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 -> 音訊載入與必要下載
 -> beat / downbeat 偵測
 -> beat 品質檢查
+-> downbeat 保守補強
 -> 可變小節地圖
 -> BPM 與 tempo curve
 -> click WAV
@@ -32,6 +33,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 | Mix Preview | `mix_with_click.wav` | 檢查 click 是否貼合原曲 | 已實作 |
 | Tempo Curve | `tempo_curve.png` | 檢視 BPM 浮動 | 已實作 |
 | Beat Validation | `beat_validation` | 判斷 beat 是否可用於 DAW/PGM 輸出 | 已新增 v1 |
+| Downbeat Refinement | `downbeat_refinement` | 保留可信 downbeat；不足時產生候選 | 已新增 v1 |
 | Measure Map | `measure_map` | 建立允許變動拍數的小節地圖 | 已新增 v1 |
 | Tempo Map MIDI | `tempo_map.mid` | 匯入 DAW 建立速度圖 | 已優化 |
 | MIDI Click Guide | `click_guide.mid` | 匯入 DAW 取得逐拍 click note | 已新增 |
@@ -65,6 +67,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 - 測試加入 MIDI tempo event 與 click note 驗證。
 - `mido` 補為正式依賴，避免隱性依賴。
 - `BeatValidationNode` 已新增 v1，支援 `PASS` / `WARN` / `FAIL`。
+- `DownbeatRefineNode` 已新增 v1，只補強 downbeat 標籤，不移動 beat timestamp。
 - `MeasureMapNode` 已新增 v1，支援 downbeat 切小節與 4 拍 fallback。
 
 ## BeatValidationNode v1 規格
@@ -126,11 +129,32 @@ Blackboard 輸出：
 }
 ```
 
+## DownbeatRefineNode v1 規格
+
+`DownbeatRefineNode` 是保守補強節點，不是完整拍號推定器。
+
+輸出：
+
+- `refined_beats`
+- `downbeat_refinement`
+- `downbeat_refine_status`
+- `downbeat_refine_warnings`
+- `downbeat_candidates`
+
+主要規則：
+
+- 不移動 beat timestamp。
+- 有足夠 downbeat 時保留原始標籤，`source` 標記為 `existing_downbeats`。
+- 沒有足夠 downbeat 時，以 4 拍建立候選標籤，`source` 標記為 `fallback_candidate_4beat`，狀態為 `WARN`。
+- 可變小節長度不視為錯誤。
+- 明顯異常小節長度只警告，不自動刪除或重排。
+- 下游節點優先使用 `refined_beats`，但原始 `beats` 仍保留在 blackboard。
+
 ## 目前已知限制
 
 - 目前尚未完整推定拍號；4 拍只作為常見小節長度參考，資料結構必須允許變動小節。
 - tempo map 由相鄰 beat 間距推算，已加入初版 beat validation，但尚未做自動修拍。
-- measure map 已可保留變動小節長度，但 downbeat refine 仍是下一階段需要明確化的節點。
+- downbeat refine 目前是保守候選補強，尚未使用音訊能量、鼓點重音或 AI 模型重新判斷強拍。
 - 舊版 `beat_tracker.py` / `web_app.py` 尚未整理，公開前應決定移入 `legacy/` 或與正式 BT 管線合併。
 - DAW 匯入行為可能因軟體不同而有差異，下一階段應建立 `IMPORT_GUIDE.md` 範本。
 
@@ -139,7 +163,8 @@ Blackboard 輸出：
 下一個應討論與設計的區塊是：
 
 ```text
-DownbeatRefineNode
+ProjectPackageNode
+-> ImportGuideNode
 ```
 
-這個節點會決定下游 measure map、tempo map、click guide、報告、和弦小節對齊是否更可靠。
+這兩個節點會把目前已完成的分析、MIDI、click 與報告整理成穩定可交付的 DAW/PGM 工程素材包。

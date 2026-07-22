@@ -246,6 +246,115 @@ class BeatValidationNode(BaseNode):
         }
 
 
+class DownbeatRefineNode(BaseNode):
+    """保守補強 downbeat 標籤；不移動 beat timestamp。"""
+    FALLBACK_MEASURE_LENGTH = 4
+    MIN_REASONABLE_MEASURE_LENGTH = 2
+    MAX_REASONABLE_MEASURE_LENGTH = 8
+
+    def __init__(self):
+        super().__init__("DownbeatRefineNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beat_validation = blackboard.get_val("beat_validation", {})
+        if beat_validation.get("status") == "FAIL":
+            blackboard.set_val("downbeat_refine_status", "FAIL")
+            blackboard.set_val("downbeat_refine_warnings", ["beat validation 失敗，無法補強 downbeat。"])
+            return NodeStatus.FAILURE
+
+        beats = blackboard.get_val("beats")
+        refined_beats, result = self.refine(beats)
+        blackboard.set_val("refined_beats", refined_beats)
+        blackboard.set_val("downbeat_refinement", result)
+        blackboard.set_val("downbeat_refine_status", result["status"])
+        blackboard.set_val("downbeat_refine_warnings", result["warnings"])
+        blackboard.set_val("downbeat_candidates", result["candidates"])
+
+        if result["status"] == "FAIL":
+            print(f"[BT Node: {self.name}] Downbeat refinement failed: {result['warnings']}")
+            return NodeStatus.FAILURE
+
+        if result["warnings"]:
+            print(f"[BT Node: {self.name}] Downbeat refinement warnings: {result['warnings']}")
+        else:
+            print(f"[BT Node: {self.name}] Downbeat refinement passed.")
+        return NodeStatus.SUCCESS
+
+    def refine(self, beats):
+        beat_array = np.asarray(beats) if beats is not None else np.empty((0, 2))
+        if beat_array.ndim != 2 or beat_array.shape[1] < 2 or len(beat_array) == 0:
+            return beat_array, self._result("FAIL", "invalid", ["沒有可用 beat，無法補強 downbeat。"], [], [])
+
+        refined = beat_array.copy()
+        timestamps = refined[:, 0].astype(float)
+        beat_numbers = refined[:, 1].astype(int)
+        downbeat_indexes = np.where(beat_numbers == 1)[0].tolist()
+
+        if len(downbeat_indexes) >= 2:
+            measure_lengths = self._measure_lengths(downbeat_indexes)
+            warnings = self._measure_length_warnings(measure_lengths)
+            status = "WARN" if warnings else "PASS"
+            return refined, self._result(
+                status=status,
+                source="existing_downbeats",
+                warnings=warnings,
+                measure_lengths=measure_lengths,
+                candidates=self._candidates(timestamps, downbeat_indexes, "existing", 1.0),
+            )
+
+        anchor_index = downbeat_indexes[0] if downbeat_indexes else 0
+        for index in range(len(refined)):
+            refined[index, 1] = ((index - anchor_index) % self.FALLBACK_MEASURE_LENGTH) + 1
+
+        fallback_indexes = [index for index in range(len(refined)) if int(refined[index, 1]) == 1]
+        warnings = ["downbeat 標籤不足，已建立每 4 拍 fallback 候選；此結果需要人工確認。"]
+        return refined, self._result(
+            status="WARN",
+            source="fallback_candidate_4beat",
+            warnings=warnings,
+            measure_lengths=self._measure_lengths(fallback_indexes),
+            candidates=self._candidates(timestamps, fallback_indexes, "fallback_candidate_4beat", 0.35),
+        )
+
+    def _measure_lengths(self, downbeat_indexes):
+        return [
+            downbeat_indexes[index + 1] - downbeat_indexes[index]
+            for index in range(len(downbeat_indexes) - 1)
+        ]
+
+    def _measure_length_warnings(self, measure_lengths):
+        warnings = []
+        abnormal_lengths = [
+            length
+            for length in measure_lengths
+            if length < self.MIN_REASONABLE_MEASURE_LENGTH or length > self.MAX_REASONABLE_MEASURE_LENGTH
+        ]
+        if abnormal_lengths:
+            warnings.append(f"偵測到不尋常小節長度 {abnormal_lengths}，保留原 downbeat 但建議人工檢查。")
+        return warnings
+
+    def _candidates(self, timestamps, downbeat_indexes, source, confidence):
+        return [
+            {
+                "beat_index": int(index),
+                "time": round(float(timestamps[index]), 6),
+                "source": source,
+                "confidence": confidence,
+            }
+            for index in downbeat_indexes
+        ]
+
+    def _result(self, status, source, warnings, measure_lengths, candidates):
+        return {
+            "status": status,
+            "source": source,
+            "warnings": warnings,
+            "measure_lengths": measure_lengths,
+            "has_variable_measure_lengths": len(set(measure_lengths)) > 1 if measure_lengths else False,
+            "candidates": candidates,
+        }
+
+
 class MeasureMapNode(BaseNode):
     """將 beat/downbeat 資料整理成允許變動小節長度的 measure map。"""
     FALLBACK_MEASURE_LENGTH = 4
@@ -260,8 +369,9 @@ class MeasureMapNode(BaseNode):
             blackboard.set_val("measure_map_warnings", ["beat validation 失敗，無法建立 measure map。"])
             return NodeStatus.FAILURE
 
-        beats = blackboard.get_val("beats")
-        measure_map, status, warnings = self.build_measure_map(beats, beat_validation)
+        downbeat_refinement = blackboard.get_val("downbeat_refinement", {})
+        beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
+        measure_map, status, warnings = self.build_measure_map(beats, beat_validation, downbeat_refinement)
         blackboard.set_val("measure_map", measure_map)
         blackboard.set_val("measure_map_status", status)
         blackboard.set_val("measure_map_warnings", warnings)
@@ -275,16 +385,24 @@ class MeasureMapNode(BaseNode):
         print(f"[BT Node: {self.name}] Built {len(measure_map)} measures.")
         return NodeStatus.SUCCESS
 
-    def build_measure_map(self, beats, beat_validation=None):
+    def build_measure_map(self, beats, beat_validation=None, downbeat_refinement=None):
         warnings = []
         beat_rows = self._normalize_beats(beats)
         if not beat_rows:
             return [], "FAIL", ["沒有可用 beat，無法建立 measure map。"]
 
+        downbeat_source = (downbeat_refinement or {}).get("source", "downbeat")
+        using_fallback_refinement = downbeat_source.startswith("fallback")
         downbeat_indexes = [index for index, row in enumerate(beat_rows) if row["beat"] == 1]
         if len(downbeat_indexes) >= 2:
-            measure_map = self._build_from_downbeats(beat_rows, downbeat_indexes)
-            status = "PASS"
+            measure_map = self._build_from_downbeats(
+                beat_rows,
+                downbeat_indexes,
+                source="fallback_4beat" if using_fallback_refinement else "downbeat",
+            )
+            status = "WARN" if using_fallback_refinement else "PASS"
+            if using_fallback_refinement:
+                warnings.append("小節地圖使用 fallback downbeat 候選建立，需要人工確認。")
         else:
             measure_map = self._build_fallback_4beat(beat_rows)
             status = "WARN"
@@ -292,6 +410,8 @@ class MeasureMapNode(BaseNode):
 
         if beat_validation and beat_validation.get("warnings"):
             warnings.extend(beat_validation["warnings"])
+        if downbeat_refinement and downbeat_refinement.get("warnings"):
+            warnings.extend(downbeat_refinement["warnings"])
 
         return measure_map, status, warnings
 
@@ -305,7 +425,7 @@ class MeasureMapNode(BaseNode):
             rows.append({"time": float(row[0]), "beat": int(row[1])})
         return sorted(rows, key=lambda item: item["time"])
 
-    def _build_from_downbeats(self, beat_rows, downbeat_indexes):
+    def _build_from_downbeats(self, beat_rows, downbeat_indexes, source="downbeat"):
         common_length = self._common_measure_length(downbeat_indexes)
         measures = []
 
@@ -325,7 +445,7 @@ class MeasureMapNode(BaseNode):
                 end_time=end_time,
                 is_variable_length=beat_count != common_length,
                 is_incomplete=is_last_measure and beat_count < common_length,
-                source="downbeat",
+                source=source,
             ))
 
         return measures
@@ -398,7 +518,7 @@ class KeyChordAnalysisNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         audio_path = blackboard.get_val("audio_path")
-        beats = blackboard.get_val("beats")
+        beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
 
         estimated_key = self.analyzer.analyze_key(audio_path)
         chords = self.analyzer.analyze_chords(audio_path, beats)
@@ -416,7 +536,7 @@ class ClickSynthesisNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         audio_path = blackboard.get_val("audio_path")
-        beats = blackboard.get_val("beats")
+        beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
         output_dir = blackboard.get_val("output_dir", "outputs")
 
         click_path, mix_path = self.synthesizer.synthesize_click(audio_path, beats, output_dir=output_dir)
@@ -432,7 +552,7 @@ class MIDIExportNode(BaseNode):
         self.synthesizer = PGMSynthesizer()
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
-        beats = blackboard.get_val("beats")
+        beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
         output_dir = blackboard.get_val("output_dir", "outputs")
 
         tempo_map_path = self.synthesizer.export_midi_tempo_map(beats, output_dir=output_dir)

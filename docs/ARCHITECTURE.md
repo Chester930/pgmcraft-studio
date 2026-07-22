@@ -53,6 +53,11 @@ Blackboard 是節點之間共享的工作流狀態。
 - `beat_confidence_level`
 - `beat_warnings`
 - `beat_errors`
+- `refined_beats`
+- `downbeat_refinement`
+- `downbeat_refine_status`
+- `downbeat_refine_warnings`
+- `downbeat_candidates`
 - `measure_map`
 - `measure_map_status`
 - `measure_map_warnings`
@@ -81,6 +86,7 @@ Root Sequence
 │   ├── BeatNetNode
 │   └── LibrosaBeatNode
 ├── BeatValidationNode
+├── DownbeatRefineNode
 ├── MeasureMapNode
 ├── KeyChordAnalysisNode
 ├── ClickSynthesisNode
@@ -94,6 +100,7 @@ Root Sequence
 - BeatNet 是優先方案
 - Librosa 是 fallback
 - beat validation 會在分析後先判斷是否可繼續輸出
+- downbeat refinement 只能補強 downbeat 標籤，不應移動 beat timestamp
 - 小節資料模型需要允許同一首歌內出現不同小節長度
 - measure map 會保留每一小節自己的 `beat_count`，缺 downbeat 時只能標記為 fallback
 - 匯出節點只在分析成功後執行

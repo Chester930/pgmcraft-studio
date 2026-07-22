@@ -10,6 +10,7 @@ from pgm_craft.workflow.audio_nodes import (
     BeatNetNode,
     LibrosaBeatNode,
     BeatValidationNode,
+    DownbeatRefineNode,
     MeasureMapNode,
 )
 from pgm_craft.workflow.builder import BTWorkflowEngine
@@ -123,6 +124,75 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertEqual(blackboard.get_val("beat_confidence_level"), "FAIL")
         self.assertGreater(len(blackboard.get_val("beat_errors")), 0)
 
+    def test_downbeat_refine_preserves_existing_downbeats(self):
+        """測試 DownbeatRefineNode：已有 downbeat 時保留原標籤"""
+        node = DownbeatRefineNode()
+        blackboard = Blackboard()
+        beats = np.array([
+            [0.0, 1],
+            [0.5, 2],
+            [1.0, 3],
+            [1.5, 4],
+            [2.0, 1],
+        ])
+        blackboard.set_val("beat_validation", {"status": "PASS", "warnings": []})
+        blackboard.set_val("beats", beats)
+
+        status = node.execute(blackboard)
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual(blackboard.get_val("downbeat_refine_status"), "PASS")
+        self.assertEqual(blackboard.get_val("downbeat_refinement")["source"], "existing_downbeats")
+        np.testing.assert_array_equal(blackboard.get_val("refined_beats"), beats)
+
+    def test_downbeat_refine_creates_fallback_candidates_without_downbeats(self):
+        """測試 DownbeatRefineNode：沒有 downbeat 時建立 4 拍候選並標記 WARN"""
+        node = DownbeatRefineNode()
+        blackboard = Blackboard()
+        blackboard.set_val("beat_validation", {"status": "WARN", "warnings": []})
+        blackboard.set_val("beats", np.array([
+            [0.0, 2],
+            [0.5, 3],
+            [1.0, 4],
+            [1.5, 2],
+            [2.0, 3],
+        ]))
+
+        status = node.execute(blackboard)
+        refined = blackboard.get_val("refined_beats")
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual(blackboard.get_val("downbeat_refine_status"), "WARN")
+        self.assertEqual(blackboard.get_val("downbeat_refinement")["source"], "fallback_candidate_4beat")
+        self.assertEqual(refined[:, 1].astype(int).tolist(), [1, 2, 3, 4, 1])
+        self.assertGreater(len(blackboard.get_val("downbeat_candidates")), 0)
+
+    def test_downbeat_refine_warns_on_abnormal_measure_length(self):
+        """測試 DownbeatRefineNode：明顯異常小節長度只警告，不自動修正"""
+        node = DownbeatRefineNode()
+        blackboard = Blackboard()
+        beats = np.array([
+            [0.0, 1],
+            [0.5, 2],
+            [1.0, 3],
+            [1.5, 4],
+            [2.0, 2],
+            [2.5, 3],
+            [3.0, 4],
+            [3.5, 2],
+            [4.0, 3],
+            [4.5, 1],
+        ])
+        blackboard.set_val("beat_validation", {"status": "PASS", "warnings": []})
+        blackboard.set_val("beats", beats)
+
+        status = node.execute(blackboard)
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual(blackboard.get_val("downbeat_refine_status"), "WARN")
+        np.testing.assert_array_equal(blackboard.get_val("refined_beats"), beats)
+        self.assertGreater(len(blackboard.get_val("downbeat_refine_warnings")), 0)
+
     def test_measure_map_uses_downbeats_and_variable_lengths(self):
         """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節並保留變動拍數"""
         node = MeasureMapNode()
@@ -173,6 +243,30 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertTrue(measure_map[1]["is_incomplete"])
         self.assertGreater(len(blackboard.get_val("measure_map_warnings")), 0)
 
+    def test_measure_map_uses_refined_fallback_beats(self):
+        """測試 MeasureMapNode：使用 refined fallback beats 時保留 fallback 來源"""
+        refine_node = DownbeatRefineNode()
+        map_node = MeasureMapNode()
+        blackboard = Blackboard()
+        blackboard.set_val("beat_validation", {"status": "WARN", "warnings": []})
+        blackboard.set_val("beats", np.array([
+            [0.0, 2],
+            [0.5, 3],
+            [1.0, 4],
+            [1.5, 2],
+            [2.0, 3],
+        ]))
+
+        refine_status = refine_node.execute(blackboard)
+        map_status = map_node.execute(blackboard)
+        measure_map = blackboard.get_val("measure_map")
+
+        self.assertEqual(refine_status, NodeStatus.SUCCESS)
+        self.assertEqual(map_status, NodeStatus.SUCCESS)
+        self.assertEqual(blackboard.get_val("measure_map_status"), "WARN")
+        self.assertEqual([measure["beat_count"] for measure in measure_map], [4, 1])
+        self.assertEqual(measure_map[0]["source"], "fallback_4beat")
+
     def test_bt_engine_full_run(self):
         """測試 BT 引擎完整行為樹節點執行流水線 (包含 VideoURLDownloadNode 進入點)"""
         bt_engine = BTWorkflowEngine()
@@ -180,6 +274,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
 
         self.assertIsNotNone(blackboard.get_val("beats"))
         self.assertIsNotNone(blackboard.get_val("beat_validation"))
+        self.assertIsNotNone(blackboard.get_val("downbeat_refinement"))
         self.assertIsNotNone(blackboard.get_val("measure_map"))
         self.assertIsNotNone(blackboard.get_val("estimated_key"))
         self.assertTrue(os.path.exists(blackboard.get_val("click_track")))

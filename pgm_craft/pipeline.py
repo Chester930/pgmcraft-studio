@@ -27,11 +27,13 @@ class PGMCraftEngine:
             enable_stem=self.enable_stem_separation
         )
 
-        beats = blackboard.get_val("beats")
+        original_beats = blackboard.get_val("beats")
+        beats = blackboard.get_val("refined_beats", original_beats)
         estimated_key = blackboard.get_val("estimated_key", "C Major")
         chords = blackboard.get_val("chord_progression", [])
         stems = blackboard.get_val("stems", {})
         beat_validation = blackboard.get_val("beat_validation", {})
+        downbeat_refinement = blackboard.get_val("downbeat_refinement", {})
         measure_map = blackboard.get_val("measure_map", [])
         measure_map_status = blackboard.get_val("measure_map_status", "UNKNOWN")
         measure_map_warnings = blackboard.get_val("measure_map_warnings", [])
@@ -70,6 +72,7 @@ class PGMCraftEngine:
             "total_beats": len(beats) if beats is not None else 0,
             "total_measures": len(measure_map) if measure_map else (downbeat_count if downbeat_count > 0 else (len(beats) // 4 if beats is not None else 0)),
             "beat_validation": beat_validation,
+            "downbeat_refinement": downbeat_refinement,
             "measure_map_status": measure_map_status,
             "measure_map_warnings": measure_map_warnings,
             "measure_map": measure_map,
