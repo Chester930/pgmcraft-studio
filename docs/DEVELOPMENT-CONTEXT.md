@@ -1,100 +1,102 @@
-# Development Context
+# 開發脈絡
 
-**Last Updated:** 2026-07-22
+**最後更新：** 2026-07-22
 
-This file records the project context as of the first formal documentation pass.
+本文件記錄第一次正式文件整理時的專案脈絡。
 
-## Current Repository State
+## 目前版控狀態
 
-- Local Git repository exists.
-- Current branch is `main`.
-- Initial local commit exists: `029d072 chore: initial project snapshot`.
-- No GitHub remote is configured.
-- GitHub CLI is authenticated as `Chester930`.
-- A GitHub repository matching this project was not found in the queried repo list.
+- 本地 Git repository 已建立。
+- 目前 branch 是 `main`。
+- 已有初始 local commit：`029d072 chore: initial project snapshot`。
+- 已有專案目標與架構文件 commit：`2460e17 docs: define project goals and architecture`。
+- 尚未設定 GitHub remote。
+- GitHub CLI 已登入 `Chester930`。
+- 查詢到的 GitHub repo 清單中，未看到明顯對應此專案的 repository。
 
-## Current Test State
+## 目前測試狀態
 
-Latest observed command:
+最近觀察到的測試命令：
 
 ```bash
 python -m pytest -q
 ```
 
-Latest observed result:
+最近觀察到的結果：
 
 ```text
 28 passed, 1 skipped
 ```
 
-Warnings observed:
+觀察到的警告：
 
-- Python 3.13 audio-related deprecation warnings from `audioread`
-- `requests` dependency warning about urllib3 or charset package version compatibility
+- Python 3.13 上 `audioread` 觸發 audio 相關 deprecation warning
+- `requests` 顯示 urllib3 或 charset package 版本相容性 warning
 
-## Important Implementation Reality
+## 重要實作現況
 
-The current repository contains both working MVP pieces and future-facing placeholders.
+目前 repository 同時包含可運作的 MVP 部分，以及面向未來的 placeholder。
 
-Working or mostly working areas:
+已可運作或大致可運作的區域：
 
-- local audio analysis
-- BeatNet with Librosa fallback
-- key and chord reference analysis
-- click track WAV synthesis
-- mix with click WAV output
-- MIDI output
-- tempo curve plot
+- 本地音訊分析
+- BeatNet 與 Librosa fallback
+- 調性與和弦參考分析
+- Click Track WAV 合成
+- 原曲加 Click 的 WAV 輸出
+- MIDI 輸出
+- 速度曲線圖
 - JSON report
-- Gradio GUI shell
-- CLI shell
+- Gradio GUI 外殼
+- CLI 外殼
 
-Placeholder or experimental areas:
+目前仍屬 placeholder 或 experimental 的區域：
 
-- most stem separation functions currently copy files instead of running real separation models
-- podcast diarization and enhancement write placeholder outputs
-- some music AI functions return fixed sample data or fallback minimal files
-- advanced model registry is a roadmap structure, not proof of installed model support
+- 多數 stem separation function 目前是複製檔案，不是真正執行分軌模型
+- Podcast diarization 與 enhancement 目前寫出 placeholder output
+- 部分 music AI function 回傳固定範例資料或最小 fallback 檔
+- advanced model registry 是 roadmap 結構，不代表模型已安裝或已可用
 
-This distinction must remain visible in public documentation.
+公開文件必須保留這個區分。
 
-## Current Architectural Direction
+## 目前形成的架構方向
 
-The project direction discussed and accepted in working conversation:
+目前討論後形成的方向：
 
-- The primary project goal is DAW and PGM asset generation from audio.
-- DAW-importable MIDI output is a core product feature.
-- The system should be designed as a node-based audio workflow.
-- Behavior Tree orchestration should coordinate nodes, guard conditions, and fallbacks.
-- AI stem separation and podcast workflows should remain extension modules until implemented for real.
+- 專案主要目標是從音訊產生 DAW 與 PGM 工程素材。
+- 可匯入 DAW 的 MIDI 輸出是核心產品功能。
+- 系統應設計為節點式音訊工作流。
+- Behavior Tree 負責串接節點、guard condition 與 fallback。
+- AI 分軌與 Podcast 工作流在完成真實整合前，應維持為 extension module。
+- 開發階段預設使用繁體中文撰寫討論與文件，除非另有英文版需求。
 
-## Public Release Cleanup Needed
+## 公開發布前需要整理
 
-Before making the repository public:
+公開前應處理：
 
-- rewrite README to match the real MVP
-- remove `your-username` clone placeholder
-- remove local absolute paths from GUI defaults
-- avoid broad filesystem `allowed_paths` defaults in public GUI code
-- clarify implemented features versus roadmap features
-- split core dependencies from optional AI/downloader dependencies
-- decide whether `main.py`, `web_app.py`, and `beat_tracker.py` are legacy examples or supported entry points
-- add CI
-- add documentation for generated DAW package import
+- 依照實際 MVP 重寫 README
+- 移除 `your-username` clone placeholder
+- 移除 GUI 預設值中的本機絕對路徑
+- 公開 GUI code 中避免預設 broad filesystem `allowed_paths`
+- 清楚標示已實作功能與 roadmap 功能
+- 拆分 core dependencies 與 optional AI/downloader dependencies
+- 決定 `main.py`、`web_app.py`、`beat_tracker.py` 是 legacy example 還是正式入口
+- 加入 CI
+- 加入 DAW 工程素材包匯入說明
 
-## Existing Dirty Working Tree Note
+## 既有未提交變更注意
 
-At the time this documentation pass started, `app.py` already showed local modifications. This documentation pass should not assume ownership of those changes.
+本次文件整理開始時，`app.py` 已經顯示 local modifications。這些變更不應被自動視為本次文檔整理的一部分。
 
-When committing documentation, review `git diff` and avoid mixing unrelated `app.py` changes unless intentionally included.
+提交文件時應檢查 `git diff`，避免把無關的 `app.py` 變更混入。
 
-## Suggested Formal ADRs
+## 建議正式記錄的 ADR
 
-The following architectural decisions are important enough to record as ADRs if the project adopts an ADR process:
+若專案採用 ADR 流程，以下決策值得記錄：
 
-- Use node-based workflow plus Behavior Tree orchestration.
-- Define DAW-ready export package as the project core instead of AI stem separation.
-- Treat AI model integrations as optional extension nodes until fully implemented.
-- Keep BeatNet as preferred beat tracker and Librosa as deterministic fallback.
+- 使用節點式工作流加 Behavior Tree 編排。
+- 將 DAW-ready 工程素材輸出定為專案核心，而不是 AI 分軌。
+- AI 模型整合在完整實作前視為 optional extension nodes。
+- BeatNet 作為優先 beat tracker，Librosa 作為 deterministic fallback。
 
-If ADRs are adopted, create `docs/adr/` with an index and one ADR per decision.
+若採用 ADR，建立 `docs/adr/`，並以一個決策一份 ADR 的方式記錄。

@@ -1,24 +1,28 @@
-# PGMCraft Studio Documentation
+# PGMCraft Studio 專案文檔
 
-**Last Updated:** 2026-07-22
+**最後更新：** 2026-07-22
 
-This folder records the formal project direction, architecture, staged roadmap, and development context for PGMCraft Studio.
+本資料夾用來記錄 PGMCraft Studio 的正式專案方向、架構、階段路線與開發脈絡。
 
-## Reading Order
+## 閱讀順序
 
-1. [Project Goals](PROJECT-GOALS.md) - what the project is, who it serves, and what is in or out of scope.
-2. [Roadmap](ROADMAP.md) - staged development plan from MVP to public release and future AI modules.
-3. [Architecture](ARCHITECTURE.md) - node-based workflow and Behavior Tree orchestration model.
-4. [Development Context](DEVELOPMENT-CONTEXT.md) - current repository state, implementation reality, and decisions made so far.
+1. [專案目標](PROJECT-GOALS.md)：專案要解決什麼問題、服務誰、第一版要做到什麼。
+2. [開發路線圖](ROADMAP.md)：從 MVP 到公開發布，再到未來 AI 模組的階段規劃。
+3. [系統架構](ARCHITECTURE.md)：節點式工作流與 Behavior Tree 編排模型。
+4. [開發脈絡](DEVELOPMENT-CONTEXT.md)：目前程式狀態、實作現實、已形成的設計方向。
 
-## Documentation Purpose
+## 文件語言
 
-PGMCraft Studio should be treated as a formal project. These documents are the source of truth for:
+開發階段預設使用繁體中文撰寫討論、規劃與專案文件。除非明確需要英文版，否則不主動切換成英文。
 
-- product direction
-- development phases
-- architecture boundaries
-- current implementation status
-- future cleanup before public release
+## 文檔用途
 
-README.md can stay user-facing. The files in this folder are for project planning and engineering continuity.
+PGMCraft Studio 會被視為正式專案經營。這些文件是以下事項的基準：
+
+- 產品方向
+- 開發階段
+- 架構邊界
+- 目前實作狀態
+- 公開發布前的整理項目
+
+根目錄 `README.md` 可以面向使用者；`docs/` 內文件則用來維持工程脈絡與開發連續性。

@@ -1,84 +1,84 @@
-# Project Goals
+# 專案目標
 
-**Last Updated:** 2026-07-22
+**最後更新：** 2026-07-22
 
-## Project Definition
+## 專案定義
 
-PGMCraft Studio is a node-based audio workflow system for musicians, arrangers, live-performance preparation, and DAW project setup.
+PGMCraft Studio 是一套以節點式音訊工作流為基礎，並透過 Behavior Tree 進行流程編排的音訊工程素材產生系統。
 
-The core goal is to transform an audio or video source into a DAW-ready project asset package, including beat timing, tempo information, click tracks, MIDI guide files, analysis reports, and future AI-assisted transcription or separation outputs.
+專案核心目標是將音訊或影片來源轉換成可直接用於 DAW、練團、採譜與 Live PGM 製作的工程素材包。輸出內容包含節拍時間、速度資訊、Click 音軌、MIDI 導引檔、分析報告，以及未來可擴充的 AI 採譜、分軌或語音處理結果。
 
-## Primary Users
+## 主要使用者
 
-- musicians preparing practice or rehearsal material
-- arrangers and producers preparing DAW sessions
-- live-performance operators preparing PGM and click tracks
-- transcription users who need beat, tempo, key, and chord references
-- future users who need AI stem separation or podcast audio preprocessing
+- 需要準備練團素材的樂手
+- 需要建立 DAW session 的編曲者與製作人
+- 需要準備 Live PGM 與 Click 的演出工作者
+- 需要節拍、速度、調性、和弦參考的採譜使用者
+- 未來需要 AI 分軌或 Podcast 音訊前處理的使用者
 
-## Core Product Promise
+## 核心產品承諾
 
-Given a local audio file or supported media URL, PGMCraft Studio should produce a project folder that can be used directly in a music workflow.
+給定本地音檔或支援的媒體 URL，PGMCraft Studio 應該能產生一個可進入音樂工作流的專案資料夾。
 
-The first stable version should reliably provide:
+第一個穩定版本應該可靠提供：
 
-- source audio preparation
-- beat and downbeat detection
-- BPM statistics and tempo curve
-- click track WAV
-- original audio plus click preview WAV
-- DAW-importable MIDI guide output
-- basic key and chord reference
-- JSON and text reports
-- CLI and GUI entry points
+- 來源音訊準備
+- Beat 與 downbeat 偵測
+- BPM 統計與速度曲線
+- Click Track WAV
+- 原曲加 Click 的預聽 WAV
+- 可匯入 DAW 的 MIDI 導引輸出
+- 基礎調性與和弦參考
+- JSON 與文字報告
+- CLI 與 GUI 入口
 
-## DAW-Ready Export Goal
+## DAW 匯出目標
 
-DAW export is a core feature, not a side output.
+DAW 匯出是核心功能，不是附屬輸出。
 
-The project should move from a simple MIDI file toward a DAW-ready asset package:
+專案應從單一 MIDI 檔逐步發展成 DAW-ready 工程素材包：
 
-- `tempo_map.mid` for tempo and timing reference
-- `click_guide.mid` for per-beat MIDI click notes
-- future bar, section, and chord guide tracks
-- future DAW profiles for Ableton Live, Logic Pro, Cubase, Reaper, and other tools
-- packaged output folder with clear import instructions
+- `tempo_map.mid`：提供速度與時間參考
+- `click_guide.mid`：提供逐拍 MIDI click note
+- 未來加入小節、段落與和弦導引軌
+- 未來支援 Ableton Live、Logic Pro、Cubase、Reaper 等 DAW profile
+- 產出清楚的專案資料夾與匯入說明
 
-## Architecture Goal
+## 架構目標
 
-The project is designed around:
+專案設計應圍繞以下概念：
 
-- small audio-processing nodes
-- shared workflow state through a blackboard
-- Behavior Tree orchestration
-- fallback paths for unreliable or optional models
-- guard nodes for prerequisites and safety checks
+- 小型、單責任的音訊處理節點
+- 透過 blackboard 共享工作流狀態
+- 使用 Behavior Tree 編排流程
+- 對不穩定或選用模型提供 fallback
+- 對前置條件與安全檢查使用 guard node
 
-This keeps the project extensible: future AI models can be added as nodes without rewriting the whole workflow.
+這樣可以讓專案保持可擴充。未來 AI 模型應以節點形式加入，而不是改寫整條流程。
 
-## Non-Goals For The First Public Version
+## 第一版公開時的非目標
 
-The first public version should not claim production-grade support for features that are currently stubs or experimental.
+第一個公開版本不應宣稱已完成目前仍屬 stub 或實驗狀態的功能。
 
-Do not present these as completed unless the implementation is actually integrated and tested:
+除非真的完成整合與測試，否則以下功能不應被描述為正式完成：
 
-- real BS-Roformer, UVR, or Demucs stem separation quality
-- lead/backing vocal separation
-- drum sub-stem separation
-- full Whisper or pyannote podcast pipeline
-- Basic Pitch or CREPE production workflows
-- automatic section recognition
-- DAW-specific project file generation
+- 真正具備品質驗證的 BS-Roformer、UVR 或 Demucs 分軌
+- 主唱與和聲分離
+- 鼓組細分
+- 完整 Whisper 或 pyannote Podcast pipeline
+- Basic Pitch 或 CREPE 的正式採譜與音高分析流程
+- 自動樂段辨識
+- DAW 專用工程檔產生
 
-These belong in the roadmap until they are implemented and verified.
+這些功能在完成前應放在 roadmap。
 
-## Success Criteria
+## 成功標準
 
-The project is moving in the right direction when:
+專案方向正確時，應該滿足：
 
-- a user can import generated MIDI and WAV assets into a DAW
-- beat and click outputs are stable enough for rehearsal preparation
-- each workflow capability is represented as a clear node
-- Behavior Tree structure explains why each step runs or falls back
-- documentation distinguishes implemented features from planned features
-- tests protect the core audio-to-project-package flow
+- 使用者能把產生的 MIDI 與 WAV 素材匯入 DAW
+- Beat 與 Click 輸出足以支援練團或 PGM 準備
+- 每個工作流能力都有清楚節點
+- Behavior Tree 能解釋每一步為何執行、跳過或 fallback
+- 文件清楚區分已完成功能與規劃功能
+- 測試能保護核心音訊到工程素材包流程

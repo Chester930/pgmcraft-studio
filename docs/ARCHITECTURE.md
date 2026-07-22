@@ -1,47 +1,47 @@
-# Architecture
+# 系統架構
 
-**Last Updated:** 2026-07-22
+**最後更新：** 2026-07-22
 
-## Architectural Style
+## 架構風格
 
-PGMCraft Studio uses a node-based audio workflow orchestrated by a Behavior Tree.
+PGMCraft Studio 採用節點式音訊工作流，並使用 Behavior Tree 進行流程編排。
 
-The intended architecture is:
+預期架構如下：
 
 ```text
-Input Source
-  -> Workflow Nodes
-  -> Blackboard State
-  -> Behavior Tree Orchestration
-  -> Output Package
+輸入來源
+  -> 工作流節點
+  -> Blackboard 狀態
+  -> Behavior Tree 編排
+  -> 工程素材包輸出
 ```
 
-This makes the project suitable for incremental growth. New capabilities should be added as nodes, then connected through Behavior Tree structure.
+這種設計讓專案能逐步成長。新能力應該先被實作成節點，再接入 Behavior Tree。
 
-## Core Concepts
+## 核心概念
 
 ### Node
 
-A node is one small unit of work.
+Node 是一個小型、單責任的工作單位。
 
-Examples:
+範例：
 
-- detect whether input is a URL
-- download media
-- load audio
-- check signal quality
-- run beat tracking
-- export MIDI
-- synthesize click audio
-- write reports
+- 判斷輸入是否為 URL
+- 下載媒體
+- 載入音訊
+- 檢查訊號品質
+- 執行 beat tracking
+- 匯出 MIDI
+- 合成 click 音訊
+- 寫出報告
 
-Nodes should avoid owning the whole workflow. They should read required values from the blackboard, perform one clear job, write results back, and return a status.
+節點不應擁有整條流程。節點應從 blackboard 讀取必要值、完成一件明確工作、把結果寫回 blackboard，並回傳執行狀態。
 
 ### Blackboard
 
-The blackboard is shared workflow state.
+Blackboard 是節點之間共享的工作流狀態。
 
-Common keys:
+常見 key：
 
 - `audio_path`
 - `output_dir`
@@ -56,13 +56,13 @@ Common keys:
 - `tempo_map_midi`
 - `stems`
 
-As the project matures, these keys should be documented or typed to reduce accidental coupling.
+隨著專案成熟，這些 key 應該文件化或型別化，降低隱性耦合。
 
 ### Behavior Tree
 
-The Behavior Tree decides execution order and fallback behavior.
+Behavior Tree 決定節點執行順序與 fallback 行為。
 
-Current core shape:
+目前核心形狀：
 
 ```text
 Root Sequence
@@ -77,25 +77,25 @@ Root Sequence
 └── MIDIExportNode
 ```
 
-This structure means:
+這個結構代表：
 
-- required preparation steps run in order
-- optional stem separation can be skipped
-- BeatNet is preferred
-- Librosa is the fallback
-- export nodes run only after analysis succeeds
+- 必要前置步驟依序執行
+- 選用 stem separation 可以跳過
+- BeatNet 是優先方案
+- Librosa 是 fallback
+- 匯出節點只在分析成功後執行
 
-## Node Categories
+## 節點分類
 
-### Input Nodes
+### 輸入節點
 
-Purpose:
+目的：
 
-- receive local file or URL
-- download media if needed
-- validate available audio
+- 接收本地檔案或 URL
+- 需要時下載媒體
+- 驗證可用音訊
 
-Candidate nodes:
+候選節點：
 
 - `InputSourceNode`
 - `URLDetectNode`
@@ -103,13 +103,13 @@ Candidate nodes:
 - `AudioExtractNode`
 - `AudioValidateNode`
 
-### Preprocessing Nodes
+### 預處理節點
 
-Purpose:
+目的：
 
-- prepare audio for stable analysis
+- 為穩定分析準備音訊
 
-Candidate nodes:
+候選節點：
 
 - `AudioLoadNode`
 - `SNRGuardNode`
@@ -118,13 +118,13 @@ Candidate nodes:
 - `PhaseAlignNode`
 - `ChunkingNode`
 
-### Analysis Nodes
+### 分析節點
 
-Purpose:
+目的：
 
-- extract musical timing and reference information
+- 擷取音樂時間與參考資訊
 
-Candidate nodes:
+候選節點：
 
 - `BeatNetNode`
 - `LibrosaBeatNode`
@@ -134,13 +134,13 @@ Candidate nodes:
 - `KeyAnalysisNode`
 - `ChordAnalysisNode`
 
-### Export Nodes
+### 匯出節點
 
-Purpose:
+目的：
 
-- create assets for DAW, rehearsal, and PGM use
+- 建立可用於 DAW、練團與 PGM 的素材
 
-Candidate nodes:
+候選節點：
 
 - `ClickSynthesisNode`
 - `ClickMixNode`
@@ -151,13 +151,13 @@ Candidate nodes:
 - `ReportTextNode`
 - `ProjectPackageNode`
 
-### AI Extension Nodes
+### AI 擴充節點
 
-Purpose:
+目的：
 
-- integrate optional model-based features without disturbing the MVP workflow
+- 在不破壞 MVP 工作流的前提下，整合選用模型功能
 
-Candidate nodes:
+候選節點：
 
 - `StemSeparationNode`
 - `InstrumentPresenceGuardNode`
@@ -166,62 +166,62 @@ Candidate nodes:
 - `SpeechTranscriptionNode`
 - `SpeakerDiarizationNode`
 
-These should remain optional until dependencies, model files, runtime requirements, and tests are ready.
+在依賴、模型檔、執行需求與測試完整前，這些節點應維持 optional。
 
-## Guard And Fallback Strategy
+## Guard 與 Fallback 策略
 
-Guard nodes check whether a branch should run.
+Guard node 用來判斷某個分支是否應該執行。
 
-Examples:
+範例：
 
-- audio is loud enough
-- an instrument is likely present
-- a model prerequisite is satisfied
-- an optional dependency is installed
+- 音訊音量是否足夠
+- 某樂器是否可能存在
+- 模型前置條件是否滿足
+- optional dependency 是否已安裝
 
-Fallback nodes provide alternatives.
+Fallback node 用來提供替代方案。
 
-Examples:
+範例：
 
-- BeatNet fails, then Librosa runs
-- URL download fails, then user can upload local audio
-- high-quality AI model is unavailable, then deterministic fallback runs
+- BeatNet 失敗後改跑 Librosa
+- URL 下載失敗後讓使用者改上傳本地音檔
+- 高品質 AI 模型不可用時改走 deterministic fallback
 
-## Public Architecture Boundary
+## 第一版公開架構邊界
 
-For the first formal release, the stable architectural boundary should be:
+第一個正式版本的穩定架構邊界應是：
 
 ```text
-Source Input -> Beat/Tempo Analysis -> DAW/PGM Export Package
+來源輸入 -> Beat/Tempo 分析 -> DAW/PGM 工程素材輸出
 ```
 
-AI separation and podcast workflows should be documented as extension branches until their implementations are real and tested.
+AI 分軌與 Podcast 工作流在真正完成與測試前，應被記錄為 extension branch。
 
-## Current Implementation Map
+## 目前實作對照
 
-| Area | Current Files | Current Status |
-|------|---------------|----------------|
-| GUI | `app.py` | Gradio app with downloader, stem, and PGM tabs |
-| CLI | `pgm_craft/cli.py` | Runs main PGM pipeline |
-| Pipeline | `pgm_craft/pipeline.py` | Orchestrates Behavior Tree result into report |
-| BT Core | `pgm_craft/workflow/nodes.py` | Sequence, fallback, blackboard basics |
-| BT Builder | `pgm_craft/workflow/builder.py` | Defines main workflow |
-| Audio Nodes | `pgm_craft/workflow/audio_nodes.py` | Download, load, beat, analysis, export nodes |
-| Analysis | `pgm_craft/analyzer.py` | BeatNet or Librosa, key and chord analysis |
-| Export | `pgm_craft/synthesizer.py` | Click WAV and MIDI output |
-| Stem Separation | `pgm_craft/separator.py` | Mostly placeholder copy-based implementation |
-| AI Music | `pgm_craft/music_ai.py` | Experimental wrappers and fallbacks |
-| Podcast | `pgm_craft/podcast_ai.py` | Placeholder outputs |
-| Legacy | `main.py`, `web_app.py`, `beat_tracker.py` | Earlier standalone pipeline |
+| 區域 | 目前檔案 | 目前狀態 |
+|------|----------|----------|
+| GUI | `app.py` | Gradio app，含下載、分軌與 PGM 頁籤 |
+| CLI | `pgm_craft/cli.py` | 執行主要 PGM pipeline |
+| Pipeline | `pgm_craft/pipeline.py` | 將 Behavior Tree 結果整理成 report |
+| BT Core | `pgm_craft/workflow/nodes.py` | Sequence、fallback、blackboard 基礎 |
+| BT Builder | `pgm_craft/workflow/builder.py` | 定義主要工作流 |
+| Audio Nodes | `pgm_craft/workflow/audio_nodes.py` | 下載、載入、節拍、分析、匯出節點 |
+| Analysis | `pgm_craft/analyzer.py` | BeatNet 或 Librosa、調性與和弦分析 |
+| Export | `pgm_craft/synthesizer.py` | Click WAV 與 MIDI 輸出 |
+| Stem Separation | `pgm_craft/separator.py` | 目前多為 copy-based placeholder |
+| AI Music | `pgm_craft/music_ai.py` | 實驗性 wrapper 與 fallback |
+| Podcast | `pgm_craft/podcast_ai.py` | placeholder 輸出 |
+| Legacy | `main.py`, `web_app.py`, `beat_tracker.py` | 較早期的 standalone pipeline |
 
-## Design Rule
+## 設計規則
 
-When adding a new capability:
+新增能力時，依序處理：
 
-1. create or update one focused node
-2. define required blackboard inputs
-3. define blackboard outputs
-4. add guard or fallback behavior if needed
-5. connect it in the Behavior Tree
-6. test the node and the workflow path
-7. update this documentation
+1. 建立或更新一個聚焦節點
+2. 定義必要 blackboard inputs
+3. 定義 blackboard outputs
+4. 需要時加入 guard 或 fallback
+5. 接入 Behavior Tree
+6. 測試節點與工作流路徑
+7. 更新本文件

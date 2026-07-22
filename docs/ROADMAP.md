@@ -1,106 +1,106 @@
-# Roadmap
+# 開發路線圖
 
-**Last Updated:** 2026-07-22
+**最後更新：** 2026-07-22
 
-This roadmap defines project phases. Each phase should produce a coherent, testable project state.
+本路線圖定義 PGMCraft Studio 的階段。每個階段都應產生一個可理解、可測試、可繼續擴充的專案狀態。
 
-## Phase 0: Repository Baseline
+## Phase 0：版控與專案基線
 
-Status: mostly complete.
+狀態：大致完成。
 
-Objectives:
+目標：
 
-- initialize Git version control
-- ignore generated outputs and caches
-- preserve test fixture audio
-- document project goals and architecture
-- separate public claims from implementation reality
+- 初始化 Git 版控
+- 忽略產出檔與快取
+- 保留測試 fixture 音檔
+- 建立專案目標與架構文件
+- 將公開宣稱與實作現況分開
 
-Current notes:
+目前狀態：
 
-- Git repository exists on local `main`
-- first project snapshot was committed locally
-- no GitHub remote is configured yet
-- tests pass locally with warnings
+- 本地已建立 Git repository
+- 已有初始專案 snapshot commit
+- 尚未設定 GitHub remote
+- 本地測試通過，但有警告
 
-## Phase 1: PGM And DAW Export MVP
+## Phase 1：PGM 與 DAW 匯出 MVP
 
-Status: active target.
+狀態：目前主目標。
 
-Objective:
+目標：
 
-Build a reliable workflow that turns audio into PGM and DAW-ready helper files.
+建立一條可靠流程，把音訊轉成 PGM 與 DAW-ready 輔助素材。
 
-Scope:
+範圍：
 
-- local audio input
-- URL input through downloader workflow
-- audio loading and validation
-- BeatNet beat tracking with Librosa fallback
-- downbeat and measure mapping
-- BPM statistics
-- tempo curve plot
-- click track WAV
-- original plus click preview WAV
+- 本地音檔輸入
+- URL 輸入與下載工作流
+- 音訊載入與驗證
+- BeatNet beat tracking 與 Librosa fallback
+- Downbeat 與小節推算
+- BPM 統計
+- 速度曲線圖
+- Click Track WAV
+- 原曲加 Click 的預聽 WAV
 - `tempo_map.mid`
-- initial `click_guide.mid` if split from tempo map
-- JSON and text reports
-- CLI and Gradio GUI execution
+- 若從 tempo map 拆分，加入初版 `click_guide.mid`
+- JSON 與文字報告
+- CLI 與 Gradio GUI 執行
 
-Exit criteria:
+完成標準：
 
-- tests cover the core pipeline
-- generated outputs can be imported into a DAW
-- README describes this as the stable feature set
-- no local absolute paths remain in user-facing defaults
+- 測試覆蓋核心 pipeline
+- 產出檔能匯入 DAW
+- README 將此描述為穩定功能集
+- 移除使用者介面中的本機絕對路徑預設值
 
-## Phase 2: Node Workflow Hardening
+## Phase 2：節點工作流強化
 
-Status: planned.
+狀態：規劃中。
 
-Objective:
+目標：
 
-Make node execution explicit, testable, and reusable.
+讓節點執行更明確、可測試、可重用。
 
-Scope:
+範圍：
 
-- standard node input/output contract
-- typed or documented blackboard keys
-- node status handling
-- workflow trace logging
-- guard node conventions
-- fallback node conventions
-- error messages suitable for GUI and CLI
-- unit tests for each major node
+- 標準節點輸入與輸出契約
+- blackboard key 文件化或型別化
+- node status 處理規則
+- workflow trace log
+- guard node 慣例
+- fallback node 慣例
+- 適合 GUI 與 CLI 顯示的錯誤訊息
+- 每個主要節點的單元測試
 
-Exit criteria:
+完成標準：
 
-- developers can add a new node without changing unrelated pipeline code
-- workflow execution can be inspected after a run
-- failures show which node failed and why
+- 開發者新增節點時不需要改動無關 pipeline
+- 執行後可以檢查 workflow 過程
+- 失敗時能看出哪個節點失敗與原因
 
-## Phase 3: DAW Package Export
+## Phase 3：DAW 工程素材包
 
-Status: planned.
+狀態：規劃中。
 
-Objective:
+目標：
 
-Move from individual output files to a DAW-ready project package.
+從單一輸出檔，升級成完整 DAW-ready project package。
 
-Scope:
+範圍：
 
-- output folder structure
-- import guide per generated project
-- tempo MIDI
-- click guide MIDI
-- click WAV
-- preview WAV
-- analysis JSON
-- optional chord guide MIDI
-- optional marker files
-- future DAW profile abstraction
+- 穩定輸出資料夾結構
+- 每次產生工程素材包時附匯入說明
+- Tempo MIDI
+- Click guide MIDI
+- Click WAV
+- 預聽 WAV
+- 分析 JSON
+- 選用 chord guide MIDI
+- 選用 marker files
+- 未來 DAW profile 抽象
 
-Example package:
+範例結構：
 
 ```text
 project-name/
@@ -117,47 +117,47 @@ project-name/
 └── IMPORT_GUIDE.md
 ```
 
-Exit criteria:
+完成標準：
 
-- package layout is stable
-- generated files have predictable names
-- DAW import workflow is documented
+- package layout 穩定
+- 檔案命名可預期
+- DAW 匯入流程有文件
 
-## Phase 4: Public Release Cleanup
+## Phase 4：公開發布整理
 
-Status: planned.
+狀態：規劃中。
 
-Objective:
+目標：
 
-Prepare the project for GitHub public release.
+整理成適合 GitHub public release 的狀態。
 
-Scope:
+範圍：
 
-- rewrite README around actual MVP
-- move experimental model claims into roadmap
-- remove local machine paths
-- clarify Python version support
-- split core and optional dependencies
-- add CI
-- add contribution guidance
-- add model/license notes
-- decide whether to keep legacy root scripts or move them to `legacy/`
+- 依照實際 MVP 重寫 README
+- 將實驗模型宣稱移到 roadmap
+- 移除本機路徑
+- 釐清 Python 版本支援
+- 拆分核心依賴與選用依賴
+- 加入 CI
+- 加入貢獻指南
+- 加入模型與授權注意事項
+- 決定 `main.py`、`web_app.py`、`beat_tracker.py` 是否移到 `legacy/`
 
-Exit criteria:
+完成標準：
 
-- fresh clone can install, run tests, and run the core workflow
-- public claims match implementation
-- optional AI features are clearly marked experimental
+- fresh clone 後能安裝、測試、執行核心工作流
+- 公開宣稱符合實作
+- 選用 AI 功能明確標示為 experimental
 
-## Phase 5: AI-Assisted Music Modules
+## Phase 5：AI 輔助音樂模組
 
-Status: future.
+狀態：未來階段。
 
-Objective:
+目標：
 
-Add real AI model integrations as optional nodes.
+將真正的 AI 模型整合成選用節點。
 
-Candidate modules:
+候選模組：
 
 - stem separation
 - Basic Pitch MIDI transcription
@@ -166,9 +166,9 @@ Candidate modules:
 - section detection
 - podcast transcription and diarization
 
-Exit criteria:
+完成標準：
 
-- model dependencies are optional
-- model outputs are tested with fixtures or golden files
-- fallback behavior is defined
-- model licenses are documented
+- 模型依賴是 optional
+- 模型輸出有 fixture 或 golden file 測試
+- fallback 行為明確
+- 模型授權已記錄
