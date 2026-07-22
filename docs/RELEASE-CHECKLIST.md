@@ -18,8 +18,9 @@
 - GitHub Actions CI 已新增：`.github/workflows/ci.yml`。
 - `CONTRIBUTING.md` 已加入。
 - 本地測試通過：`python -m pytest -q`。
-- GitHub remote 已設定：`https://github.com/Chester930/-----.git`。
+- GitHub remote 已設定：`https://github.com/Chester930/pgmcraft-studio.git`。
 - GitHub repository 已建立，目前狀態為 private。
+- GitHub repository 已改名為 `Chester930/pgmcraft-studio`。
 - GitHub Actions CI 已在遠端執行通過。
 - 核心依賴與 optional downloader / AI 依賴已拆分。
 - Legacy 入口已決定暫時保留於根目錄，並以文件標示定位。
@@ -32,7 +33,6 @@
 
 ## Public 前可選決策
 
-- 是否將 repository 名稱從 `-----` 改為更可讀的名稱，例如 `pgm-craft`。
 - 是否將 repository visibility 從 private 改為 public。
 
 ## GitHub Remote 狀態
@@ -40,7 +40,7 @@
 目前 repository：
 
 - GitHub owner：`Chester930`
-- Repository：`https://github.com/Chester930/-----`
+- Repository：`https://github.com/Chester930/pgmcraft-studio`
 - Visibility：private
 - Default branch：`main`
 

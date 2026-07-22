@@ -11,7 +11,7 @@
 - 已有初始 local commit：`029d072 chore: initial project snapshot`。
 - 已有專案目標與架構文件 commit：`2460e17 docs: define project goals and architecture`。
 - 根目錄 README 已改為 Phase 1 實作現況導向。
-- GitHub remote 已設定為 `https://github.com/Chester930/-----.git`。
+- GitHub remote 已設定為 `https://github.com/Chester930/pgmcraft-studio.git`。
 - GitHub repository 已建立，目前為 private。
 - GitHub CLI 已登入 `Chester930`。
 - GitHub Actions CI 已由 push 觸發，遠端執行結果為通過。

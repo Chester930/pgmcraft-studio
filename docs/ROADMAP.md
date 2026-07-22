@@ -169,6 +169,7 @@ project-name/
 - legacy GUI 的本機絕對輸出路徑已移除
 - GUI experimental 功能已標示
 - GitHub remote 已設定，repository 目前為 private
+- GitHub repository 已改名為 `Chester930/pgmcraft-studio`
 - GitHub Actions CI 已在遠端執行通過
 - core / optional dependencies 已初步拆分
 - legacy 入口已文件化，第一版暫時保留根目錄相容入口
@@ -177,7 +178,7 @@ project-name/
 
 目前剩餘：
 
-- Public 前可選決策：repository 命名與 visibility
+- Public 前可選決策：repository visibility
 
 ## Phase 5：AI 輔助音樂模組
 

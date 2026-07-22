@@ -277,4 +277,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-下一輪應先處理 GitHub remote、CI 與 release 前檢查，讓目前 Phase 1 可以進入可公開 repository 狀態。
+GitHub remote、CI 與 release 前檢查已完成。下一輪可聚焦是否將 repository visibility 從 private 切為 public。
