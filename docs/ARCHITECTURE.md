@@ -67,6 +67,8 @@ Blackboard 是節點之間共享的工作流狀態。
 - `mix_with_click`
 - `tempo_map_midi`
 - `click_guide_midi`
+- `project_package_dir`
+- `import_guide`
 - `stems`
 
 隨著專案成熟，這些 key 應該文件化或型別化，降低隱性耦合。
@@ -229,6 +231,7 @@ AI 分軌與 Podcast 工作流在真正完成與測試前，應被記錄為 exte
 | Audio Nodes | `pgm_craft/workflow/audio_nodes.py` | 下載、載入、節拍、分析、匯出節點 |
 | Analysis | `pgm_craft/analyzer.py` | BeatNet 或 Librosa、調性與和弦分析 |
 | Export | `pgm_craft/synthesizer.py` | Click WAV 與 MIDI 輸出 |
+| Package | `pgm_craft/packager.py` | 建立 DAW/PGM 工程素材包與匯入說明 |
 | Stem Separation | `pgm_craft/separator.py` | 目前多為 copy-based placeholder |
 | AI Music | `pgm_craft/music_ai.py` | 實驗性 wrapper 與 fallback |
 | Podcast | `pgm_craft/podcast_ai.py` | placeholder 輸出 |

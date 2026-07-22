@@ -233,8 +233,8 @@ flowchart TD
 1. `BeatValidationNode`：已完成 v1
 2. `DownbeatRefineNode`：已完成 v1
 3. `MeasureMapNode`：已完成 v1
-4. `ProjectPackageNode`
-5. `ImportGuideNode`
+4. `PGMProjectPackager`：已完成 v1，目前在 pipeline 收尾階段執行
+5. `ProjectPackageNode` / `ImportGuideNode`：Phase 2 可完全節點化
 6. `ReportJsonNode` / `ReportTextNode` 整理
 
 ## Phase 1 新增 Blackboard Key 草案
@@ -256,6 +256,8 @@ flowchart TD
 | `import_guide` | `ImportGuideNode` | DAW 匯入說明路徑 |
 | `reports` | `ReportJsonNode` / `ReportTextNode` | 報告檔集合 |
 
+補充：目前 v1 由 `pgm_craft/packager.py` 的 `PGMProjectPackager` 在 pipeline 收尾階段建立工程素材包，尚未完全移入 BT 節點。
+
 ## 與 AI Extension 的關係
 
 AI 分軌、Podcast AI、Basic Pitch、CREPE 等功能不應阻塞 Phase 1。它們未來可以接在以下位置：
@@ -275,4 +277,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-下一輪應先確認 `ProjectPackageNode` 與 `ImportGuideNode` 的輸出結構，讓目前已完成的 beat validation、downbeat refinement、measure map、MIDI 與報告可以被整理成穩定工程素材包。
+下一輪應先整理公開發布面：README、legacy entry、GUI 預設路徑與 public-safe 說明，避免公開時把 experimental/stub 功能誤寫成穩定功能。

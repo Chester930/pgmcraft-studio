@@ -11,11 +11,13 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from pgm_craft.workflow.builder import BTWorkflowEngine
+from pgm_craft.packager import PGMProjectPackager
 
 class PGMCraftEngine:
     def __init__(self, enable_stem_separation=False):
         self.enable_stem_separation = enable_stem_separation
         self.bt_engine = BTWorkflowEngine()
+        self.packager = PGMProjectPackager()
 
     def run(self, audio_path, output_dir="outputs"):
         os.makedirs(output_dir, exist_ok=True)
@@ -63,6 +65,7 @@ class PGMCraftEngine:
         plt.savefig(plot_path, dpi=150)
         plt.close()
 
+        json_report_path = os.path.join(output_dir, "pgm_report.json")
         report = {
             "audio_file": audio_path,
             "estimated_key": estimated_key,
@@ -83,12 +86,22 @@ class PGMCraftEngine:
                 "mix_with_click": blackboard.get_val("mix_with_click"),
                 "tempo_map_midi": blackboard.get_val("tempo_map_midi"),
                 "click_guide_midi": blackboard.get_val("click_guide_midi"),
-                "tempo_curve_plot": plot_path
+                "tempo_curve_plot": plot_path,
+                "json_report": json_report_path,
             }
         }
 
         # Write JSON metadata report
-        with open(os.path.join(output_dir, "pgm_report.json"), "w", encoding="utf-8") as f:
+        with open(json_report_path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
+
+        project_package = self.packager.build(report, output_dir=output_dir)
+        report["project_package"] = project_package
+        report["outputs"]["project_package_dir"] = project_package["project_package_dir"]
+        report["outputs"]["import_guide"] = project_package["import_guide"]
+
+        with open(json_report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        self.packager.build(report, output_dir=output_dir)
 
         return report

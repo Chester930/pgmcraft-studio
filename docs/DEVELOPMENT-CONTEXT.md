@@ -49,6 +49,8 @@ python -m pytest -q
 - 原曲加 Click 的 WAV 輸出
 - `tempo_map.mid` MIDI tempo map 輸出
 - `click_guide.mid` MIDI click guide 輸出
+- `pgm_project_package/` 工程素材包
+- `IMPORT_GUIDE.md` 匯入說明
 - 速度曲線圖
 - JSON report
 - Gradio GUI 外殼

@@ -2,6 +2,7 @@ import unittest
 import os
 import shutil
 import tempfile
+import json
 from pgm_craft.analyzer import MusicAnalyzer
 from pgm_craft.synthesizer import PGMSynthesizer
 from pgm_craft.pipeline import PGMCraftEngine
@@ -51,6 +52,19 @@ class TestPGMCraftPackage(unittest.TestCase):
         self.assertIn("estimated_key", report)
         self.assertIn("average_bpm", report)
         self.assertTrue(os.path.exists(os.path.join(self.temp_dir, "pgm_report.json")))
+        self.assertIn("project_package", report)
+        package = report["project_package"]
+        self.assertTrue(os.path.isdir(package["project_package_dir"]))
+        self.assertTrue(os.path.exists(package["import_guide"]))
+        self.assertTrue(os.path.isdir(os.path.join(package["project_package_dir"], "audio")))
+        self.assertTrue(os.path.isdir(os.path.join(package["project_package_dir"], "midi")))
+        self.assertTrue(os.path.isdir(os.path.join(package["project_package_dir"], "reports")))
+        self.assertTrue(os.path.exists(package["files"]["click_track"]))
+        self.assertTrue(os.path.exists(package["files"]["tempo_map_midi"]))
+        self.assertTrue(os.path.exists(package["files"]["json_report"]))
+        with open(package["files"]["json_report"], "r", encoding="utf-8") as f:
+            packaged_report = json.load(f)
+        self.assertIn("project_package", packaged_report)
 
 if __name__ == '__main__':
     unittest.main()

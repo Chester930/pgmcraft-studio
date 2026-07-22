@@ -47,6 +47,8 @@
 - `tempo_map.mid`
 - `click_guide.mid`
 - JSON 與文字報告
+- `pgm_project_package/`
+- `IMPORT_GUIDE.md`
 - CLI 與 Gradio GUI 執行
 
 完成標準：
@@ -83,7 +85,7 @@
 
 ## Phase 3：DAW 工程素材包
 
-狀態：規劃中。
+狀態：v1 已在 Phase 1 中建立，進階 DAW profile 規劃中。
 
 目標：
 
@@ -101,6 +103,14 @@
 - 選用 chord guide MIDI
 - 選用 marker files
 - 未來 DAW profile 抽象
+
+Phase 1 已完成：
+
+- `pgm_project_package/`
+- `audio/`
+- `midi/`
+- `reports/`
+- `IMPORT_GUIDE.md`
 
 範例結構：
 

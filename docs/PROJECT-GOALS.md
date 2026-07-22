@@ -40,6 +40,8 @@ DAW 匯出是核心功能，不是附屬輸出。
 
 - `tempo_map.mid`：提供速度與時間參考
 - `click_guide.mid`：提供逐拍 MIDI click note
+- `pgm_project_package/`：整理音訊、MIDI、報告與匯入說明
+- `IMPORT_GUIDE.md`：提供 DAW 匯入順序與人工檢查提示
 - 未來加入小節、段落與和弦導引軌
 - 未來支援 Ableton Live、Logic Pro、Cubase、Reaper 等 DAW profile
 - 產出清楚的專案資料夾與匯入說明

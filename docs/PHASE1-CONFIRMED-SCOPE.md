@@ -23,6 +23,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 -> DAW tempo map MIDI
 -> MIDI click guide
 -> JSON / TXT 報告
+-> DAW / PGM 工程素材包
 ```
 
 ## 已確定的 Phase 1 輸出
@@ -39,6 +40,8 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 | MIDI Click Guide | `click_guide.mid` | 匯入 DAW 取得逐拍 click note | 已新增 |
 | JSON Report | `pgm_report.json` | 機器可讀分析結果 | 已實作並補輸出欄位 |
 | TXT Report | `*_pgm_report.txt` | 使用者閱讀摘要 | 已實作 |
+| Project Package | `pgm_project_package/` | 整理 DAW/PGM 交付資料夾 | 已新增 v1 |
+| Import Guide | `IMPORT_GUIDE.md` | DAW 匯入順序與人工檢查提示 | 已新增 v1 |
 
 ## 本輪檢查結論
 
@@ -69,6 +72,7 @@ PGMCraft Studio 第一階段要先成為一套「音訊轉 DAW / PGM 工程素�
 - `BeatValidationNode` 已新增 v1，支援 `PASS` / `WARN` / `FAIL`。
 - `DownbeatRefineNode` 已新增 v1，只補強 downbeat 標籤，不移動 beat timestamp。
 - `MeasureMapNode` 已新增 v1，支援 downbeat 切小節與 4 拍 fallback。
+- `PGMProjectPackager` 已新增 v1，建立 `pgm_project_package/` 與 `IMPORT_GUIDE.md`。
 
 ## BeatValidationNode v1 規格
 
@@ -150,21 +154,49 @@ Blackboard 輸出：
 - 明顯異常小節長度只警告，不自動刪除或重排。
 - 下游節點優先使用 `refined_beats`，但原始 `beats` 仍保留在 blackboard。
 
+## Project Package v1 規格
+
+目前 `PGMProjectPackager` 在 pipeline 收尾階段執行，會保留原本平面輸出檔，同時建立正式工程素材包：
+
+```text
+pgm_project_package/
+├── audio/
+│   ├── source.*
+│   ├── click_track.wav
+│   └── mix_with_click.wav
+├── midi/
+│   ├── tempo_map.mid
+│   └── click_guide.mid
+├── reports/
+│   ├── pgm_report.json
+│   ├── tempo_curve.png
+│   └── *_pgm_report.txt
+└── IMPORT_GUIDE.md
+```
+
+主要規則：
+
+- 不移動原始輸出檔，只複製到 package 結構。
+- `IMPORT_GUIDE.md` 會記錄建議 DAW 匯入順序。
+- beat validation、downbeat refinement、measure map 的 warning 會出現在匯入說明。
+- GUI 產生文字報告後會重建 package，讓文字報告也進入 `reports/`。
+- 完全節點化的 `ProjectPackageNode` / `ImportGuideNode` 可留到 Phase 2 工作流強化。
+
 ## 目前已知限制
 
 - 目前尚未完整推定拍號；4 拍只作為常見小節長度參考，資料結構必須允許變動小節。
 - tempo map 由相鄰 beat 間距推算，已加入初版 beat validation，但尚未做自動修拍。
 - downbeat refine 目前是保守候選補強，尚未使用音訊能量、鼓點重音或 AI 模型重新判斷強拍。
 - 舊版 `beat_tracker.py` / `web_app.py` 尚未整理，公開前應決定移入 `legacy/` 或與正式 BT 管線合併。
-- DAW 匯入行為可能因軟體不同而有差異，下一階段應建立 `IMPORT_GUIDE.md` 範本。
+- DAW 匯入行為可能因軟體不同而有差異，目前 `IMPORT_GUIDE.md` 是通用版，尚未分 DAW profile。
 
 ## 第一階段下一個技術焦點
 
 下一個應討論與設計的區塊是：
 
 ```text
-ProjectPackageNode
--> ImportGuideNode
+README 公開版整理
+-> Legacy entry 整理
 ```
 
-這兩個節點會把目前已完成的分析、MIDI、click 與報告整理成穩定可交付的 DAW/PGM 工程素材包。
+接下來應把公開 README、legacy 入口與 GUI 預設路徑整理好，讓目前完成的 Phase 1 能安全公開。

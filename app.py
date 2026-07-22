@@ -7,6 +7,7 @@ Includes:
 """
 
 import os
+import json
 import tkinter as tk
 from tkinter import filedialog
 import gradio as gr
@@ -226,6 +227,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
 
 - **輸入來源**: `{input_source}`
 - **產出目標目錄**: `{os.path.abspath(output_dir)}`
+- **工程素材包**: `{report.get('project_package', {}).get('project_package_dir', '尚未建立')}`
 - **樂曲調性 (Key)**: `{report['estimated_key']}`
 - **平均速度 (BPM)**: `{report['average_bpm']}` (`{report['min_bpm']}` ~ `{report['max_bpm']}`)
 - **總小節數**: `{report['total_measures']}` 小節
@@ -258,6 +260,14 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
     report_txt_path = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}_pgm_report.txt")
     with open(report_txt_path, "w", encoding="utf-8") as f:
         f.write(full_text)
+    report["outputs"]["text_report"] = report_txt_path
+    project_package = engine.packager.build(report, output_dir=output_dir)
+    report["project_package"] = project_package
+    report["outputs"]["project_package_dir"] = project_package["project_package_dir"]
+    report["outputs"]["import_guide"] = project_package["import_guide"]
+    with open(report["outputs"]["json_report"], "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    engine.packager.build(report, output_dir=output_dir)
 
     return (
         full_text,

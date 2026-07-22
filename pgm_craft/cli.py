@@ -28,6 +28,7 @@ def main():
     print(f" 平均速度 (BPM): {report['average_bpm']} (範圍: {report['min_bpm']} ~ {report['max_bpm']})")
     print(f" 總小節數: {report['total_measures']} 小節 | 總拍數: {report['total_beats']} 拍")
     print(f" 產出目錄: {args.output}")
+    print(f" 工程素材包: {report.get('project_package', {}).get('project_package_dir', '未建立')}")
     print("=" * 50 + "\n")
 
 if __name__ == "__main__":
