@@ -39,6 +39,8 @@ class PGMCraftEngine:
         measure_map = blackboard.get_val("measure_map", [])
         measure_map_status = blackboard.get_val("measure_map_status", "UNKNOWN")
         measure_map_warnings = blackboard.get_val("measure_map_warnings", [])
+        workflow_status = blackboard.get_val("workflow_status", "UNKNOWN")
+        workflow_trace = blackboard.get_val("workflow_trace", [])
 
         # Calculate BPM stats & measures
         diffs = np.diff(beats[:, 0]) if beats is not None else np.array([0.5])
@@ -76,6 +78,8 @@ class PGMCraftEngine:
             "total_measures": len(measure_map) if measure_map else (downbeat_count if downbeat_count > 0 else (len(beats) // 4 if beats is not None else 0)),
             "beat_validation": beat_validation,
             "downbeat_refinement": downbeat_refinement,
+            "workflow_status": workflow_status,
+            "workflow_trace": workflow_trace,
             "measure_map_status": measure_map_status,
             "measure_map_warnings": measure_map_warnings,
             "measure_map": measure_map,

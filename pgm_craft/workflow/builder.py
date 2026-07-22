@@ -68,7 +68,8 @@ class BTWorkflowEngine:
         blackboard.set_val("enable_stem", enable_stem)
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow for {audio_path} ===")
-        status = self.tree.execute(blackboard)
+        status = self.tree.run(blackboard)
+        blackboard.set_val("workflow_status", status.name)
 
         if status == NodeStatus.SUCCESS:
             print("=== [BT Engine] Behavior Tree Execution Finished Successfully! ===")

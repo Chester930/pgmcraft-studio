@@ -1,6 +1,6 @@
 # 系統架構
 
-**最後更新：** 2026-07-22
+**最後更新：** 2026-07-23
 
 ## 架構風格
 
@@ -70,6 +70,8 @@ Blackboard 是節點之間共享的工作流狀態。
 - `project_package_dir`
 - `import_guide`
 - `stems`
+- `workflow_status`
+- `workflow_trace`
 
 隨著專案成熟，這些 key 應該文件化或型別化，降低隱性耦合。
 
@@ -106,6 +108,7 @@ Root Sequence
 - 小節資料模型需要允許同一首歌內出現不同小節長度
 - measure map 會保留每一小節自己的 `beat_count`，缺 downbeat 時只能標記為 fallback
 - 匯出節點只在分析成功後執行
+- `BaseNode.run()` 會記錄 `workflow_trace`，讓執行後可檢查節點順序、狀態與耗時。
 
 ## 節點分類
 

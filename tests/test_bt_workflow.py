@@ -3,7 +3,7 @@ import os
 import shutil
 import tempfile
 import numpy as np
-from pgm_craft.workflow.nodes import SequenceNode, FallbackNode, Blackboard, NodeStatus
+from pgm_craft.workflow.nodes import BaseNode, SequenceNode, FallbackNode, Blackboard, NodeStatus
 from pgm_craft.workflow.audio_nodes import (
     VideoURLDownloadNode,
     AudioLoadNode,
@@ -14,6 +14,16 @@ from pgm_craft.workflow.audio_nodes import (
     MeasureMapNode,
 )
 from pgm_craft.workflow.builder import BTWorkflowEngine
+
+
+class StaticStatusNode(BaseNode):
+    def __init__(self, name, status):
+        super().__init__(name)
+        self.status = status
+
+    def execute(self, blackboard):
+        return self.status
+
 
 class TestBTWorkflowEngine(unittest.TestCase):
     def setUp(self):
@@ -46,6 +56,41 @@ class TestBTWorkflowEngine(unittest.TestCase):
         status = fallback_node.execute(blackboard)
         self.assertEqual(status, NodeStatus.SUCCESS)
         self.assertIsNotNone(blackboard.get_val("beats"))
+
+    def test_sequence_records_workflow_trace_and_stops_on_failure(self):
+        """測試 SequenceNode：run 時記錄 trace，且子節點失敗後停止"""
+        sequence = SequenceNode("Root", [
+            StaticStatusNode("First", NodeStatus.SUCCESS),
+            StaticStatusNode("Second", NodeStatus.FAILURE),
+            StaticStatusNode("Third", NodeStatus.SUCCESS),
+        ])
+        blackboard = Blackboard()
+
+        status = sequence.run(blackboard)
+        trace = blackboard.get_val("workflow_trace")
+
+        self.assertEqual(status, NodeStatus.FAILURE)
+        self.assertEqual([entry["node"] for entry in trace], ["First", "Second", "Root"])
+        self.assertEqual([entry["status"] for entry in trace], ["SUCCESS", "FAILURE", "FAILURE"])
+        self.assertEqual(trace[0]["parent"], "Root")
+        self.assertEqual(trace[-1]["parent"], None)
+        self.assertEqual([entry["index"] for entry in trace], [0, 1, 2])
+
+    def test_fallback_records_failed_and_successful_candidates(self):
+        """測試 FallbackNode：run 時保留失敗候選與成功候選的 trace"""
+        fallback = FallbackNode("Selector", [
+            StaticStatusNode("Primary", NodeStatus.FAILURE),
+            StaticStatusNode("Fallback", NodeStatus.SUCCESS),
+        ])
+        blackboard = Blackboard()
+
+        status = fallback.run(blackboard)
+        trace = blackboard.get_val("workflow_trace")
+
+        self.assertEqual(status, NodeStatus.SUCCESS)
+        self.assertEqual([entry["node"] for entry in trace], ["Primary", "Fallback", "Selector"])
+        self.assertEqual([entry["status"] for entry in trace], ["FAILURE", "SUCCESS", "SUCCESS"])
+        self.assertEqual(trace[0]["parent"], "Selector")
 
     def test_beat_validation_pass(self):
         """測試 BeatValidationNode：穩定 120 BPM 與 downbeat 標籤應通過"""
@@ -280,6 +325,13 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertTrue(os.path.exists(blackboard.get_val("click_track")))
         self.assertTrue(os.path.exists(blackboard.get_val("tempo_map_midi")))
         self.assertTrue(os.path.exists(blackboard.get_val("click_guide_midi")))
+        self.assertEqual(blackboard.get_val("workflow_status"), "SUCCESS")
+        trace = blackboard.get_val("workflow_trace")
+        self.assertIsInstance(trace, list)
+        self.assertGreater(len(trace), 0)
+        self.assertEqual(trace[-1]["node"], "PGMCraftWorkflowRoot")
+        self.assertEqual(trace[-1]["status"], "SUCCESS")
+        self.assertIn("AudioLoadNode", [entry["node"] for entry in trace])
 
 if __name__ == '__main__':
     unittest.main()

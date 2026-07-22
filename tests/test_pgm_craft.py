@@ -51,6 +51,8 @@ class TestPGMCraftPackage(unittest.TestCase):
 
         self.assertIn("estimated_key", report)
         self.assertIn("average_bpm", report)
+        self.assertEqual(report["workflow_status"], "SUCCESS")
+        self.assertGreater(len(report["workflow_trace"]), 0)
         self.assertTrue(os.path.exists(os.path.join(self.temp_dir, "pgm_report.json")))
         self.assertIn("project_package", report)
         package = report["project_package"]
@@ -65,6 +67,8 @@ class TestPGMCraftPackage(unittest.TestCase):
         with open(package["files"]["json_report"], "r", encoding="utf-8") as f:
             packaged_report = json.load(f)
         self.assertIn("project_package", packaged_report)
+        self.assertEqual(packaged_report["workflow_status"], "SUCCESS")
+        self.assertGreater(len(packaged_report["workflow_trace"]), 0)
 
 if __name__ == '__main__':
     unittest.main()

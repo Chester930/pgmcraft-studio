@@ -1,6 +1,6 @@
 # Behavior Tree 設計圖
 
-**最後更新：** 2026-07-22
+**最後更新：** 2026-07-23
 
 本文件記錄 PGMCraft Studio 的 Behavior Tree 設計。所有圖都以 Markdown 形式保存，方便 GitHub 預覽、版本控管與後續討論。
 
@@ -112,6 +112,27 @@ flowchart TD
 | `mix_with_click` | `ClickSynthesisNode` | 原曲加 click 預聽檔 |
 | `tempo_map_midi` | `MIDIExportNode` | MIDI 匯出路徑 |
 | `click_guide_midi` | `MIDIExportNode` | MIDI click guide 路徑 |
+| `workflow_status` | `BTWorkflowEngine` | 整體 BT 執行狀態 |
+| `workflow_trace` | `BaseNode.run()` | 每個 BT 節點的執行順序、狀態、父節點與耗時 |
+
+## Workflow Trace v1
+
+`BaseNode.run()` 會包裝節點執行並在 blackboard 的 `workflow_trace` 中追加 trace entry。`SequenceNode` 與 `FallbackNode` 透過 `child.run(...)` 執行子節點，因此完整 BT engine 執行後可檢查每個節點的結果。
+
+Trace entry 格式：
+
+```json
+{
+  "index": 0,
+  "node": "AudioLoadNode",
+  "node_type": "AudioLoadNode",
+  "parent": "PGMCraftWorkflowRoot",
+  "status": "SUCCESS",
+  "duration_ms": 12.345
+}
+```
+
+若節點丟出未處理 exception，trace entry 會以 `FAILURE` 記錄並帶上 `error` 欄位，然後重新拋出例外。`PGMCraftEngine` 會將 `workflow_status` 與 `workflow_trace` 寫入 `pgm_report.json`。
 
 ## Phase 1 目標 BT
 
