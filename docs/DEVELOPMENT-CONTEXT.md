@@ -1,6 +1,6 @@
 # 開發脈絡
 
-**最後更新：** 2026-07-22
+**最後更新：** 2026-07-23
 
 本文件記錄第一次正式文件整理時的專案脈絡。
 
@@ -11,9 +11,10 @@
 - 已有初始 local commit：`029d072 chore: initial project snapshot`。
 - 已有專案目標與架構文件 commit：`2460e17 docs: define project goals and architecture`。
 - 根目錄 README 已改為 Phase 1 實作現況導向。
-- 尚未設定 GitHub remote。
+- GitHub remote 已設定為 `https://github.com/Chester930/-----.git`。
+- GitHub repository 已建立，目前為 private。
 - GitHub CLI 已登入 `Chester930`。
-- 查詢到的 GitHub repo 清單中，未看到明顯對應此專案的 repository。
+- GitHub Actions CI 已由 push 觸發，遠端執行結果為通過。
 
 ## 目前測試狀態
 
@@ -89,9 +90,9 @@ python -m pytest -q
 - legacy `web_app.py` 的本機絕對輸出路徑已移除
 - Gradio `allowed_paths` 已限制在預設 `outputs/`
 - 清楚標示已實作功能與 roadmap 功能
-- 拆分 core dependencies 與 optional AI/downloader dependencies
+- core dependencies 與 optional AI/downloader dependencies 已初步拆分
 - 決定 `main.py`、`web_app.py`、`beat_tracker.py` 是 legacy example 還是正式入口
-- CI workflow 已新增，尚待 push 後確認 GitHub Actions 結果
+- CI workflow 已新增，且 GitHub Actions 遠端執行已通過
 - `CONTRIBUTING.md` 已加入
 - 加入 DAW 工程素材包匯入說明
 

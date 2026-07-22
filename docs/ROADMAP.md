@@ -1,6 +1,6 @@
 # 開發路線圖
 
-**最後更新：** 2026-07-22
+**最後更新：** 2026-07-23
 
 本路線圖定義 PGMCraft Studio 的階段。每個階段都應產生一個可理解、可測試、可繼續擴充的專案狀態。
 
@@ -20,7 +20,7 @@
 
 - 本地已建立 Git repository
 - 已有初始專案 snapshot commit
-- 尚未設定 GitHub remote
+- GitHub remote 已設定
 - 本地測試通過，但有警告
 
 ## Phase 1：PGM 與 DAW 匯出 MVP
@@ -168,12 +168,12 @@ project-name/
 - GitHub Actions CI workflow 已新增
 - legacy GUI 的本機絕對輸出路徑已移除
 - GUI experimental 功能已標示
+- GitHub remote 已設定，repository 目前為 private
+- GitHub Actions CI 已在遠端執行通過
+- core / optional dependencies 已初步拆分
 
 目前剩餘：
 
-- 設定 GitHub remote
-- 實際 push 後確認 GitHub Actions 通過
-- 拆分 core / optional dependencies
 - 整理 legacy 入口
 - 整理模型與第三方工具授權
 

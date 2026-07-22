@@ -1,6 +1,6 @@
 # 公開發布檢查清單
 
-**最後更新：** 2026-07-22
+**最後更新：** 2026-07-23
 
 本文件記錄 PGMCraft Studio 進入 GitHub public repository 前的檢查狀態。
 
@@ -18,33 +18,33 @@
 - GitHub Actions CI 已新增：`.github/workflows/ci.yml`。
 - `CONTRIBUTING.md` 已加入。
 - 本地測試通過：`python -m pytest -q`。
+- GitHub remote 已設定：`https://github.com/Chester930/-----.git`。
+- GitHub repository 已建立，目前狀態為 private。
+- GitHub Actions CI 已在遠端執行通過。
+- 核心依賴與 optional downloader / AI 依賴已拆分。
 
 ## 尚未完成
 
-- 尚未設定 GitHub remote。
-- 尚未建立 GitHub repository。
-- 尚未實際在 GitHub Actions 上跑過 CI。
-- 尚未拆分核心依賴與 optional AI / downloader 依賴。
 - 尚未決定 `main.py`、`web_app.py`、`beat_tracker.py` 是否移入 `legacy/`。
 - 尚未加入模型授權與第三方工具授權整理。
 - 尚未建立 release tag。
 
-## GitHub Remote 建議
+## GitHub Remote 狀態
 
-建立 GitHub repository 前，需決定：
+目前 repository：
 
-- repository 名稱
-- public 或 private
-- 是否立刻 push `main`
-- 是否保留目前所有 commit history
+- GitHub owner：`Chester930`
+- Repository：`https://github.com/Chester930/-----`
+- Visibility：private
+- Default branch：`main`
 
-建議名稱：
+若公開前要改成更可讀的名稱，建議名稱：
 
 ```text
 pgm-craft
 ```
 
-建議初次公開前先使用 private repository，確認 CI 通過與 README 無誤後再切 public。
+建議維持 private，等 legacy 入口與模型授權整理完成後再切 public。
 
 ## 發布前必要命令
 
@@ -54,7 +54,7 @@ git status -sb
 git remote -v
 ```
 
-若 GitHub remote 已設定：
+推送 main：
 
 ```bash
 git push -u origin main

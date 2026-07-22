@@ -71,6 +71,18 @@ pip install -r requirements.txt
 
 Windows PowerShell 以外的 shell，請依你的環境啟用 virtualenv。
 
+若需要 URL 下載功能，請再安裝 downloader extras：
+
+```bash
+pip install -e ".[downloaders]"
+```
+
+若要實驗 Basic Pitch / CREPE 等 AI 採譜模組，請改用：
+
+```bash
+pip install -e ".[ai]"
+```
+
 ## 使用方式
 
 ### GUI

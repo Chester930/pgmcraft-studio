@@ -1,0 +1,7 @@
+# Optional downloader dependencies
+yt-dlp
+pydub
+
+# Optional experimental AI dependencies
+basic-pitch
+crepe
