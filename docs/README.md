@@ -9,7 +9,8 @@
 1. [專案目標](PROJECT-GOALS.md)：專案要解決什麼問題、服務誰、第一版要做到什麼。
 2. [開發路線圖](ROADMAP.md)：從 MVP 到公開發布，再到未來 AI 模組的階段規劃。
 3. [系統架構](ARCHITECTURE.md)：節點式工作流與 Behavior Tree 編排模型。
-4. [開發脈絡](DEVELOPMENT-CONTEXT.md)：目前程式狀態、實作現實、已形成的設計方向。
+4. [Behavior Tree 設計圖](BEHAVIOR-TREE.md)：目前已實作 BT 與 Phase 1 目標 BT。
+5. [開發脈絡](DEVELOPMENT-CONTEXT.md)：目前程式狀態、實作現實、已形成的設計方向。
 
 ## 文件語言
 
