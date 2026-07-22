@@ -13,6 +13,7 @@
 5. [Behavior Tree 設計圖](BEHAVIOR-TREE.md)：目前已實作 BT 與 Phase 1 目標 BT。
 6. [開發脈絡](DEVELOPMENT-CONTEXT.md)：目前程式狀態、實作現實、已形成的設計方向。
 7. [相關說明文獻與參考專案](REFERENCES.md)：DAW MIDI、beat tracking 與驗證工具參考。
+8. [公開發布檢查清單](RELEASE-CHECKLIST.md)：GitHub public 前的完成項目與剩餘工作。
 
 ## 文件語言
 

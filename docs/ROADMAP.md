@@ -162,6 +162,21 @@ project-name/
 - 公開宣稱符合實作
 - 選用 AI 功能明確標示為 experimental
 
+目前已完成：
+
+- README 已對齊 Phase 1 實作現況
+- GitHub Actions CI workflow 已新增
+- legacy GUI 的本機絕對輸出路徑已移除
+- GUI experimental 功能已標示
+
+目前剩餘：
+
+- 設定 GitHub remote
+- 實際 push 後確認 GitHub Actions 通過
+- 拆分 core / optional dependencies
+- 整理 legacy 入口
+- 整理模型與第三方工具授權
+
 ## Phase 5：AI 輔助音樂模組
 
 狀態：未來階段。

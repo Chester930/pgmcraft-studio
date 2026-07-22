@@ -56,6 +56,7 @@ python -m pytest -q
 - JSON report
 - Gradio GUI 外殼，PGM 頁籤為穩定主線，分軌工作區標示為 experimental
 - CLI 外殼
+- GitHub Actions CI workflow
 
 目前仍屬 placeholder 或 experimental 的區域：
 
@@ -90,7 +91,8 @@ python -m pytest -q
 - 清楚標示已實作功能與 roadmap 功能
 - 拆分 core dependencies 與 optional AI/downloader dependencies
 - 決定 `main.py`、`web_app.py`、`beat_tracker.py` 是 legacy example 還是正式入口
-- 加入 CI
+- CI workflow 已新增，尚待 push 後確認 GitHub Actions 結果
+- `CONTRIBUTING.md` 已加入
 - 加入 DAW 工程素材包匯入說明
 
 ## 既有未提交變更注意
