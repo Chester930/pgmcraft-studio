@@ -1,119 +1,142 @@
-# 🎛️ PGMCraft Studio
+# PGMCraft Studio
 
-> **AI Audio Stem Separation, Music Transcription & Live PGM Backing Track Suite**  
-> **AI 音訊分軌 · 音樂人採譜助手 · 播客 Podcast AI · 現場 PGM 節目軌與 Click 音軌生成系統**
+PGMCraft Studio 是一套以節點式音訊工作流與 Behavior Tree 編排為核心的 DAW / PGM 工程素材產生工具。
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
+目前第一階段的穩定目標是：給定本地音檔或支援的媒體 URL，產生可用於 DAW、練團、採譜與 Live PGM 準備的工程素材包。
 
----
+## 目前穩定功能
 
-## 📖 專案簡介 (Overview)
+- 本地音檔輸入
+- URL 下載入口與音訊準備工作流
+- BeatNet beat / downbeat 偵測，Librosa fallback
+- Beat validation：檢查 beat 數量、timestamp、BPM 範圍與跳動
+- Downbeat refinement：保守補強 downbeat 標籤，不移動 beat 時間點
+- Measure map：允許同一首歌內不同小節長度
+- BPM 統計與 tempo curve 圖
+- `click_track.wav`
+- `mix_with_click.wav`
+- `tempo_map.mid`，包含 DAW 可讀的 MIDI tempo meta event
+- `click_guide.mid`
+- `pgm_report.json`
+- 文字分析報告
+- `pgm_project_package/` 工程素材包
+- `IMPORT_GUIDE.md` DAW 匯入說明
+- CLI 與 Gradio GUI 入口
 
-**PGMCraft Studio** 是一款專為**音樂創作者**、**樂手聽抄採譜**、**播客 Podcast 節目製作**與**演唱會 Live 現場 PGM 播控**設計的專業級音訊處理工具箱。
+## 目前不是穩定功能
 
-本專案整合現代 SOTA 深度學習模型（BS-Roformer, Mel-Band Roformer, HTDemucs v4, BeatNet, Spotify Basic Pitch, CREPE, pyannote.audio, OpenAI Whisper large-v3, DeepFilterNet3），支援**動態行為樹 (Smart Behavior Tree)** 條件防呆控制、**全模型前置保護機制 (Prerequisite Protection)**、**EBU R128 響度放大與聲學降噪**。
+以下模組目前應視為 experimental、placeholder 或 roadmap，不應作為第一版穩定承諾：
 
----
+- 真正具備品質驗證的 Demucs / UVR / BS-Roformer 分軌
+- 主唱與和聲分離
+- 鼓組細分
+- Whisper / pyannote Podcast pipeline
+- Basic Pitch / CREPE 正式採譜與音高分析
+- 自動樂段辨識
+- DAW 專用工程檔案產生
 
-## ✨ 核心功能 (Key Features)
+詳細專案目標與階段文件請見 [docs/README.md](docs/README.md)。
 
-### 1. 📥 獨立影音無損下載 (Standalone Media Downloader)
-- 支援 YouTube, Bilibili, IG Reels, TikTok/抖音, Twitter/X, FB Watch 等平台。
-- 自動建立「媒體標題資料夾」，一鍵無損導出 **`MP4` 影片檔**、**`WAV` 無損 PCM 音檔** 與 **`MP3` 壓縮音檔** 3 個檔案。
+## 輸出結構
 
-### 2. 🎛️ 獨立音色與特化分軌 (14 Standalone Stem Extraction Modes)
-依據**輸入前置要求 (Input Prerequisites)** 分級隔離：
-- 🟢 **類別 A (通用模式)**: 通用 4-Stem (Vocals/Drums/Bass/Other)、人聲分離 (BS-Roformer SDR 12.98dB)、鼓組分離 (HTDemucs FT)、貝斯分離、全自動遞迴層疊分軌。
-- 🟡 **類別 B (伴奏/音軌細分模式)**: 鼓組三細分 (Kick/Snare/HiHat)、吉他分離 (BSRNN / 6s)、鋼琴分離 (UVR Piano)、弦樂分離、風琴分離 *(系統自動防呆：先去人聲以提升 SDR +2.5dB)*。
-- 🔴 **類別 C (高前置條件模式)**: 主唱 vs 和聲細分 (BS-Roformer Lead/Backing)、人聲換氣與口水音消除 (UVR DeBreathe)、電貝斯 vs 808 合成低音細分 (SynthBass Split)、乾聲去殘響 *(系統自動防呆：自動前置剝離純人聲/純貝斯)*。
-
-### 3. 🎙️ 播客與語音特化 AI (Podcast & Speech AI Suite)
-- **多人對話/主持人與來賓分離 (Speaker Diarization)**: 採用 **pyannote.audio** / WhisperX，自動將 Host (主持人) 與 Guest (來賓) 聲紋分離成獨立音軌。
-- **微秒級逐字稿與 SRT 字幕 (Speech-to-Text)**: 採用 **OpenAI Whisper (large-v3)**，1 秒自動導出繁體中文逐字稿與 SRT 字幕檔。
-- **廣播級電流聲與齒音消除 (Broadcast Voice Enhancer)**: 採用 **DeepFilterNet3**，自動消除 50/60Hz 電流聲 (De-Hum) 與刺耳高頻齒音 (De-Esser)。
-- **Podcast 口白與 BGM 音樂分離**: 採用 **UVR-MDX-NET Crowd-Speech**，精確抽離主持人說話聲與背景襯樂。
-
-### 4. 🧠 智能行為樹與條件防呆 (Smart Behavior Tree & Guard Nodes)
-- **信噪比與響度防護 Guard**: `CheckAudioSNRCondition` 自動偵測微弱訊號，實行**「先頻譜降噪 ➔ 再適應性增益 (-14 LUFS) ➔ 進行 AI 分離」**。
-- **樂器存在性檢測 Guard**: `DetectInstrumentPresenceNode` (PANNs / Audio Tagging)，若樂曲無鋼琴/吉他 (Prob < 0.25)，自動 Skip 該分支，避免產生虛假爆音雜訊。
-
-### 5. 🎹 非分軌高價值音樂 AI 採譜 (Non-Demixing Music AI)
-- **多音階 MIDI 採譜 (AMT)**: 整合 **Spotify Basic Pitch**，直出可拖入 DAW 編輯的 MIDI 音符檔。
-- **微秒級音高追蹤 (Pitch Tracking)**: 整合 **CREPE** 模型，微秒級分析主唱與樂手 Cents 精度音準與顫音曲線。
-- **樂段結構識別 (Music Structure Segmentation)**: 自動標記 `Intro`, `Verse`, `Chorus`, `Bridge`, `Outro` 段落。
-
----
-
-## 📂 專案架構 (Repository Structure)
+執行 PGM pipeline 後，輸出目錄會包含平面輸出檔，也會建立正式工程素材包：
 
 ```text
-PGMCraft/
-├── pgm_craft/              # 核心 Python 套件目錄
-│   ├── __init__.py
-│   ├── separator.py        # 14 大 SOTA 單一音色與多階層層疊分軌引擎
-│   ├── podcast_ai.py       # Podcast 多人聲紋分離、Whisper 逐字稿與廣播聲音優化
-│   ├── enhancer.py         # EBU R128 響度放大、Soft Limiter 與頻譜降噪模組
-│   ├── music_ai.py         # Basic Pitch MIDI 採譜、CREPE 音高追蹤與樂段標記
-│   ├── analyzer.py         # BeatNet 節拍追蹤與 Key/Chord 和弦分析
-│   ├── synthesizer.py      # Click WAV 合成與 DAW Tempo Map MIDI 導出
-│   ├── pipeline.py         # 總控 pipeline 引擎
-│   ├── cli.py              # CLI 進入點
-│   └── workflow/           # 行為樹 (Behavior Tree) 節點庫
-│       ├── nodes.py        # BT 核心基底 (Blackboard, SequenceNode, GuardNode)
-│       ├── downloaders.py  # 影音網址分發器 (Strategy Pattern)
-│       ├── audio_nodes.py  # 音訊處理行為樹動作節點
-│       └── smart_demixing_bt.py # 全模型輸入前置Guard與樂器檢測門控BT
-├── tests/                  # 24 個單元測試集 (100% PASS)
-│   ├── test_pgm_craft.py
-│   ├── test_downloaders.py
-│   ├── test_separator_prerequisites.py
-│   ├── test_enhancer.py
-│   ├── test_smart_demixing_bt.py
-│   ├── test_music_ai.py
-│   └── test_podcast_ai.py
-├── app.py                  # Gradio Web GUI 應用程式進入點 (3 大頁籤)
-├── MODELS_GUIDE.md         # SOTA 模型、Podcast AI、前置要求與論文權威指南
-├── pyproject.toml          # Standard Python Packaging / Config
-├── requirements.txt        # 專案依賴項清單
-├── README.md               # 專案說明文件
-└── LICENSE                 # MIT 開源授權條款
+pgm_project_package/
+├── audio/
+│   ├── source.*
+│   ├── click_track.wav
+│   └── mix_with_click.wav
+├── midi/
+│   ├── tempo_map.mid
+│   └── click_guide.mid
+├── reports/
+│   ├── pgm_report.json
+│   ├── tempo_curve.png
+│   └── *_pgm_report.txt
+└── IMPORT_GUIDE.md
 ```
 
----
+`tempo_map.mid` 用於 DAW 速度圖；`click_guide.mid` 用於 MIDI click note。若分析結果有 `WARN`，請依 `IMPORT_GUIDE.md` 與報告內容在 DAW 中人工檢查 downbeat、小節與 click 對齊。
 
-## 🚀 快速上手 (Quick Start)
+## 安裝
 
-### 1. 安裝環境與依賴 (Installation)
+建議使用 Python 3.11 或更新版本。
 
 ```bash
-git clone https://github.com/your-username/pgm-craft.git
-cd pgm-craft
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. 啟動 Web 圖形介面 (Launch Web GUI)
+Windows PowerShell 以外的 shell，請依你的環境啟用 virtualenv。
+
+## 使用方式
+
+### GUI
 
 ```bash
 python app.py
 ```
-造訪 `http://127.0.0.1:7860` 即可使用：
-- **頁籤 1**: 📥 獨立影音無損下載 (MP4 / MP3 / WAV)
-- **頁籤 2**: 🎛️ 獨立音色分軌工作區 (14 大單一音色 / A/B/C 三色塊隔離)
-- **頁籤 3**: 🎛️ PGM 節目軌與採譜分析
 
----
+開啟：
 
-## 🧪 執行單元測試 (Unit Tests)
-
-```bash
-python -m unittest discover -s tests -p "test_*.py"
+```text
+http://127.0.0.1:7860
 ```
 
----
+GUI 目前包含：
 
-## 📜 授權條款 (License)
+- 影音下載入口
+- 實驗性分軌工作區
+- PGM 節目軌與採譜分析
 
-本專案採用 [MIT License](LICENSE) 條款開源授權。
-完整的模型選用說明、Podcast AI 與學術論文引用請參閱 [MODELS_GUIDE.md](MODELS_GUIDE.md)。
+第一版穩定使用建議以「PGM 節目軌與採譜分析」頁籤為主。
+
+### CLI
+
+```bash
+python -m pgm_craft.cli --audio sample_test.wav --output outputs
+```
+
+輸出完成後，CLI 會顯示工程素材包路徑。
+
+## 測試
+
+```bash
+python -m pytest -q
+```
+
+目前核心測試覆蓋 beat validation、downbeat refinement、measure map、MIDI 輸出與工程素材包建立。
+
+## 主要目錄
+
+```text
+pgm_craft/
+├── analyzer.py          # beat/key/chord 分析
+├── synthesizer.py       # click WAV、tempo MIDI、click guide MIDI
+├── packager.py          # DAW/PGM 工程素材包
+├── pipeline.py          # BT 結果彙整與輸出報告
+├── cli.py               # CLI 入口
+└── workflow/
+    ├── nodes.py         # Behavior Tree 基礎節點
+    ├── audio_nodes.py   # 音訊工作流節點
+    └── downloaders.py   # URL 下載策略
+```
+
+## 文件
+
+- [專案目標](docs/PROJECT-GOALS.md)
+- [Phase 1 已確定範圍](docs/PHASE1-CONFIRMED-SCOPE.md)
+- [Behavior Tree 設計圖](docs/BEHAVIOR-TREE.md)
+- [系統架構](docs/ARCHITECTURE.md)
+- [開發路線圖](docs/ROADMAP.md)
+- [相關參考](docs/REFERENCES.md)
+
+## Legacy 入口
+
+`main.py`、`web_app.py`、`beat_tracker.py` 是較早期的 standalone pipeline。正式開發與公開說明以 `pgm_craft/`、`app.py` 與 `python -m pgm_craft.cli` 為主。
+
+## 授權
+
+本專案採用 [MIT License](LICENSE)。

@@ -277,4 +277,4 @@ AudioPreparation 後
 
 ## 下一步討論焦點
 
-下一輪應先整理公開發布面：README、legacy entry、GUI 預設路徑與 public-safe 說明，避免公開時把 experimental/stub 功能誤寫成穩定功能。
+下一輪應先處理 GitHub remote、CI 與 release 前檢查，讓目前 Phase 1 可以進入可公開 repository 狀態。

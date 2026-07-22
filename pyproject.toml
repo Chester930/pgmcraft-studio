@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pgm-craft"
 version = "1.0.0"
-description = "AI Audio Stem Separation, Music Transcription & Live PGM Backing Track Suite"
+description = "DAW/PGM beat analysis and project package generator"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {file = "LICENSE"}
-keywords = ["audio", "music-transcription", "stem-separation", "pgm", "beat-tracking", "demucs", "beatnet"]
+keywords = ["audio", "daw", "pgm", "beat-tracking", "midi", "tempo-map", "beatnet"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

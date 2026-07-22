@@ -146,6 +146,7 @@ project-name/
 範圍：
 
 - 依照實際 MVP 重寫 README
+- 清楚標示 GUI 分軌工作區為 experimental
 - 將實驗模型宣稱移到 roadmap
 - 移除本機路徑
 - 釐清 Python 版本支援

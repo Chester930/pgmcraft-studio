@@ -282,10 +282,10 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
 
 
 # 建立 Gradio Web App
-with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作套件") as demo:
+with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌工具") as demo:
     gr.Markdown("""
     # 🎛️ PGMCraft Studio
-    ### AI 音訊分軌 · 音樂人採譜助手 · 現場 PGM 節目軌與 Click 音軌生成系統
+    ### DAW/PGM 工程素材 · 節拍與小節地圖 · Click / MIDI / 報告輸出
     """)
 
     with gr.Tabs():
@@ -330,7 +330,9 @@ with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作�
         # 頁籤 2: 獨立音色分軌區塊 (顏色標記前置等級 🟢 通用 / 🟡 伴奏 / 🔴 特化)
         with gr.TabItem("🎛️ 獨立音色分軌工作區"):
             gr.Markdown("""
-            ### 🎚️ 按前置要求分級的分軌工作區
+            ### 🎚️ 實驗性分軌工作區
+            此區塊目前仍屬 experimental，公開穩定功能以 PGM 節目軌與採譜分析為主。
+
             - 🟢 **通用模式**: 可直接傳入原始混音檔 (Full Mix)。
             - 🟡 **伴奏模式**: 建議傳入純伴奏/純鼓組。(若傳原曲，系統**自動防呆先行抽軌**)
             - 🔴 **特化模式**: 需純人聲/純貝斯/單一分軌。(若傳原曲，系統**自動啟動人聲/貝斯防呆保護**)
@@ -446,5 +448,5 @@ if __name__ == "__main__":
         server_name="127.0.0.1", 
         server_port=7860, 
         share=False,
-        allowed_paths=[os.getcwd(), DEFAULT_OUTPUT_DIR]
+        allowed_paths=[DEFAULT_OUTPUT_DIR]
     )

@@ -3,6 +3,7 @@ import gradio as gr
 from beat_tracker import BeatTrackingSystem
 
 tracker = BeatTrackingSystem(use_beatnet=True)
+DEFAULT_OUTPUT_DIR = os.path.abspath("outputs")
 
 def process_audio(uploaded_file, custom_output_dir):
     """處理上傳的音軌，並將結果儲存至指定的產出資料夾"""
@@ -73,7 +74,7 @@ with gr.Blocks(title="自動動態節拍追蹤系統") as demo:
             )
 
             output_folder_box = gr.Textbox(
-                value=r"d:\Users\666\Desktop\UVR5 音檔\自動節拍器\outputs", 
+                value=DEFAULT_OUTPUT_DIR,
                 label="📁 產出目標資料夾路徑 (Output Destination Folder Path)"
             )
             

@@ -10,6 +10,7 @@
 - 目前 branch 是 `main`。
 - 已有初始 local commit：`029d072 chore: initial project snapshot`。
 - 已有專案目標與架構文件 commit：`2460e17 docs: define project goals and architecture`。
+- 根目錄 README 已改為 Phase 1 實作現況導向。
 - 尚未設定 GitHub remote。
 - GitHub CLI 已登入 `Chester930`。
 - 查詢到的 GitHub repo 清單中，未看到明顯對應此專案的 repository。
@@ -53,7 +54,7 @@ python -m pytest -q
 - `IMPORT_GUIDE.md` 匯入說明
 - 速度曲線圖
 - JSON report
-- Gradio GUI 外殼
+- Gradio GUI 外殼，PGM 頁籤為穩定主線，分軌工作區標示為 experimental
 - CLI 外殼
 
 目前仍屬 placeholder 或 experimental 的區域：
@@ -82,10 +83,10 @@ python -m pytest -q
 
 公開前應處理：
 
-- 依照實際 MVP 重寫 README
-- 移除 `your-username` clone placeholder
-- 移除 GUI 預設值中的本機絕對路徑
-- 公開 GUI code 中避免預設 broad filesystem `allowed_paths`
+- README 已依照實際 MVP 重寫
+- README 中的範例 clone placeholder 已移除
+- legacy `web_app.py` 的本機絕對輸出路徑已移除
+- Gradio `allowed_paths` 已限制在預設 `outputs/`
 - 清楚標示已實作功能與 roadmap 功能
 - 拆分 core dependencies 與 optional AI/downloader dependencies
 - 決定 `main.py`、`web_app.py`、`beat_tracker.py` 是 legacy example 還是正式入口
