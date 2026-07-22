@@ -2,7 +2,7 @@
 PGMCraft Studio: Web GUI Application
 Includes:
 1. Standalone Media Downloader (URL -> Title Folder -> MP4, MP3, WAV)
-2. Standalone Stem Separator (Categorized by Input Prerequisites with 4S/6S General & Sub-stems)
+2. Standalone Stem Separator (Categorized by Input Prerequisites with Color Icons 🟢 🟡 🔴)
 3. PGM Backing Track & Transcription Suite
 """
 
@@ -17,6 +17,36 @@ from pgm_craft.workflow.downloaders import URLDownloaderDispatcher
 engine = PGMCraftEngine(enable_stem_separation=False)
 separator_engine = CascadedStemSeparator()
 downloader_dispatcher = URLDownloaderDispatcher()
+DEFAULT_OUTPUT_DIR = os.path.abspath("outputs")
+
+SEPARATION_MODES = [
+    {"id": "general_4stem", "label": "🟢 通用標準 4-Stem 一鍵分軌 (Vocals, Drums, Bass, Other)"},
+    {"id": "general_6stem", "label": "🟢 通用進階 6-Stem 一鍵分軌 (Vocals, Drums, Bass, Guitar, Piano, Other)"},
+    {"id": "vocals", "label": "🟢 人聲分離 (BS-Roformer)"},
+    {"id": "drums", "label": "🟢 鼓組分離 (HTDemucs FT)"},
+    {"id": "bass", "label": "🟢 貝斯分離 (HTDemucs Bass)"},
+    {"id": "cascaded", "label": "🟢 全自動遞迴層疊分軌 (Pass 1 人聲 ➔ Pass 2 鼓組 ➔ Pass 3 貝斯)"},
+    {"id": "drums_substem", "label": "🟡 鼓組三細分 (Kick 大鼓 / Snare 小鼓 / Hi-Hat 鈸)"},
+    {"id": "guitar", "label": "🟡 吉他分離 (BSRNN / HTDemucs 6s)"},
+    {"id": "piano", "label": "🟡 鋼琴分離 (UVR-MDX-NET-Piano)"},
+    {"id": "strings", "label": "🟡 弦樂分離 (UVR-MDX-NET-Strings)"},
+    {"id": "organ", "label": "🟡 風琴分離 (UVR-MDX-NET-Organ)"},
+    {"id": "debreathe", "label": "🔴 人聲換氣與口水音消除 (UVR DeBreathe)"},
+    {"id": "synth_bass", "label": "🔴 電貝斯 vs 合成 808 低音細分 (SynthBass Split)"},
+    {"id": "lead_backing", "label": "🔴 主唱 vs 和聲細分 (BS-Roformer Lead/Backing)"},
+    {"id": "dereverb", "label": "🔴 乾聲去殘響 (UVR-DeEcho-DeReverb)"},
+]
+SEPARATION_MODE_LABELS = {mode["id"]: mode["label"] for mode in SEPARATION_MODES}
+SEPARATION_MODE_IDS_BY_LABEL = {mode["label"]: mode["id"] for mode in SEPARATION_MODES}
+
+
+def resolve_separation_mode_id(separation_mode):
+    """將 GUI value 或舊版 label 解析成穩定模式 ID。"""
+    if separation_mode in SEPARATION_MODE_LABELS:
+        return separation_mode
+    if separation_mode in SEPARATION_MODE_IDS_BY_LABEL:
+        return SEPARATION_MODE_IDS_BY_LABEL[separation_mode]
+    return None
 
 def open_folder_picker(current_path):
     """彈出 OS 原生資料夾選擇視窗"""
@@ -37,7 +67,7 @@ def open_folder_picker(current_path):
 
 
 def process_standalone_separation(audio_input, separation_mode, custom_output_dir):
-    """依據輸入前置要求分級處理 (類別 A / 類別 B / 類別 C)"""
+    """依據穩定模式 ID 執行對應分軌流程。"""
     if not audio_input:
         return "⚠️ 請上傳音軌檔案！", None, None, None, None
 
@@ -48,87 +78,94 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
 
     status_msg = ""
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
+    mode_id = resolve_separation_mode_id(separation_mode)
+    if mode_id is None:
+        return f"❌ 不支援的分軌模式: {separation_mode}", None, None, None, None
 
-    # 🟢 類別 A：通用分軌模式 (可直接上傳原始混音曲 Full Mix)
-    if separation_mode == "🟢 [類別 A] 通用標準 4-Stem 一鍵分軌 (Vocals, Drums, Bass, Other)":
+    # 🟢 通用分軌模式 (可直接上傳原始混音曲 Full Mix)
+    if mode_id == "general_4stem":
         res = separator_engine.separate_general_4stems(audio_input, stem_dir, enable_enhancement=True)
         vocal_out, drums_out, bass_out, extra_out = res.get('vocals'), res.get('drums'), res.get('bass'), res.get('other')
         status_msg = f"🎉 完成【通用標準 4-Stem 分離與 EBU R128 響度優化】！\n- 目錄: `{os.path.abspath(stem_dir)}`"
 
-    elif separation_mode == "🟢 [類別 A] 通用進階 6-Stem 一鍵分軌 (Vocals, Drums, Bass, Guitar, Piano, Other)":
+    elif mode_id == "general_6stem":
         res = separator_engine.separate_general_6stems(audio_input, stem_dir, enable_enhancement=True)
         vocal_out, drums_out, bass_out, extra_out = res.get('vocals'), res.get('drums'), res.get('bass'), res.get('other')
-        status_msg = f"🎉 完成【通用進階 6-Stem 全音色分離與 EBU R128 響度優化】！包含 Vocals, Drums, Bass, Guitar, Piano, Other。\n- 目錄: `{os.path.abspath(stem_dir)}`"
+        status_msg = (
+            "🎉 完成【通用進階 6-Stem 全音色分離與 EBU R128 響度優化】！\n"
+            "- 包含: Vocals, Drums, Bass, Guitar, Piano, Other\n"
+            f"- 目錄: `{os.path.abspath(stem_dir)}`"
+        )
 
-    elif separation_mode == "🟢 [類別 A] 人聲分離 (BS-Roformer)":
+    elif mode_id == "vocals":
         vocal_out, inst_out = separator_engine.separate_vocals(audio_input, stem_dir)
         status_msg = f"✅ 完成【人聲分離】！\n- **純人聲**: `{os.path.basename(vocal_out)}`\n- **無人聲伴奏**: `{os.path.basename(inst_out)}`"
         extra_out = inst_out
 
-    elif separation_mode == "🟢 [類別 A] 鼓組分離 (HTDemucs FT)":
+    elif mode_id == "drums":
         drums_out, no_drums_out = separator_engine.separate_drums(audio_input, stem_dir)
         status_msg = f"✅ 完成【鼓組分離】！\n- **鼓組軌**: `{os.path.basename(drums_out)}`\n- **無鼓伴奏**: `{os.path.basename(no_drums_out)}`"
         extra_out = no_drums_out
 
-    elif separation_mode == "🟢 [類別 A] 貝斯分離 (HTDemucs Bass)":
+    elif mode_id == "bass":
         bass_out, other_out = separator_engine.separate_bass(audio_input, stem_dir)
         status_msg = f"✅ 完成【貝斯分離】！\n- **貝斯軌**: `{os.path.basename(bass_out)}`\n- **其他伴奏**: `{os.path.basename(other_out)}`"
         extra_out = other_out
 
-    elif separation_mode == "🟢 [類別 A] 全自動遞迴層疊分軌 (Pass 1 人聲 ➔ Pass 2 鼓組 ➔ Pass 3 貝斯)":
+    elif mode_id == "cascaded":
         res = separator_engine.run_cascaded_demixing(audio_input, steps=['vocals', 'drums', 'bass'], output_dir=stem_dir)
         vocal_out, drums_out, bass_out, extra_out = res.get('vocals'), res.get('drums'), res.get('bass'), res.get('other')
         status_msg = f"🎉 完成【全自動遞迴層疊分軌】！已儲存至 `{os.path.abspath(stem_dir)}`"
 
-    # 🟡 類別 B：伴奏/特定軌細分模式 (系統自動防呆：先抽對應分軌)
-    elif separation_mode == "🟡 [類別 B] 鼓組三細分 (Kick 大鼓 / Snare 小鼓 / Hi-Hat 鈸)":
+    # 🟡 伴奏/特定軌細分模式 (系統自動防呆：先抽對應分軌)
+    elif mode_id == "drums_substem":
         status_msg = "ℹ️ 【鼓組 Guard 啟動】: 輸入為原曲時，系統已自動先執行 Pass 2 提取純鼓組，再精確細分打擊樂！\n\n"
         kick_out, snare_out, hihat_out = separator_engine.separate_drums_substem(audio_input, stem_dir, is_already_drums=False)
         status_msg += f"✅ 完成【鼓組細分】！\n- **大鼓 (Kick)**: `{os.path.basename(kick_out)}`\n- **小鼓 (Snare)**: `{os.path.basename(snare_out)}`\n- **鈸聲 (Hi-Hat)**: `{os.path.basename(hihat_out)}`"
         drums_out, bass_out, extra_out = kick_out, snare_out, hihat_out
 
-    elif separation_mode == "🟡 [類別 B] 吉他分離 (BSRNN / HTDemucs 6s)":
+    elif mode_id == "guitar":
         status_msg = "ℹ️ 【防呆保護啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 1 去人聲，確保吉他分離精度 SDR +2.5dB！\n\n"
         guitar_out, no_guitar_out = separator_engine.separate_guitar(audio_input, stem_dir, is_already_instrumental=False)
         status_msg += f"✅ 完成【吉他分離】！\n- **吉他獨奏**: `{os.path.basename(guitar_out)}`\n- **無吉他伴奏**: `{os.path.basename(no_guitar_out)}`"
         extra_out = guitar_out
 
-    elif separation_mode == "🟡 [類別 B] 鋼琴分離 (UVR-MDX-NET-Piano)":
+    elif mode_id == "piano":
         status_msg = "ℹ️ 【防呆保護啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 1 去人聲，避免人聲干擾鋼琴泛音！\n\n"
         piano_out, no_piano_out = separator_engine.separate_piano(audio_input, stem_dir, is_already_instrumental=False)
         status_msg += f"✅ 完成【鋼琴分離】！\n- **鋼琴軌**: `{os.path.basename(piano_out)}`\n- **無鋼琴伴奏**: `{os.path.basename(no_piano_out)}`"
         extra_out = piano_out
 
-    elif separation_mode == "🟡 [類別 B] 弦樂分離 (UVR-MDX-NET-Strings)":
+    elif mode_id == "strings":
         strings_out, no_strings_out = separator_engine.separate_strings(audio_input, stem_dir)
         status_msg = f"✅ 完成【弦樂分離】！\n- **弦樂聲部**: `{os.path.basename(strings_out)}`\n- **無弦樂伴奏**: `{os.path.basename(no_strings_out)}`"
         extra_out = strings_out
 
-    elif separation_mode == "🟡 [類別 B] 風琴分離 (UVR-MDX-NET-Organ)":
+    elif mode_id == "organ":
         organ_out, no_organ_out = separator_engine.separate_organ(audio_input, stem_dir)
         status_msg = f"✅ 完成【風琴分離】！\n- **風琴聲部**: `{os.path.basename(organ_out)}`\n- **無風琴伴奏**: `{os.path.basename(no_organ_out)}`"
         extra_out = organ_out
 
-    # 🔴 類別 C：高前置條件特化模式 (系統自動防呆：需純人聲/單一音軌)
-    elif separation_mode == "🔴 [類別 C] 人聲換氣與口水音消除 (UVR DeBreathe)":
+    # 🔴 高前置條件特化模式 (系統自動防呆：需純人聲/單一音軌)
+    elif mode_id == "debreathe":
         status_msg = "ℹ️ 【人聲 Guard 啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 1 剝離純人聲，再消除換氣聲！\n\n"
         clean_vocal, breath_out = separator_engine.process_debreathe(audio_input, stem_dir, is_already_vocal=False)
         status_msg += f"✅ 完成【人聲去換氣聲】！\n- **無換氣聲純人聲**: `{os.path.basename(clean_vocal)}`\n- **吸氣/換氣聲音軌**: `{os.path.basename(breath_out)}`"
         vocal_out, extra_out = clean_vocal, breath_out
 
-    elif separation_mode == "🔴 [類別 C] 電貝斯 vs 合成 808 低音細分 (SynthBass Split)":
+    elif mode_id == "synth_bass":
         status_msg = "ℹ️ 【貝斯 Guard 啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 3 提取純貝斯，再細分電貝斯與 808！\n\n"
         ebass_out, sbass_out = separator_engine.separate_synth_and_electric_bass(audio_input, stem_dir, is_already_bass=False)
         status_msg += f"✅ 完成【貝斯細分】！\n- **真實電貝斯**: `{os.path.basename(ebass_out)}`\n- **808/合成低音**: `{os.path.basename(sbass_out)}`"
         bass_out, extra_out = ebass_out, sbass_out
 
-    elif separation_mode == "🔴 [類別 C] 主唱 vs 和聲細分 (BS-Roformer Lead/Backing)":
+    elif mode_id == "lead_backing":
         status_msg = "ℹ️ 【極高前置保護啟動】: 本模型要求純人聲。輸入為原曲時，系統自動先剝離純人聲，再拆解主唱與和聲！\n\n"
         lead_out, backing_out = separator_engine.separate_lead_and_backing(audio_input, stem_dir, is_already_vocal=False)
         status_msg += f"✅ 完成【主唱與和聲拆解】！\n- **單獨主唱**: `{os.path.basename(lead_out)}`\n- **背景和聲**: `{os.path.basename(backing_out)}`"
         vocal_out, extra_out = lead_out, backing_out
 
-    elif separation_mode == "🔴 [類別 C] 乾聲去殘響 (UVR-DeEcho-DeReverb)":
+    elif mode_id == "dereverb":
         dry_out, room_out = separator_engine.process_dereverb(audio_input, stem_dir, is_already_single_stem=False)
         status_msg = f"✅ 完成【去殘響處理】！\n- **無迴音乾聲**: `{os.path.basename(dry_out)}`\n- **房間迴音成分**: `{os.path.basename(room_out)}`"
         extra_out = dry_out
@@ -239,7 +276,7 @@ with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作�
                     )
                     with gr.Row():
                         dl_output_dir = gr.Textbox(
-                            value=r"d:\Users\666\Desktop\UVR5 音檔\自動節拍器\outputs",
+                            value=DEFAULT_OUTPUT_DIR,
                             label="📁 儲存位置根目錄 (Root Output Folder)",
                             scale=4
                         )
@@ -266,13 +303,13 @@ with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作�
                 outputs=[dl_status_markdown, file_mp4_dl, file_wav_dl, file_mp3_dl]
             )
 
-        # 頁籤 2: 獨立音色分軌區塊 (按輸入前置要求分級隔離，支援 4S/6S 泛音與 15 種 SOTA 模式)
+        # 頁籤 2: 獨立音色分軌區塊 (顏色標記前置等級 🟢 通用 / 🟡 伴奏 / 🔴 特化)
         with gr.TabItem("🎛️ 獨立音色分軌工作區"):
             gr.Markdown("""
-            ### 🎚️ 按輸入前置要求分級的分軌工作區
-            - 🟢 **類別 A (通用模式)**: 支援 4-Stem 與 6-Stem 全樂器通用一鍵分軌 (Full Mix)。
-            - 🟡 **類別 B (伴奏/音軌細分模式)**: 建議傳入純伴奏/純鼓組。若傳原曲，系統將**自動防呆先行抽軌**！
-            - 🔴 **類別 C (高前置條件模式)**: 需純人聲/純貝斯/單一分軌。若傳原曲，系統將**自動啟動人聲/貝斯防呆保護**！
+            ### 🎚️ 按前置要求分級的分軌工作區
+            - 🟢 **通用模式**: 可直接傳入原始混音檔 (Full Mix)。
+            - 🟡 **伴奏模式**: 建議傳入純伴奏/純鼓組。(若傳原曲，系統**自動防呆先行抽軌**)
+            - 🔴 **特化模式**: 需純人聲/純貝斯/單一分軌。(若傳原曲，系統**自動啟動人聲/貝斯防呆保護**)
             """)
             with gr.Row():
                 with gr.Column(scale=1):
@@ -282,29 +319,13 @@ with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作�
                         file_types=[".mp3", ".wav", ".flac", ".m4a"]
                     )
                     stem_mode_select = gr.Dropdown(
-                        choices=[
-                            "🟢 [類別 A] 通用標準 4-Stem 一鍵分軌 (Vocals, Drums, Bass, Other)",
-                            "🟢 [類別 A] 通用進階 6-Stem 一鍵分軌 (Vocals, Drums, Bass, Guitar, Piano, Other)",
-                            "🟢 [類別 A] 人聲分離 (BS-Roformer)",
-                            "🟢 [類別 A] 鼓組分離 (HTDemucs FT)",
-                            "🟢 [類別 A] 貝斯分離 (HTDemucs Bass)",
-                            "🟢 [類別 A] 全自動遞迴層疊分軌 (Pass 1 人聲 ➔ Pass 2 鼓組 ➔ Pass 3 貝斯)",
-                            "🟡 [類別 B] 鼓組三細分 (Kick 大鼓 / Snare 小鼓 / Hi-Hat 鈸)",
-                            "🟡 [類別 B] 吉他分離 (BSRNN / HTDemucs 6s)",
-                            "🟡 [類別 B] 鋼琴分離 (UVR-MDX-NET-Piano)",
-                            "🟡 [類別 B] 弦樂分離 (UVR-MDX-NET-Strings)",
-                            "🟡 [類別 B] 風琴分離 (UVR-MDX-NET-Organ)",
-                            "🔴 [類別 C] 人聲換氣與口水音消除 (UVR DeBreathe)",
-                            "🔴 [類別 C] 電貝斯 vs 合成 808 低音細分 (SynthBass Split)",
-                            "🔴 [類別 C] 主唱 vs 和聲細分 (BS-Roformer Lead/Backing)",
-                            "🔴 [類別 C] 乾聲去殘響 (UVR-DeEcho-DeReverb)"
-                        ],
-                        value="🟢 [類別 A] 通用標準 4-Stem 一鍵分軌 (Vocals, Drums, Bass, Other)",
+                        choices=[(mode["label"], mode["id"]) for mode in SEPARATION_MODES],
+                        value="general_4stem",
                         label="🎯 選擇分軌模式 (標有色塊說明前置要求等級)"
                     )
                     with gr.Row():
                         stem_output_dir = gr.Textbox(
-                            value=r"d:\Users\666\Desktop\UVR5 音檔\自動節拍器\outputs",
+                            value=DEFAULT_OUTPUT_DIR,
                             label="📁 分軌產出資料夾 (Stems Output Folder)",
                             scale=4
                         )
@@ -351,7 +372,7 @@ with gr.Blocks(title="PGMCraft Studio - AI 音訊分軌、採譜與 PGM 製作�
                     )
                     with gr.Row():
                         output_folder_box = gr.Textbox(
-                            value=r"d:\Users\666\Desktop\UVR5 音檔\自動節拍器\outputs", 
+                            value=DEFAULT_OUTPUT_DIR, 
                             label="📁 PGM 專案產出資料夾 (Output Directory)",
                             scale=4
                         )
@@ -399,5 +420,5 @@ if __name__ == "__main__":
         server_name="127.0.0.1", 
         server_port=7860, 
         share=False,
-        allowed_paths=["C:\\", "D:\\", "E:\\"]
+        allowed_paths=[os.getcwd(), DEFAULT_OUTPUT_DIR]
     )
