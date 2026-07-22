@@ -144,10 +144,13 @@ pgm_craft/
 - [系統架構](docs/ARCHITECTURE.md)
 - [開發路線圖](docs/ROADMAP.md)
 - [相關參考](docs/REFERENCES.md)
+- [模型與第三方工具注意事項](docs/MODEL-AND-THIRD-PARTY-NOTES.md)
 
 ## Legacy 入口
 
 `main.py`、`web_app.py`、`beat_tracker.py` 是較早期的 standalone pipeline。正式開發與公開說明以 `pgm_craft/`、`app.py` 與 `python -m pgm_craft.cli` 為主。
+
+第一版公開前的 legacy 入口決策請見 [docs/LEGACY-ENTRYPOINTS.md](docs/LEGACY-ENTRYPOINTS.md)。
 
 ## 授權
 

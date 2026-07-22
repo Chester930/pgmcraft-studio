@@ -22,11 +22,11 @@
 - GitHub repository 已建立，目前狀態為 private。
 - GitHub Actions CI 已在遠端執行通過。
 - 核心依賴與 optional downloader / AI 依賴已拆分。
+- Legacy 入口已決定暫時保留於根目錄，並以文件標示定位。
+- 模型與第三方工具授權邊界已新增文件。
 
 ## 尚未完成
 
-- 尚未決定 `main.py`、`web_app.py`、`beat_tracker.py` 是否移入 `legacy/`。
-- 尚未加入模型授權與第三方工具授權整理。
 - 尚未建立 release tag。
 
 ## GitHub Remote 狀態

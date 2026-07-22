@@ -91,10 +91,11 @@ python -m pytest -q
 - Gradio `allowed_paths` 已限制在預設 `outputs/`
 - 清楚標示已實作功能與 roadmap 功能
 - core dependencies 與 optional AI/downloader dependencies 已初步拆分
-- 決定 `main.py`、`web_app.py`、`beat_tracker.py` 是 legacy example 還是正式入口
+- 已決定 `main.py`、`web_app.py`、`beat_tracker.py` 暫時保留為 legacy example
 - CI workflow 已新增，且 GitHub Actions 遠端執行已通過
 - `CONTRIBUTING.md` 已加入
 - 加入 DAW 工程素材包匯入說明
+- 加入模型與第三方工具注意事項
 
 ## 既有未提交變更注意
 

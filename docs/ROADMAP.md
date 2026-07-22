@@ -171,11 +171,12 @@ project-name/
 - GitHub remote 已設定，repository 目前為 private
 - GitHub Actions CI 已在遠端執行通過
 - core / optional dependencies 已初步拆分
+- legacy 入口已文件化，第一版暫時保留根目錄相容入口
+- 模型與第三方工具授權邊界已新增文件
 
 目前剩餘：
 
-- 整理 legacy 入口
-- 整理模型與第三方工具授權
+- 建立 release tag
 
 ## Phase 5：AI 輔助音樂模組
 
