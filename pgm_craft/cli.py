@@ -132,7 +132,7 @@ def run_batch_processing(input_dir: str, output_dir: str = "outputs", max_worker
     return summary_csv
 
 
-def main():
+def parse_args(args_list=None):
     parser = argparse.ArgumentParser(
         description="PGMCraft Studio: AI Audio Stem Separation, Music Transcription & PGM Backing Track Suite"
     )
@@ -141,10 +141,20 @@ def main():
     parser.add_argument("--output", "-o", default="outputs", help="Output directory path (default: ./outputs)")
     parser.add_argument("--stem", "-s", action="store_true", help="Enable Demucs AI stem separation")
     parser.add_argument("--daw-profile", choices=["reaper", "ableton", "logic", "cubase", "all"], default="all", help="Target DAW export profile (default: all)")
+    parser.add_argument("--plugin-dir", help="Path to custom Behavior Tree node plugins directory")
     parser.add_argument("--diagnostics", "-d", action="store_true", help="Print detailed workflow execution trace & contract diagnostics")
     parser.add_argument("--export-schema", action="store_true", help="Export workflow node JSON schema")
+    return parser.parse_args(args_list)
 
-    args = parser.parse_args()
+
+def main():
+    args = parse_args()
+
+    if args.plugin_dir:
+        from pgm_craft.plugin_loader import PluginLoader
+        loader = PluginLoader(plugin_dirs=[args.plugin_dir])
+        loaded = loader.load_plugins()
+        print(f"🔌 Loaded {len(loaded)} custom BT node plugins from: {args.plugin_dir}")
 
 
     if args.export_schema:
