@@ -4,6 +4,9 @@ import os
 import shutil
 
 
+from pgm_craft.daw_exporter import DAWExporter
+
+
 class PGMProjectPackager:
     """Builds a stable DAW/PGM package layout from generated artifacts."""
 
@@ -30,24 +33,65 @@ class PGMProjectPackager:
             if copied:
                 package_files[key] = copied
 
-        for key in ("tempo_map_midi", "click_guide_midi"):
+        for key in ("tempo_map_midi", "click_guide_midi", "chord_guide_midi", "melody_lead_midi", "vocal_pitch_midi", "vocal_lead_quantized_midi"):
             copied = self._copy_optional(outputs.get(key), midi_dir)
             if copied:
                 package_files[key] = copied
 
-        for key in ("tempo_curve_plot", "json_report", "text_report"):
+
+
+        for key in ("tempo_curve_plot", "json_report", "text_report", "pitch_contour_json", "subtitles_srt", "transcript_json", "instrument_presence_json"):
             copied = self._copy_optional(outputs.get(key), reports_dir)
             if copied:
                 package_files[key] = copied
 
+
+
+        # Generate DAW Projects & Live Dashboard & CSV Marker Files
+        from pgm_craft.daw_exporter import DAWProfileRegistry
+        registry = DAWProfileRegistry()
+        daw_profile = report.get("daw_profile", "all")
+        daw_files = registry.export_profile(daw_profile, report, output_dir=package_dir)
+        package_files.update(daw_files)
+
+        daw_exporter = DAWExporter()
+        dash_path = daw_exporter.generate_live_dashboard_html(report, output_dir=reports_dir)
+        csv_path = daw_exporter.export_marker_csv(report.get("chord_progression", []), sections=report.get("sections", []), output_dir=package_dir)
+
+        package_files["live_dashboard"] = dash_path
+        package_files["markers_csv"] = csv_path
+
+
+
+
+
+
         import_guide = self.write_import_guide(report, package_dir, package_files)
         package_files["import_guide"] = import_guide
+        zip_archive = self.build_zip_archive(package_dir)
+        package_files["zip_archive"] = zip_archive
 
         return {
             "project_package_dir": package_dir,
+            "zip_archive": zip_archive,
             "import_guide": import_guide,
             "files": package_files,
         }
+
+    def build_zip_archive(self, package_dir: str) -> str:
+        """Compresses the complete project package directory into a zip file."""
+        import zipfile
+        zip_path = f"{package_dir}.zip"
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            for root, _, files in os.walk(package_dir):
+                for f in files:
+                    full_p = os.path.join(root, f)
+                    rel_p = os.path.relpath(full_p, os.path.dirname(package_dir))
+                    z.write(full_p, rel_p)
+
+        return zip_path
+
 
     def write_import_guide(self, report, package_dir, package_files):
         guide_path = os.path.join(package_dir, "IMPORT_GUIDE.md")

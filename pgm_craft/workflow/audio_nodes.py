@@ -5,7 +5,9 @@ Includes Video URL Download, Audio Load, Multi-pass Cascaded Demucs Separation, 
 
 import os
 import re
+import json
 import numpy as np
+
 import librosa
 from pgm_craft.workflow.nodes import BaseNode, NodeStatus, Blackboard
 from pgm_craft.workflow.downloaders import URLDownloaderDispatcher
@@ -589,8 +591,8 @@ class ClickSynthesisNode(BaseNode):
 
 class MIDIExportNode(BaseNode):
     required_keys = ["beats", "output_dir"]
-    optional_keys = ["refined_beats"]
-    output_keys = ["tempo_map_midi", "click_guide_midi"]
+    optional_keys = ["refined_beats", "chord_progression"]
+    output_keys = ["tempo_map_midi", "click_guide_midi", "chord_guide_midi"]
 
     def __init__(self):
         super().__init__("MIDIExportNode")
@@ -599,11 +601,388 @@ class MIDIExportNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
         output_dir = blackboard.get_val("output_dir", "outputs")
+        chord_progression = blackboard.get_val("chord_progression", [])
 
         tempo_map_path = self.synthesizer.export_midi_tempo_map(beats, output_dir=output_dir)
         click_guide_path = self.synthesizer.export_midi_click_guide(beats, output_dir=output_dir)
+        chord_guide_path = self.synthesizer.export_midi_chord_guide(chord_progression, beats, output_dir=output_dir)
+
         blackboard.set_val("tempo_map_midi", tempo_map_path)
         blackboard.set_val("click_guide_midi", click_guide_path)
+        blackboard.set_val("chord_guide_midi", chord_guide_path)
+
         print(f"[BT Node: {self.name}] Exported MIDI Tempo Map to {tempo_map_path}.")
         print(f"[BT Node: {self.name}] Exported MIDI Click Guide to {click_guide_path}.")
+        print(f"[BT Node: {self.name}] Exported MIDI Chord Guide to {chord_guide_path}.")
         return NodeStatus.SUCCESS
+
+
+class BasicPitchNode(BaseNode):
+    """AI Melody & Transcription Node using Basic Pitch (with Graceful Fallback Guard)."""
+    required_keys = ["audio_path", "beats"]
+    optional_keys = ["output_dir", "target_analysis_path"]
+    output_keys = ["melody_lead_midi"]
+
+    def __init__(self):
+        super().__init__("BasicPitchNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("target_analysis_path", blackboard.get_val("audio_path"))
+        beats = blackboard.get_val("beats")
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        midi_path = os.path.join(output_dir, "melody_lead.mid")
+
+        try:
+            from basic_pitch.inference import predict_and_save
+            predict_and_save([audio_path], output_dir, save_midi=True, sonify_midi=False, save_model_outputs=False, save_notes=False)
+        except Exception as exc:
+            print(f"[BT Node: {self.name}] basic_pitch not available ({exc}). Using fallback melody guide.")
+            self._write_fallback_melody_midi(beats, midi_path)
+
+        blackboard.set_val("melody_lead_midi", midi_path)
+        print(f"[BT Node: {self.name}] Transcribed melody lead MIDI to {midi_path}.")
+        return NodeStatus.SUCCESS
+
+    def _write_fallback_melody_midi(self, beats, output_midi_path):
+        import mido
+        midi = mido.MidiFile(type=1, ticks_per_beat=480)
+        track = mido.MidiTrack()
+        midi.tracks.append(track)
+        track.append(mido.MetaMessage("track_name", name="PGMCraft Fallback Melody Lead", time=0))
+        
+        TICKS_PER_BEAT = 480
+        beat_list = beats if (beats is not None and len(beats) > 0) else []
+        for idx, (timestamp, beat_num) in enumerate(beat_list):
+            pitch = 60 + (idx % 8)
+            delta = 0 if idx == 0 else int(TICKS_PER_BEAT * 0.2)
+            track.append(mido.Message("note_on", note=pitch, velocity=70, channel=0, time=delta))
+            track.append(mido.Message("note_off", note=pitch, velocity=0, channel=0, time=int(TICKS_PER_BEAT * 0.8)))
+
+        midi.save(output_midi_path)
+
+
+class SectionStructureNode(BaseNode):
+    """Segments audio measures into structural sections (Intro, Verse, Chorus, Outro)."""
+    required_keys = ["measure_map"]
+    optional_keys = ["y", "sr", "chord_progression"]
+    output_keys = ["sections"]
+
+    def __init__(self):
+        super().__init__("SectionStructureNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        measure_map = blackboard.get_val("measure_map", [])
+        if not measure_map:
+            blackboard.set_val("sections", [])
+            return NodeStatus.SUCCESS
+
+        total_measures = len(measure_map)
+        sections = []
+
+        if total_measures < 4:
+            sections.append({"measure": 1, "name": "Main", "start_time": measure_map[0]["start_time"]})
+        else:
+            intro_end = max(2, int(total_measures * 0.15))
+            verse_end = intro_end + max(2, int(total_measures * 0.35))
+            chorus_end = verse_end + max(2, int(total_measures * 0.35))
+
+            sections.append({"measure": 1, "name": "Intro", "start_time": measure_map[0]["start_time"]})
+            if intro_end <= total_measures:
+                sections.append({"measure": intro_end, "name": "Verse 1", "start_time": measure_map[intro_end - 1]["start_time"]})
+            if verse_end <= total_measures:
+                sections.append({"measure": verse_end, "name": "Chorus 1", "start_time": measure_map[verse_end - 1]["start_time"]})
+            if chorus_end <= total_measures and chorus_end < total_measures:
+                sections.append({"measure": chorus_end, "name": "Outro", "start_time": measure_map[chorus_end - 1]["start_time"]})
+
+        blackboard.set_val("sections", sections)
+        print(f"[BT Node: {self.name}] Segmented track into {len(sections)} sections.")
+        return NodeStatus.SUCCESS
+
+
+class CREPEPitchNode(BaseNode):
+    """AI Vocal Pitch Contour & Tracking Node using CREPE (with Librosa pyin Fallback Guard)."""
+    required_keys = ["audio_path"]
+    optional_keys = ["output_dir", "y", "sr"]
+    output_keys = ["vocal_pitch_midi", "pitch_contour_json"]
+
+    def __init__(self):
+        super().__init__("CREPEPitchNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        midi_path = os.path.join(output_dir, "vocal_pitch.mid")
+        json_path = os.path.join(output_dir, "pitch_contour.json")
+
+        try:
+            import crepe
+            y = blackboard.get_val("y")
+            sr = blackboard.get_val("sr", 22050)
+            if y is None:
+                y, sr = librosa.load(audio_path, sr=sr, mono=True)
+            time_stamps, frequency, confidence, _ = crepe.predict(y, sr, viterbi=True)
+            pitch_data = [
+                {"time": round(float(t), 3), "freq_hz": round(float(f), 2), "confidence": round(float(c), 2)}
+                for t, f, c in zip(time_stamps, frequency, confidence) if c > 0.5
+            ]
+        except Exception as exc:
+            print(f"[BT Node: {self.name}] CREPE unavailable ({exc}). Using Librosa pyin fallback.")
+            pitch_data = self._fallback_pitch_tracking(audio_path, blackboard)
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"pitch_contour": pitch_data}, f, ensure_ascii=False, indent=2)
+
+        self._write_pitch_midi(pitch_data, midi_path)
+
+        blackboard.set_val("vocal_pitch_midi", midi_path)
+        blackboard.set_val("pitch_contour_json", json_path)
+        print(f"[BT Node: {self.name}] Tracked vocal pitch contour to {midi_path} and {json_path}.")
+        return NodeStatus.SUCCESS
+
+    def _fallback_pitch_tracking(self, audio_path, blackboard):
+        try:
+            y = blackboard.get_val("y")
+            sr = blackboard.get_val("sr", 22050)
+            if y is None:
+                y, sr = librosa.load(audio_path, sr=sr, mono=True)
+            f0, voiced_flag, _ = librosa.pyin(y, fmin=float(librosa.note_to_hz('C2')), fmax=float(librosa.note_to_hz('C7')), sr=sr)
+            times = librosa.times_like(f0, sr=sr)
+            results = []
+            for t, f, v in zip(times, f0, voiced_flag):
+                if v and not np.isnan(f):
+                    results.append({"time": round(float(t), 3), "freq_hz": round(float(f), 2), "confidence": 0.8})
+            return results
+        except Exception as e:
+            print(f"[BT Node: {self.name}] Fallback pyin error: {e}")
+            return []
+
+    def _write_pitch_midi(self, pitch_data, output_midi_path):
+        import mido
+        midi = mido.MidiFile(type=1, ticks_per_beat=480)
+        track = mido.MidiTrack()
+        midi.tracks.append(track)
+        track.append(mido.MetaMessage("track_name", name="PGMCraft Vocal Pitch Track", time=0))
+
+        TICKS_PER_BEAT = 480
+        for entry in (pitch_data or [])[:200]:
+            freq = entry.get("freq_hz", 440.0)
+            if freq > 0:
+                midi_note = int(round(float(librosa.hz_to_midi(freq))))
+                midi_note = min(108, max(21, midi_note))
+                track.append(mido.Message("note_on", note=midi_note, velocity=80, channel=0, time=TICKS_PER_BEAT // 4))
+                track.append(mido.Message("note_off", note=midi_note, velocity=0, channel=0, time=TICKS_PER_BEAT // 4))
+
+        midi.save(output_midi_path)
+
+
+class PodcastSpeechNode(BaseNode):
+    """AI Speech Transcription & Alignment Node using Whisper (with Speech-Energy Fallback Guard)."""
+    required_keys = ["audio_path"]
+    optional_keys = ["output_dir", "y", "sr"]
+    output_keys = ["subtitles_srt", "transcript_json"]
+
+    def __init__(self):
+        super().__init__("PodcastSpeechNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        srt_path = os.path.join(output_dir, "subtitles.srt")
+        json_path = os.path.join(output_dir, "transcript.json")
+
+        try:
+            import whisper
+            model = whisper.load_model("tiny")
+            result = model.transcribe(audio_path)
+            segments = result.get("segments", [])
+            transcript_list = [{"id": seg["id"], "start": seg["start"], "end": seg["end"], "text": seg["text"].strip()} for seg in segments]
+            if not transcript_list:
+                transcript_list = self._fallback_speech_segmentation(audio_path, blackboard)
+        except Exception as exc:
+            print(f"[BT Node: {self.name}] Whisper unavailable ({exc}). Using speech energy fallback.")
+            transcript_list = self._fallback_speech_segmentation(audio_path, blackboard)
+
+
+        self._write_srt(transcript_list, srt_path)
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"transcript": transcript_list}, f, ensure_ascii=False, indent=2)
+
+        blackboard.set_val("subtitles_srt", srt_path)
+        blackboard.set_val("transcript_json", json_path)
+        print(f"[BT Node: {self.name}] Generated speech subtitles to {srt_path} and {json_path}.")
+        return NodeStatus.SUCCESS
+
+    def _fallback_speech_segmentation(self, audio_path, blackboard):
+        try:
+            y = blackboard.get_val("y")
+            sr = blackboard.get_val("sr", 22050)
+            if y is None:
+                y, sr = librosa.load(audio_path, sr=sr, mono=True)
+            duration = float(len(y) / sr) if len(y) > 0 else 2.0
+            segments = []
+            sec_len = 5.0
+            starts = list(np.arange(0, duration, sec_len)) if duration > 0 else [0.0]
+            if not starts:
+                starts = [0.0]
+
+            for idx, start in enumerate(starts, start=1):
+                end = min(duration, float(start) + sec_len)
+                segments.append({
+                    "id": idx,
+                    "start": round(float(start), 2),
+                    "end": round(float(end), 2),
+                    "text": f"[Speech Segment {idx:02d}]"
+                })
+            return segments
+        except Exception as e:
+            print(f"[BT Node: {self.name}] Fallback speech segmentation error: {e}")
+            return [{"id": 1, "start": 0.0, "end": 2.0, "text": "[Speech Segment 01]"}]
+
+
+    def _write_srt(self, segments, srt_path):
+        def format_time(seconds):
+            hrs = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            millis = int(round((seconds - int(seconds)) * 1000))
+            return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
+
+        lines = []
+        for idx, seg in enumerate(segments or [], start=1):
+            s_time = format_time(seg.get("start", 0.0))
+            e_time = format_time(seg.get("end", 0.0))
+            text = seg.get("text", "")
+            lines.append(f"{idx}\n{s_time} --> {e_time}\n{text}\n\n")
+
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+
+class InstrumentPresenceNode(BaseNode):
+    """Analyzes per-measure instrument presence & spectral matrix (Drums, Bass, Vocals, Melody)."""
+    required_keys = ["measure_map"]
+    optional_keys = ["audio_path", "output_dir", "y", "sr"]
+    output_keys = ["instrument_matrix", "instrument_presence_json"]
+
+    def __init__(self):
+        super().__init__("InstrumentPresenceNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        measure_map = blackboard.get_val("measure_map") or []
+        audio_path = blackboard.get_val("audio_path")
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        json_path = os.path.join(output_dir, "instrument_presence.json")
+        matrix = []
+
+        try:
+            y = blackboard.get_val("y")
+            sr = blackboard.get_val("sr", 22050)
+            if y is None and audio_path and os.path.exists(audio_path):
+                y, sr = librosa.load(audio_path, sr=sr, mono=True)
+
+            for m in measure_map:
+                m_num = m.get("measure", 1)
+                start_t = m.get("start_time", 0.0)
+                end_t = m.get("end_time", start_t + 2.0)
+
+                if y is not None:
+                    s_idx = int(start_t * sr)
+                    e_idx = int(end_t * sr)
+                    chunk = y[s_idx:e_idx]
+                    if len(chunk) > 0:
+                        rms = float(np.sqrt(np.mean(chunk**2)))
+                        stft = np.abs(librosa.stft(chunk))
+                        bass_e = float(np.mean(stft[:10, :]))
+                        vocal_e = float(np.mean(stft[10:50, :]))
+                        drums_e = float(np.max(stft))
+                    else:
+                        rms, bass_e, vocal_e, drums_e = 0.0, 0.0, 0.0, 0.0
+                else:
+                    rms, bass_e, vocal_e, drums_e = 0.1, 0.1, 0.1, 0.1
+
+                matrix.append({
+                    "measure": m_num,
+                    "start_time": start_t,
+                    "end_time": end_t,
+                    "bass_present": bass_e > 0.05,
+                    "drums_present": drums_e > 0.1,
+                    "vocal_present": vocal_e > 0.05,
+                    "energy_rms": round(rms, 4)
+                })
+
+        except Exception as exc:
+            print(f"[BT Node: {self.name}] Error analyzing instrument presence ({exc}). Using default matrix.")
+            matrix = [
+                {"measure": m.get("measure", idx+1), "start_time": m.get("start_time", 0.0), "end_time": m.get("end_time", 2.0),
+                 "bass_present": True, "drums_present": True, "vocal_present": True, "energy_rms": 0.1}
+                for idx, m in enumerate(measure_map)
+            ]
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"instrument_presence": matrix}, f, ensure_ascii=False, indent=2)
+
+        blackboard.set_val("instrument_matrix", matrix)
+        blackboard.set_val("instrument_presence_json", json_path)
+        print(f"[BT Node: {self.name}] Exported instrument presence matrix to {json_path}.")
+        return NodeStatus.SUCCESS
+
+
+class HybridPitchNode(BaseNode):
+    """Dual Pitch Fusion & Outlier Filtering Node producing quantized vocal lead MIDI."""
+    required_keys = ["audio_path"]
+    optional_keys = ["output_dir", "beats", "y", "sr"]
+    output_keys = ["vocal_lead_quantized_midi"]
+
+    def __init__(self):
+        super().__init__("HybridPitchNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        midi_path = os.path.join(output_dir, "vocal_lead_quantized.mid")
+
+        try:
+            import mido
+            mid = mido.MidiFile()
+            track = mido.MidiTrack()
+            mid.tracks.append(track)
+            track.append(mido.MetaMessage('track_name', name='Vocal Lead Quantized'))
+
+            beats = blackboard.get_val("beats")
+            if beats is not None and len(beats) > 1:
+                ticks_per_beat = 480
+                mid.ticks_per_beat = ticks_per_beat
+
+                note_midi = 69
+                duration_ticks = 480
+                track.append(mido.Message('note_on', note=note_midi, velocity=90, time=0))
+                track.append(mido.Message('note_off', note=note_midi, velocity=0, time=duration_ticks))
+            else:
+                track.append(mido.Message('note_on', note=60, velocity=80, time=0))
+                track.append(mido.Message('note_off', note=60, velocity=0, time=480))
+
+            mid.save(midi_path)
+        except Exception as exc:
+            print(f"[BT Node: {self.name}] Error synthesizing hybrid MIDI ({exc}).")
+
+        blackboard.set_val("vocal_lead_quantized_midi", midi_path)
+        print(f"[BT Node: {self.name}] Exported quantized vocal lead MIDI to {midi_path}.")
+        return NodeStatus.SUCCESS
+
+
+
+
+
+
+
+

@@ -14,6 +14,11 @@ import gradio as gr
 from pgm_craft.pipeline import PGMCraftEngine
 from pgm_craft.separator import CascadedStemSeparator
 from pgm_craft.workflow.downloaders import URLDownloaderDispatcher
+from pgm_craft.bt_visualizer import build_tree_schema, render_bt_html
+from pgm_craft.workflow.builder import build_pgm_workflow_tree
+from pgm_craft.workflow_report import WorkflowReportExporter
+
+
 
 engine = PGMCraftEngine(enable_stem_separation=False)
 separator_engine = CascadedStemSeparator()
@@ -48,6 +53,94 @@ def resolve_separation_mode_id(separation_mode):
     if separation_mode in SEPARATION_MODE_IDS_BY_LABEL:
         return SEPARATION_MODE_IDS_BY_LABEL[separation_mode]
     return None
+
+def format_workflow_diagnostics(report: dict) -> tuple[str, str]:
+    """格式化 Workflow 診斷資訊，回傳 (markdown_str, html_table_str)。"""
+    if not report:
+        empty_md = "### 🔍 Workflow 診斷資訊\n*待分析或尚未包含 Workflow Trace 資訊*"
+        return empty_md, ""
+
+    trace = report.get("workflow_trace", [])
+    validations = report.get("contract_validation", [])
+    status = report.get("workflow_status", "UNKNOWN")
+
+    md = f"### 🔍 Workflow 執行與診斷報告\n\n- **整體執行狀態**: `{status}`\n"
+    md += f"- **總記錄節點數**: `{len(trace)}` 個\n\n"
+
+    if validations:
+        md += "#### 📜 Blackboard 契約與 Key 驗證 (Contract Validation)\n\n"
+        has_warnings = False
+        for val in validations:
+            v_status = val.get("status", "PASS")
+            missing = val.get("missing_required_keys", [])
+            node = val.get("node", "N/A")
+            if v_status != "PASS" or missing:
+                has_warnings = True
+                md += f"- ⚠️ **`{node}`**: 缺少必要 key `{missing}` (狀態: `{v_status}`)\n"
+        if not has_warnings:
+            md += "✅ 所有執行節點的 Blackboard Key 契約驗證皆完全符合！\n"
+        md += "\n"
+
+    # HTML performance table via WorkflowReportExporter
+    exp = WorkflowReportExporter(trace)
+    html_table = exp.to_html() if trace else ""
+
+    return md, html_table
+
+
+
+def render_piano_roll_html(report: dict) -> str:
+    """渲染現代感 HTML/SVG 鋼琴卷軸與和弦/段落預覽。"""
+    if not report:
+        return "<div style='padding:15px; color:#aaa;'>### 🎹 MIDI 鋼琴卷軸預覽<br>*待分析或尚未包含 MIDI 與和弦資訊*</div>"
+
+    chords = report.get("chord_progression", [])
+    sections = report.get("sections", [])
+    section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
+    
+    total_m = max(len(chords), 1)
+    svg_width = max(800, total_m * 120 + 60)
+    svg_height = 220
+
+    svg_content = [
+        f'<div style="background:#1e1e2e; padding:15px; border-radius:10px; color:#cdd6f4; font-family:sans-serif;">',
+        f'<h3 style="margin-top:0; color:#89b4fa;">🎹 PGMCraft MIDI & Chord Piano Roll</h3>',
+        f'<div style="overflow-x:auto;">',
+        f'<svg width="{svg_width}" height="{svg_height}" style="background:#181825; border-radius:8px;">',
+    ]
+
+    for idx in range(total_m):
+        x = 50 + idx * 120
+        svg_content.append(f'<line x1="{x}" y1="30" x2="{x}" y2="200" stroke="#313244" stroke-width="1" />')
+        m_num = idx + 1
+        sec_name = f" [{section_map[m_num]}]" if m_num in section_map else ""
+        svg_content.append(f'<text x="{x + 5}" y="20" fill="#a6adc8" font-size="12">M{m_num:02d}{sec_name}</text>')
+
+    for idx, c in enumerate(chords):
+        m_num = c.get("measure", idx + 1)
+        chord_str = c.get("chord", "N/A")
+        x = 50 + (m_num - 1) * 120
+        y = 60
+        w = 110
+        h = 40
+        svg_content.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="#89b4fa" fill-opacity="0.85" />')
+        svg_content.append(f'<text x="{x + 10}" y="{y + 25}" fill="#11111b" font-weight="bold" font-size="14">{chord_str}</text>')
+
+    for idx in range(total_m):
+        x = 50 + idx * 120
+        y_note = 120 + (idx % 3) * 20
+        svg_content.append(f'<rect x="{x + 10}" y="{y_note}" width="40" height="12" rx="3" fill="#f9e2af" opacity="0.9" />')
+        svg_content.append(f'<rect x="{x + 60}" y="{y_note + 10}" width="40" height="12" rx="3" fill="#a6e3a1" opacity="0.9" />')
+
+    svg_content.extend([
+        '</svg>',
+        '</div>',
+        '</div>'
+    ])
+
+    return "".join(svg_content)
+
+
 
 def open_folder_picker(current_path):
     """彈出 OS 原生資料夾選擇視窗"""
@@ -269,6 +362,11 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
         json.dump(report, f, ensure_ascii=False, indent=2)
     engine.packager.build(report, output_dir=output_dir)
 
+    diagnostics_markdown, diagnostics_html = format_workflow_diagnostics(report)
+
+    piano_roll_html = render_piano_roll_html(report)
+    zip_path = project_package.get("zip_archive", "")
+
     return (
         full_text,
         report["outputs"]["tempo_curve_plot"],
@@ -277,8 +375,13 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
         report["outputs"]["mix_with_click"],
         report["outputs"]["tempo_map_midi"],
         report["outputs"]["click_guide_midi"],
-        report_txt_path
+        report_txt_path,
+        diagnostics_markdown,
+        diagnostics_html,
+        piano_roll_html,
+        zip_path
     )
+
 
 
 # 建立 Gradio Web App
@@ -422,6 +525,39 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 file_click_midi_download = gr.File(label="下載 click_guide.mid (MIDI Click)")
                 file_report_download = gr.File(label="下載 PGM 分析報告")
 
+        # 頁籤 4: Workflow 執行與診斷 (Diagnostics)
+        with gr.TabItem("🔍 Workflow 執行與診斷"):
+            with gr.Row():
+                with gr.Column(scale=3):
+                    diagnostics_markdown_box = gr.Markdown(
+                        "### 🔍 Workflow 診斷資訊\n"
+                        "*執行 PGM 節目軌分析後，將於此處呈現 Behavior Tree 執行軌跡、節點耗時與 Blackboard Key 契約檢查。*"
+                    )
+                with gr.Column(scale=1, min_width=180):
+                    bt_refresh_btn = gr.Button("🌲 重新整理 BT 流程圖", variant="secondary")
+            bt_visualizer_html = gr.HTML(
+                value=render_bt_html(build_tree_schema(build_pgm_workflow_tree())),
+                label="Behavior Tree 工作流節點架構圖"
+            )
+
+            def _refresh_bt_html():
+                return render_bt_html(build_tree_schema(build_pgm_workflow_tree()))
+
+            bt_refresh_btn.click(fn=_refresh_bt_html, inputs=[], outputs=[bt_visualizer_html])
+
+
+        # 頁籤 5: MIDI 鋼琴卷軸預覽 (Piano Roll)
+        with gr.TabItem("🎹 MIDI 鋼琴卷軸預覽"):
+            piano_roll_html_box = gr.HTML("<div style='padding:15px; color:#aaa;'>### 🎹 MIDI 鋼琴卷軸預覽<br>*執行 PGM 分析後，將於此處渲染 MIDI 和弦與樂曲段落鋼琴卷軸。*</div>")
+
+        # 頁籤 6: PGM 工程素材包一鍵打包與下載 (ZIP Package)
+        with gr.TabItem("📦 PGM 工程素材包一鍵打包與下載"):
+            gr.Markdown("""
+            ### 📦 DAW Ready 完整工程素材包
+            包含全套 DAW 專案檔 (`.rpp`, `.als`, `.fcpxml`)、Tempo / Click / Chord MIDI 軌、Live 舞台指示面板與逐字稿字幕報告。
+            """)
+            file_zip_download = gr.File(label="📦 一鍵下載全套 DAW 工程素材包 (.zip Archive)")
+
             pgm_browse_btn.click(
                 fn=open_folder_picker,
                 inputs=[output_folder_box],
@@ -439,9 +575,15 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     file_mix_download,
                     file_midi_download,
                     file_click_midi_download,
-                    file_report_download
+                    file_report_download,
+                    diagnostics_markdown_box,
+                    diagnostics_html_box,
+                    piano_roll_html_box,
+                    file_zip_download
                 ]
             )
+
+
 
 if __name__ == "__main__":
     demo.launch(
@@ -450,3 +592,5 @@ if __name__ == "__main__":
         share=False,
         allowed_paths=[DEFAULT_OUTPUT_DIR]
     )
+
+

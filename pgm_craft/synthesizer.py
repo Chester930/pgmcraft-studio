@@ -164,3 +164,91 @@ class PGMSynthesizer:
         midi_path = os.path.join(output_dir, "click_guide.mid")
         midi.save(midi_path)
         return midi_path
+
+    def _chord_name_to_midi_notes(self, chord_name: str) -> list:
+        """Maps a chord string (e.g., 'Cmaj', 'Am', 'G#min') to root/triad MIDI pitches."""
+        note_offsets = {
+            'C': 60, 'D': 62, 'E': 64, 'F': 65, 'G': 67, 'A': 69, 'B': 71
+        }
+        if not chord_name or chord_name == "N/A":
+            return [60]
+
+        root = chord_name[0].upper()
+        base_pitch = note_offsets.get(root, 60)
+        idx = 1
+        if len(chord_name) > 1 and chord_name[1] in ('#', 'b'):
+            if chord_name[1] == '#':
+                base_pitch += 1
+            elif chord_name[1] == 'b':
+                base_pitch -= 1
+            idx += 1
+
+        suffix = chord_name[idx:].lower()
+        if 'm' in suffix and 'maj' not in suffix:
+            return [base_pitch, base_pitch + 3, base_pitch + 7]
+        else:
+            return [base_pitch, base_pitch + 4, base_pitch + 7]
+
+    def export_midi_chord_guide(self, chord_progression, beats, output_dir="outputs"):
+        """Exports MIDI chord guide notes and markers aligned to tempo map."""
+        os.makedirs(output_dir, exist_ok=True)
+        beat_rows = self._normalize_beats(beats)
+        midi = mido.MidiFile(type=1, ticks_per_beat=TICKS_PER_BEAT)
+        
+        tempo_track = mido.MidiTrack()
+        midi.tracks.append(tempo_track)
+        tempo_track.append(mido.MetaMessage("track_name", name="PGMCraft Tempo & Markers", time=0))
+        tempo_track.append(mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0))
+
+        last_tick = 0
+        lead_in_ticks = self._lead_in_ticks(beat_rows)
+
+        for absolute_tick, tempo in self._tempo_events(beat_rows):
+            delta = max(0, absolute_tick - last_tick)
+            tempo_track.append(mido.MetaMessage("set_tempo", tempo=tempo, time=delta))
+            last_tick = absolute_tick
+
+        if chord_progression:
+            last_marker_tick = 0
+            for item in chord_progression:
+                m_num = item.get("measure", 1)
+                chord_str = item.get("chord", "N/A")
+                m_beat_idx = (m_num - 1) * 4
+                abs_tick = lead_in_ticks + m_beat_idx * TICKS_PER_BEAT
+                delta = max(0, abs_tick - last_marker_tick)
+                tempo_track.append(mido.MetaMessage("marker", text=f"M{m_num:02d}: {chord_str}", time=delta))
+                last_marker_tick = abs_tick
+
+        final_tick = self._final_tick(beat_rows)
+        tempo_track.append(mido.MetaMessage("end_of_track", time=max(0, final_tick - last_tick)))
+
+        chord_track = mido.MidiTrack()
+        midi.tracks.append(chord_track)
+        chord_track.append(mido.MetaMessage("track_name", name="PGMCraft Chord Guide", time=0))
+        chord_track.append(mido.Message("program_change", program=0, channel=0, time=0))
+
+        last_chord_tick = 0
+        if chord_progression:
+            for item in chord_progression:
+                m_num = item.get("measure", 1)
+                chord_str = item.get("chord", "N/A")
+                m_beat_idx = (m_num - 1) * 4
+                abs_tick = lead_in_ticks + m_beat_idx * TICKS_PER_BEAT
+                delta = max(0, abs_tick - last_chord_tick)
+                
+                pitches = self._chord_name_to_midi_notes(chord_str)
+                note_dur = TICKS_PER_BEAT * 4
+                
+                for p in pitches:
+                    chord_track.append(mido.Message("note_on", note=p, velocity=80, channel=0, time=delta if p == pitches[0] else 0))
+                for p in pitches:
+                    chord_track.append(mido.Message("note_off", note=p, velocity=0, channel=0, time=note_dur if p == pitches[0] else 0))
+
+                last_chord_tick = abs_tick + note_dur
+
+        chord_track.append(mido.MetaMessage("end_of_track", time=max(0, final_tick - last_chord_tick if chord_progression else final_tick)))
+
+        midi_path = os.path.join(output_dir, "chord_guide.mid")
+        midi.save(midi_path)
+        return midi_path
+

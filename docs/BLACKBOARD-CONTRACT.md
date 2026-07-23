@@ -1,8 +1,8 @@
-# Blackboard Contract v1
+# Blackboard Contract v1.2.0
 
-**最後更新：** 2026-07-23
+**最後更新：** 2026-07-23 (v1.2.0)
 
-本文件記錄 PGMCraft Studio 主要 Behavior Tree 工作流的 blackboard key 契約。v1 先做文件化與節點 metadata，不做 runtime 強制驗證。
+本文件記錄 PGMCraft Studio 主要 Behavior Tree 工作流的 blackboard key 契約。v1.2.0 新增 `PodcastSpeechNode`、`InstrumentPresenceNode`、`HybridPitchNode` 的 Key 契約，並更新 `DAWProfileRegistry` 的 `daw_profile` 選項。
 
 ## 契約欄位
 
@@ -80,6 +80,16 @@
 | `mix_with_click` | `str` | `ClickSynthesisNode` | 原曲加 click 預聽檔 |
 | `tempo_map_midi` | `str` | `MIDIExportNode` | DAW tempo map MIDI |
 | `click_guide_midi` | `str` | `MIDIExportNode` | MIDI click guide |
+| `vocal_pitch_midi` | `str` | `CREPEPitchNode` | CREPE 音高輪廓 MIDI |
+| `pitch_contour_json` | `str` | `CREPEPitchNode` | CREPE 音高輪廓 JSON |
+| `melody_lead_midi` | `str` | `BasicPitchNode` | Basic Pitch 主旋律 MIDI |
+| `vocal_lead_quantized_midi` | `str` | `HybridPitchNode` | 雙音高融合量化主唱 MIDI |
+| `subtitles_srt` | `str` | `PodcastSpeechNode` | 字幕 SRT 檔路徑 |
+| `transcript_json` | `str` | `PodcastSpeechNode` | 逐字稿 JSON 路徑 |
+| `instrument_presence_json` | `str` | `InstrumentPresenceNode` | 配器存在性矩陣 JSON |
+| `instrument_matrix` | `list[dict]` | `InstrumentPresenceNode` | 逐小節配器動態矩陣 |
+| `sections` | `list[dict]` | `SectionStructureNode` | 樂曲段落分析 |
+| `daw_profile` | `str` | caller / CLI `--daw-profile` | 目標 DAW 導出格式 (reaper/ableton/logic/cubase/all) |
 
 ## Workflow Observability Keys
 
@@ -105,7 +115,7 @@ Validation entry 格式：
 }
 ```
 
-## 主要節點契約
+## 主要節點契約 (v1.2.0，16 個節點)
 
 | Node | required_keys | optional_keys | output_keys |
 |------|---------------|---------------|-------------|
@@ -117,12 +127,38 @@ Validation entry 格式：
 | `BeatValidationNode` | `beats` |  | `beat_validation`, `beat_confidence_level`, `beat_warnings`, `beat_errors` |
 | `DownbeatRefineNode` | `beats`, `beat_validation` |  | `refined_beats`, `downbeat_refinement`, `downbeat_refine_status`, `downbeat_refine_warnings`, `downbeat_candidates` |
 | `MeasureMapNode` | `beats`, `beat_validation` | `refined_beats`, `downbeat_refinement` | `measure_map`, `measure_map_status`, `measure_map_warnings` |
+| `SectionStructureNode` | `measure_map` | `y`, `sr`, `chord_progression` | `sections` |
 | `KeyChordAnalysisNode` | `audio_path`, `beats` | `refined_beats` | `estimated_key`, `chord_progression` |
 | `ClickSynthesisNode` | `audio_path`, `beats`, `output_dir` | `refined_beats` | `click_track`, `mix_with_click` |
-| `MIDIExportNode` | `beats`, `output_dir` | `refined_beats` | `tempo_map_midi`, `click_guide_midi` |
+| `MIDIExportNode` | `beats`, `output_dir` | `refined_beats`, `chord_progression` | `tempo_map_midi`, `click_guide_midi`, `chord_guide_midi` |
+| `BasicPitchNode` | `audio_path`, `beats` | `output_dir`, `target_analysis_path` | `melody_lead_midi` |
+| `CREPEPitchNode` | `audio_path` | `output_dir`, `y`, `sr` | `vocal_pitch_midi`, `pitch_contour_json` |
+| `PodcastSpeechNode` | `audio_path` | `output_dir`, `y`, `sr` | `subtitles_srt`, `transcript_json` |
+| `InstrumentPresenceNode` | `audio_path` | `output_dir`, `measure_map`, `y`, `sr` | `instrument_presence_json`, `instrument_matrix` |
+| `HybridPitchNode` | `audio_path` | `output_dir`, `beats`, `y`, `sr` | `vocal_lead_quantized_midi` |
+
+
+## BT 裝飾器節點
+
+| 裝飾器節點 | 說明 |
+|-----------|------|
+| `RetryFallbackNode(child, max_retries, fallback)` | 對子節點重試 `max_retries` 次；全部失敗後切換 fallback 節點降級執行。適用 URL 下載與 AI 推論節點。 |
+| `ParallelNode(children, success_threshold, max_workers)` | 使用 ThreadPoolExecutor 並行執行所有子節點。`success_threshold` 控制需幾個子節點成功才回傳 SUCCESS（預設全部）。AI 密集型節點 (BasicPitch/CREPE/InstrumentPresence/PodcastSpeech) 已移入 `AIAnalysisGroup` 並行組。 |
+
+
+## DAWProfileRegistry
+
+| Profile | 導出格式 |
+|---------|----------|
+| `reaper` | Reaper 專案 `.rpp` |
+| `ableton` | Ableton Live `.als` |
+| `logic` | Logic Pro Final Cut XML `.fcpxml` |
+| `cubase` | Cubase Tempo Track `.csv` |
+| `all` *(預設)* | 以上全部格式 |
 
 ## 後續方向
 
 - 將契約轉成型別化 schema。
 - 將目前非阻斷式 validation 接到 GUI/debug 面板。
 - 讓 GUI 顯示節點缺少的 required key 與最近 trace entry。
+- 為 URL 下載與 AI 節點套用 `RetryFallbackNode` 包裝器。

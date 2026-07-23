@@ -1,6 +1,6 @@
 # 開發路線圖
 
-**最後更新：** 2026-07-23
+**最後更新：** 2026-07-23 (v1.2.0)
 
 本路線圖定義 PGMCraft Studio 的階段。每個階段都應產生一個可理解、可測試、可繼續擴充的專案狀態。
 
@@ -60,57 +60,37 @@
 
 ## Phase 2：節點工作流強化
 
-狀態：下一個主線。
+狀態：已完成 (v1.1.0)。
 
 目標：
 
 讓節點執行更明確、可測試、可重用。
 
-範圍：
+已完成項目：
 
-- 標準節點輸入與輸出契約
-- blackboard key 文件化或型別化
-- node status 處理規則
-- workflow trace log
-- guard node 慣例
-- fallback node 慣例
-- 適合 GUI 與 CLI 顯示的錯誤訊息
-- 每個主要節點的單元測試
-
-完成標準：
-
-- 開發者新增節點時不需要改動無關 pipeline
-- 執行後可以檢查 workflow 過程
-- 失敗時能看出哪個節點失敗與原因
+- Blackboard 型別化契約 (context.py)
+- 非阻斷式與 Strict Contract Validation (validate_strict)
+- Workflow Trace Log 與 Gradio 診斷面板 (`app.py`)
+- CLI `--diagnostics` 與 `--export-schema` 規格自動匯出
+- 每個核心與擴充節點獨立單元測試 (65+ passed tests)
 
 ## Phase 3：DAW 工程素材包
 
-狀態：v1 已在 Phase 1 中建立，進階 DAW profile 規劃中。
+狀態：已完成 (v1.1.0)。
 
 目標：
 
 從單一輸出檔，升級成完整 DAW-ready project package。
 
-範圍：
-
-- 穩定輸出資料夾結構
-- 每次產生工程素材包時附匯入說明
-- Tempo MIDI
-- Click guide MIDI
-- Click WAV
-- 預聽 WAV
-- 分析 JSON
-- 選用 chord guide MIDI
-- 選用 marker files
-- 未來 DAW profile 抽象
-
-Phase 1 已完成：
+已完成項目：
 
 - `pgm_project_package/`
-- `audio/`
-- `midi/`
-- `reports/`
-- `IMPORT_GUIDE.md`
+- `audio/` (source, click_track, mix_with_click)
+- `midi/` (tempo_map.mid, click_guide.mid, chord_guide.mid, melody_lead.mid, vocal_pitch.mid)
+- `reports/` (analysis report JSON/TXT, pitch_contour.json, tempo_curve.png)
+- `pgm_session.rpp` (Reaper 專案檔)
+- `markers.csv` (通用 DAW Marker 檔)
+- `IMPORT_GUIDE.md` (DAW 匯入指引)
 
 範例結構：
 
@@ -122,22 +102,23 @@ project-name/
 │   └── mix_with_click.wav
 ├── midi/
 │   ├── tempo_map.mid
-│   └── click_guide.mid
+│   ├── click_guide.mid
+│   ├── chord_guide.mid
+│   ├── melody_lead.mid
+│   └── vocal_pitch.mid
 ├── reports/
 │   ├── analysis_report.json
-│   └── analysis_report.txt
+│   ├── analysis_report.txt
+│   └── pitch_contour.json
+├── pgm_session.rpp
+├── markers.csv
 └── IMPORT_GUIDE.md
 ```
 
-完成標準：
-
-- package layout 穩定
-- 檔案命名可預期
-- DAW 匯入流程有文件
-
 ## Phase 4：公開發布整理
 
-狀態：已完成 public v1.0.0。
+狀態：已完成 public v1.1.0。
+
 
 目標：
 
@@ -189,24 +170,43 @@ project-name/
 
 ## Phase 5：AI 輔助音樂模組
 
-狀態：未來階段。
+狀態：已完成 (v1.2.0)。
 
 目標：
 
 將真正的 AI 模型整合成選用節點。
 
-候選模組：
+已完成項目：
 
-- stem separation
-- Basic Pitch MIDI transcription
-- CREPE pitch tracking
-- instrument presence detection
-- section detection
-- podcast transcription and diarization
+- `SectionStructureNode`：自動段落分析 (Intro/Verse/Chorus/Bridge/Outro)
+- `CREPEPitchNode`：連續音高輪廓追蹤 (Librosa pyin fallback)
+- `PodcastSpeechNode`：语音對齊，產出 `.srt` 字幕與 `transcript.json`
+- `InstrumentPresenceNode`：逐小節配器動態檢測矩陣
+- `HybridPitchNode`：雙音高融合算法，產出量化主唱 `vocal_lead_quantized.mid`
+- Ableton Live `.als`、Logic Pro `.fcpxml`、Cubase Tempo Track `.csv` 導出器
+- `DAWProfileRegistry`：抽象工廠動態切換目標 DAW 導出格式
+- `RetryFallbackNode`：Behavior Tree 裝飾器節點，支援重試與降級保護
+- Live 舞台指示儀表板 `live_dashboard.html` (黑夜模式，支援小節和弦導引)
+- Gradio 第 5 頁籤：交互式 MIDI 鋼琴卷軸預覽 (SVG/HTML Piano Roll)
+- Gradio 第 6 頁籤：全套 DAW 工程素材包一鍵 ZIP 下載
+- CLI `--batch-dir` 多執行緒批次處理與 `batch_summary.csv` / `.json`
+- CLI `--daw-profile` 選定 DAW 導出 Profile
+- `build_zip_archive()`：全套素材包自動壓縮為 `.zip`
 
 完成標準：
 
-- 模型依賴是 optional
-- 模型輸出有 fixture 或 golden file 測試
-- fallback 行為明確
-- 模型授權已記錄
+- 模型依賴均為 optional 並帶有 Graceful Fallback Guards
+- **83 項單元測試與整合測試全數通過** (80+ passed, 1 skipped)
+- 模型授權與契約文件已記錄
+
+## Phase 6：量產與社群開放規劃
+
+狀態：未來階段。
+
+預視目標：
+
+- 真實 CREPE / Basic Pitch AI 模型整合與測試
+- Whisper 语音辨識與 pyannote 說話者分離 (experimental)
+- `BeatNetNode` 無網路測試環境完整 CI 覆蓋
+- GitHub Actions CI 全面對齊
+- v2.0 插件化架構構思

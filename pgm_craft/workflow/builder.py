@@ -2,7 +2,7 @@
 PGMCraft Behavior Tree Workflow Builder & FSM Runner.
 """
 
-from pgm_craft.workflow.nodes import SequenceNode, FallbackNode, Blackboard, NodeStatus
+from pgm_craft.workflow.nodes import SequenceNode, FallbackNode, ParallelNode, Blackboard, NodeStatus
 from pgm_craft.workflow.audio_nodes import (
     VideoURLDownloadNode,
     AudioLoadNode,
@@ -12,33 +12,54 @@ from pgm_craft.workflow.audio_nodes import (
     BeatValidationNode,
     DownbeatRefineNode,
     MeasureMapNode,
+    SectionStructureNode,
     KeyChordAnalysisNode,
     ClickSynthesisNode,
-    MIDIExportNode
+    MIDIExportNode,
+    BasicPitchNode,
+    CREPEPitchNode,
+    PodcastSpeechNode,
+    InstrumentPresenceNode,
+    HybridPitchNode
 )
 
 def build_pgm_workflow_tree():
     """
     Constructs the Behavior Tree (BT) for PGMCraft Workflow:
-    
+
     Sequence [Root]
-    ├── VideoURLDownloadNode (1st Node: Auto Download URL if input is URL)
-    ├── AudioLoadNode        (2nd Node: Load Audio PCM Data)
-    ├── DemucsStemNode       (3rd Node: Optional Stem Separation)
+    ├── VideoURLDownloadNode
+    ├── AudioLoadNode
+    ├── DemucsStemNode
     ├── Fallback [BeatTrackingSelector]
     │   ├── BeatNetNode
     │   └── LibrosaBeatNode (Fallback)
     ├── BeatValidationNode
     ├── DownbeatRefineNode
     ├── MeasureMapNode
+    ├── SectionStructureNode
     ├── KeyChordAnalysisNode
     ├── ClickSynthesisNode
-    └── MIDIExportNode
+    ├── MIDIExportNode
+    ├── Parallel [AIAnalysisGroup]      ← 並行執行 AI 密集型節點
+    │   ├── BasicPitchNode
+    │   ├── CREPEPitchNode
+    │   ├── InstrumentPresenceNode
+    │   └── PodcastSpeechNode
+    └── HybridPitchNode                 ← 依賴 CREPE 輸出，保持順序
     """
     beat_tracking_fallback = FallbackNode("BeatTrackingSelector", [
         BeatNetNode(),
         LibrosaBeatNode()
     ])
+
+    # 四個 AI 分析節點彼此獨立，可安全並行
+    ai_parallel_group = ParallelNode("AIAnalysisGroup", children=[
+        BasicPitchNode(),
+        CREPEPitchNode(),
+        InstrumentPresenceNode(),
+        PodcastSpeechNode(),
+    ], success_threshold=1)   # 至少有一個成功即繼續（含 graceful fallback 節點）
 
     root_sequence = SequenceNode("PGMCraftWorkflowRoot", [
         VideoURLDownloadNode(),
@@ -48,12 +69,22 @@ def build_pgm_workflow_tree():
         BeatValidationNode(),
         DownbeatRefineNode(),
         MeasureMapNode(),
+        SectionStructureNode(),
         KeyChordAnalysisNode(),
         ClickSynthesisNode(),
-        MIDIExportNode()
+        MIDIExportNode(),
+        ai_parallel_group,
+        HybridPitchNode(),        # 依賴 CREPEPitchNode 的 pitch_contour，在 Parallel 後執行
     ])
 
     return root_sequence
+
+
+
+
+
+
+
 
 
 class BTWorkflowEngine:

@@ -18,6 +18,21 @@ class Blackboard(dict):
     def set_val(self, key, value):
         self[key] = value
 
+    def get_typed(self, key, expected_type, default=None):
+        """Retrieves value with type safety check."""
+        val = self.get(key, default)
+        if val is not None and not isinstance(val, expected_type):
+            try:
+                return expected_type(val)
+            except (ValueError, TypeError):
+                return default
+        return val
+
+    def validate_strict(self, node) -> list:
+        """Validates node required keys and returns list of missing keys."""
+        missing = [key for key in getattr(node, "required_keys", []) if key not in self]
+        return missing
+
     def append_trace(self, entry):
         trace = self.setdefault("workflow_trace", [])
         entry["index"] = len(trace)
@@ -27,6 +42,7 @@ class Blackboard(dict):
         validations = self.setdefault("contract_validation", [])
         entry["index"] = len(validations)
         validations.append(entry)
+
 
 
 class BaseNode:
@@ -116,3 +132,71 @@ class FallbackNode(BaseNode):
             if status == NodeStatus.SUCCESS:
                 return NodeStatus.SUCCESS
         return NodeStatus.FAILURE
+
+
+class RetryFallbackNode(BaseNode):
+    """Decorator node: retries a child node up to max_retries times.
+    
+    If all retries fail and a fallback node is provided, runs the fallback.
+    Provides resilience for network-dependent or AI-inference nodes.
+    """
+
+    def __init__(self, name="RetryFallback", child=None, max_retries=2, fallback=None):
+        super().__init__(name)
+        self.child = child
+        self.max_retries = max_retries
+        self.fallback = fallback
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        attempts = 1 + self.max_retries
+        for attempt in range(attempts):
+            status = self.child.run(blackboard, parent=self.name)
+            if status == NodeStatus.SUCCESS:
+                return NodeStatus.SUCCESS
+
+        # All retries exhausted — activate fallback if available
+        if self.fallback is not None:
+            return self.fallback.run(blackboard, parent=self.name)
+
+        return NodeStatus.FAILURE
+
+
+class ParallelNode(BaseNode):
+    """Executes all children concurrently using a thread pool.
+
+    Args:
+        children: List of child nodes to execute in parallel.
+        success_threshold: Number of children that must succeed for ParallelNode
+            to return SUCCESS. Defaults to len(children) (all must succeed).
+        max_workers: Maximum number of worker threads. Defaults to len(children).
+    """
+
+    def __init__(self, name="Parallel", children=None, success_threshold=None, max_workers=None):
+        super().__init__(name)
+        self.children = children if children else []
+        self.success_threshold = success_threshold if success_threshold is not None else len(self.children)
+        self.max_workers = max_workers or max(1, len(self.children))
+        # Aggregate output_keys from all children
+        self.output_keys = list({k for child in self.children for k in getattr(child, "output_keys", [])})
+
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if not self.children:
+            return NodeStatus.SUCCESS
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def run_child(child):
+            return child.name, child.run(blackboard, parent=self.name)
+
+        successes = 0
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {executor.submit(run_child, child): child for child in self.children}
+            for future in as_completed(futures):
+                _, status = future.result()
+                if status == NodeStatus.SUCCESS:
+                    successes += 1
+
+        return NodeStatus.SUCCESS if successes >= self.success_threshold else NodeStatus.FAILURE
+
+

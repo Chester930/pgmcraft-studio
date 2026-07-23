@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ],
+      "cwd": "D:\\Users\\666\\Desktop\\UVR5 \u97f3\u6a94\\\u81ea\u52d5\u7bc0\u62cd\u5668",
+      "type": "stdio"
+    }
+  }
+}

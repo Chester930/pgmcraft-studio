@@ -83,5 +83,35 @@ class TestMidiClickExporter(unittest.TestCase):
         ]
         self.assertEqual(len(click_notes), len(self.fake_beats))
 
+    def test_midi_chord_guide_export(self):
+        """測試 chord_guide.mid 的 MIDI 和弦導引軌與 Marker 標記產出"""
+        synth = PGMSynthesizer()
+        fake_chords = [
+            {"measure": 1, "chord": "Cmaj", "start_time": 0.5, "end_time": 2.5},
+            {"measure": 2, "chord": "Amin", "start_time": 2.5, "end_time": 4.5},
+        ]
+        output_mid = synth.export_midi_chord_guide(fake_chords, self.fake_beats, output_dir=self.temp_dir)
+
+        self.assertTrue(os.path.exists(output_mid))
+        loaded_mid = mido.MidiFile(output_mid)
+
+        markers = [
+            msg
+            for track in loaded_mid.tracks
+            for msg in track
+            if msg.type == "marker"
+        ]
+        chord_notes = [
+            msg
+            for track in loaded_mid.tracks
+            for msg in track
+            if msg.type == "note_on" and msg.velocity > 0
+        ]
+
+        self.assertGreaterEqual(len(markers), 2)
+        self.assertGreaterEqual(len(chord_notes), 2)
+        self.assertIn("Cmaj", markers[0].text)
+
 if __name__ == '__main__':
     unittest.main()
+

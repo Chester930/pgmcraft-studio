@@ -1,0 +1,14 @@
+{
+  "mcp": {
+    "code-review-graph": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "code-review-graph",
+        "serve",
+        "--repo",
+        "D:\\Users\\666\\Desktop\\UVR5 \u97f3\u6a94\\\u81ea\u52d5\u7bc0\u62cd\u5668"
+      ]
+    }
+  }
+}
