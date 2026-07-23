@@ -79,7 +79,13 @@ def format_workflow_diagnostics(report: dict) -> tuple[str, str]:
                 md += f"- ⚠️ **`{node}`**: 缺少必要 key `{missing}` (狀態: `{v_status}`)\n"
         if not has_warnings:
             md += "✅ 所有執行節點的 Blackboard Key 契約驗證皆完全符合！\n"
-        md += "\n"
+    from pgm_craft.ai_loader import get_model_status_report
+    ai_report = get_model_status_report()
+    md += "#### 🤖 AI 模型環境與降級防護健康探針 (AI Health Check)\n\n"
+    for m_name, m_info in ai_report.items():
+        icon = "🟢" if m_info["is_available"] else "🟡"
+        md += f"- {icon} **`{m_name}`**: {m_info['status']} ({m_info['fallback_reason']})\n"
+    md += "\n"
 
     # HTML performance table via WorkflowReportExporter
     exp = WorkflowReportExporter(trace)
@@ -532,6 +538,9 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     diagnostics_markdown_box = gr.Markdown(
                         "### 🔍 Workflow 診斷資訊\n"
                         "*執行 PGM 節目軌分析後，將於此處呈現 Behavior Tree 執行軌跡、節點耗時與 Blackboard Key 契約檢查。*"
+                    )
+                    diagnostics_html_box = gr.HTML(
+                        "<div style='padding:12px; color:#aaa;'>*詳細 HTML 診斷報告將於分析完成後顯示於此。*</div>"
                     )
                 with gr.Column(scale=1, min_width=180):
                     bt_refresh_btn = gr.Button("🌲 重新整理 BT 流程圖", variant="secondary")

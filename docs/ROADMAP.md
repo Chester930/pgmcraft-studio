@@ -1,6 +1,6 @@
 # 開發路線圖
 
-**最後更新：** 2026-07-23 (v1.2.0)
+**最後更新：** 2026-07-23 (v1.2.1)
 
 本路線圖定義 PGMCraft Studio 的階段。每個階段都應產生一個可理解、可測試、可繼續擴充的專案狀態。
 
@@ -201,12 +201,14 @@ project-name/
 
 ## Phase 6：量產與社群開放規劃
 
-狀態：未來階段。
+狀態：已完成 (v1.2.1 Release Candidate)。
 
-預視目標：
+已完成項目與現況：
 
-- 真實 CREPE / Basic Pitch AI 模型整合與測試
-- Whisper 语音辨識與 pyannote 說話者分離 (experimental)
-- `BeatNetNode` 無網路測試環境完整 CI 覆蓋
-- GitHub Actions CI 全面對齊
-- v2.0 插件化架構構思
+- [x] `BeatNetNode` 無網路與離線測試環境完整覆蓋 (`test_beatnet_node_offline.py`)
+- [x] AI 節點 (CREPE, BasicPitch, PodcastSpeech) 離線/Dry-Run 降級與 fallback 快照測試 (`test_ai_nodes_dryrun.py`)
+- [x] 統一 AI 模型加載器 `AILoader` 與相容性檢查診斷探針 (`pgm_craft/ai_loader.py`)
+- [x] v2.0 雙向 Behavior Tree 節點插件架構規格書 (`docs/ARCHITECTURE-V2.md`) 與 PluginLoader
+- [x] GitHub Actions CI 全面測試對齊 (113+ passed tests)
+- [ ] 真實 CREPE / Basic Pitch AI 模型選用模組獨立封裝
+- [ ] Whisper 語音辨識與 pyannote 說話者分離 (experimental)

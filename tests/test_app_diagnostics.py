@@ -8,7 +8,7 @@ from app import format_workflow_diagnostics
 
 def test_format_workflow_diagnostics_empty():
     report = {}
-    md = format_workflow_diagnostics(report)
+    md, html = format_workflow_diagnostics(report)
     assert "尚未包含 Workflow Trace" in md or "待分析" in md
 
 
@@ -49,10 +49,10 @@ def test_format_workflow_diagnostics_with_trace_and_validation():
         ],
     }
 
-    md = format_workflow_diagnostics(report)
+    md, html = format_workflow_diagnostics(report)
 
-    assert "AudioLoadNode" in md
-    assert "BeatNetNode" in md
+    assert "AudioLoadNode" in md or "AudioLoadNode" in html
+    assert "BeatNetNode" in md or "BeatNetNode" in html
     assert "SUCCESS" in md
-    assert "150.2" in md
+    assert "150.2" in md or "150.2" in html
     assert "optional_demo_key" in md

@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pgm-craft"
-version = "1.0.0"
+name = "pgmcraft-studio"
+version = "1.2.1"
 description = "DAW/PGM beat analysis and project package generator"
 readme = "README.md"
 requires-python = ">=3.9"
