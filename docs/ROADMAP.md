@@ -1,6 +1,6 @@
 # 開發路線圖
 
-**最後更新：** 2026-07-24 (v1.3.0)
+**最後更新：** 2026-07-24 (v1.3.1)
 
 本路線圖定義 PGMCraft Studio 的階段。每個階段都應產生一個可理解、可測試、可繼續擴充的專案狀態。
 
@@ -199,11 +199,11 @@ project-name/
 - **83 項單元測試與整合測試全數通過** (80+ passed, 1 skipped)
 - 模型授權與契約文件已記錄
 
-## Phase 7：Live 舞台主控儀表板增強
+## Phase 8：多變拍號 (Time Signature Markers) 與跨 DAW 導出擴充
 
-狀態：已完成 (v1.3.0 Release)。
+狀態：已完成 (v1.3.1 Release)。
 
-- [x] `LiveDashboardExporter` 專用舞台導出器 (`pgm_craft/daw_exporter.py`)
-- [x] HTML5 響應式黑暗模式/霓虹風格 Live Cue 卡片與調性/BPM 大數字儀表板
-- [x] 獨立單元測試 `tests/test_live_dashboard_exporter.py` 100% 通過
-- [x] 全套 120 項測試集合完全相容與通過
+- [x] 多變拍號 (`time_signatures`) 解析與 DAW 標記產出
+- [x] Reaper RPP `HAS_TIME_SIGNATURE` 標籤與 Cubase Tempo Track CSV `Time Signature` 資料欄位
+- [x] 單元測試 `tests/test_daw_time_signature_markers.py` 100% 通過
+- [x] 全套 121 項測試集合完全相容與通過

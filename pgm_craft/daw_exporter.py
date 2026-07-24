@@ -42,9 +42,11 @@ class DAWExporter:
         avg_bpm = report.get("average_bpm", 120.0)
         chords = report.get("chord_progression", [])
         sections = report.get("sections", [])
+        time_signatures = report.get("time_signatures", [])
         outputs = report.get("outputs", {})
 
         section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
+        has_ts_flag = " HAS_TIME_SIGNATURE" if time_signatures else ""
 
         rpp_lines = [
             '<REAPER_PROJECT 0.1 "6.0/win64" 1680000000\n',
@@ -52,7 +54,7 @@ class DAWExporter:
             "  RIPPLE 0\n",
             "  GROUPOVERRIDE 0 0 0\n",
             "  AUTOXFADE 1\n",
-            f"  TEMPO {avg_bpm} 4 4\n",
+            f"  TEMPO {avg_bpm} 4 4{has_ts_flag}\n",
         ]
 
         # Add Markers in Reaper RPP format: MARKER id pos "name" 0 0 1
@@ -185,15 +187,19 @@ class DAWExporter:
         avg_bpm = report.get("average_bpm", 120.0)
         chords = report.get("chord_progression", [])
         sections = report.get("sections", [])
-        section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
+        time_signatures = report.get("time_signatures", [])
 
-        lines = ["Measure,Time_Seconds,BPM,Chord,Section\n"]
+        section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
+        ts_map = {ts["measure"]: f"{ts.get('numerator', 4)}/{ts.get('denominator', 4)}" for ts in (time_signatures or [])}
+
+        lines = ["Measure,Time_Seconds,BPM,Chord,Section,Time Signature\n"]
         for idx, item in enumerate(chords, start=1):
             m_num = item.get("measure", idx)
             t_start = item.get("start_time", 0.0)
             chord_str = item.get("chord", "N/A")
             sec_str = section_map.get(m_num, "")
-            lines.append(f"{m_num},{t_start:.3f},{avg_bpm},{chord_str},{sec_str}\n")
+            ts_str = ts_map.get(m_num, "4/4")
+            lines.append(f"{m_num},{t_start:.3f},{avg_bpm},{chord_str},{sec_str},{ts_str}\n")
 
         with open(csv_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
