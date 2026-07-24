@@ -327,5 +327,75 @@ class DAWProfileRegistry:
         return exported_files
 
 
+class LiveDashboardExporter:
+    """Live 舞台演出/練團 PGM 主控指示儀表板導出器。"""
+    
+    def __init__(self, report: dict, theme: str = "neon"):
+        self.report = report
+        self.theme = theme
+
+    def to_html(self) -> str:
+        audio_name = self.report.get("audio_file", "PGM Track")
+        key = self.report.get("estimated_key", "C Major")
+        bpm = self.report.get("average_bpm", 120.0)
+        measures = self.report.get("total_measures", 16)
+        sections = self.report.get("sections", [])
+
+        sec_rows = ""
+        for sec in sections:
+            s_name = sec.get("name", "Section")
+            start_m = sec.get("start_measure", 1)
+            end_m = sec.get("end_measure", 4)
+            sec_rows += f"<div style='display:inline-block; padding:10px 18px; margin:6px; background:#2a2a3c; border-radius:6px; border-left:4px solid #00f0ff;'><span style='color:#00f0ff; font-weight:bold;'>{s_name}</span> <span style='color:#aaa; font-size:12px;'>(m.{start_m} ~ m.{end_m})</span></div>"
+
+        html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>⚡ PGMCraft Live 舞台指示儀表板 - {audio_name}</title>
+    <style>
+        body {{ background-color: #0d0e15; color: #e0e6ed; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 25px; margin: 0; }}
+        .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #00f0ff; padding-bottom: 15px; margin-bottom: 25px; }}
+        .title {{ font-size: 26px; font-weight: bold; color: #00f0ff; text-shadow: 0 0 10px rgba(0,240,255,0.4); }}
+        .stat-box {{ display: flex; gap: 20px; }}
+        .card {{ background: #181926; border: 1px solid #2d2f45; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
+        .big-val {{ font-size: 38px; font-weight: 900; color: #ff007f; text-shadow: 0 0 12px rgba(255,0,127,0.5); }}
+        .label {{ color: #7f849c; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">⚡ Live 舞台指示儀表板</div>
+        <div style="color: #a6adc8;">Track: {audio_name}</div>
+    </div>
+    <div class="stat-box">
+        <div class="card" style="flex: 1;">
+            <div class="label">Music Key (和弦調性)</div>
+            <div class="big-val">{key}</div>
+        </div>
+        <div class="card" style="flex: 1;">
+            <div class="label">Tempo (BPM)</div>
+            <div class="big-val" style="color: #00f0ff; text-shadow: 0 0 12px rgba(0,240,255,0.5);">{bpm}</div>
+        </div>
+        <div class="card" style="flex: 1;">
+            <div class="label">Total Measures (總小節)</div>
+            <div class="big-val" style="color: #a6e3a1;">{measures} m</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="label" style="margin-bottom: 15px;">Song Structure & Live Cue Cards (曲式結構導引卡片)</div>
+        <div>{sec_rows if sec_rows else "<span style='color:#6c7086;'>*全曲單一段落無分段標記*</span>"}</div>
+    </div>
+</body>
+</html>"""
+        return html
+
+    def export(self, output_path: str) -> str:
+        html_content = self.to_html()
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        return output_path
+
+
 
 
