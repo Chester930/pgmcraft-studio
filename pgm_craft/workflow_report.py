@@ -136,3 +136,51 @@ class WorkflowReportExporter:
             "slowest_node": slowest.get("node"),
             "slowest_ms": slowest.get("duration_ms", 0.0),
         }
+
+
+def render_section_svg_roadmap(sections: list[dict], total_duration: float = 180.0) -> str:
+    """
+    Generates an interactive SVG Section Structure Roadmap visualization.
+    Colors: Intro (#00f0ff), Verse (#a6e3a1), Chorus (#ff007f), Bridge (#cba6f7), Outro (#89b4fa).
+    """
+    if not sections:
+        return "<div style='color:#7f849c; padding:10px;'>*無樂段標記資料*</div>"
+
+    total_duration = max(1.0, total_duration)
+    svg_width = 800
+    svg_height = 80
+
+    SECTION_COLORS = {
+        "Intro": "#00f0ff",
+        "Verse": "#a6e3a1",
+        "Chorus": "#ff007f",
+        "Bridge": "#cba6f7",
+        "Outro": "#89b4fa",
+    }
+
+    svg_parts = [
+        f'<svg width="100%" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}" xmlns="http://www.w3.org/2000/svg">',
+        f'<rect width="{svg_width}" height="{svg_height}" fill="#11111b" rx="8" />'
+    ]
+
+    for sec in sections:
+        s_name = sec.get("name", "Section")
+        st = float(sec.get("start_time", 0.0))
+        et = float(sec.get("end_time", st + 15.0))
+        
+        x = (st / total_duration) * svg_width
+        w = max(4.0, ((et - st) / total_duration) * svg_width)
+        color = SECTION_COLORS.get(s_name, "#fab387")
+
+        svg_parts.append(
+            f'<rect x="{x:.1f}" y="15" width="{w:.1f}" height="45" fill="{color}" opacity="0.85" rx="4">'
+            f'<title>{s_name} ({st:.1f}s - {et:.1f}s)</title>'
+            f'</rect>'
+        )
+        if w > 35:
+            svg_parts.append(
+                f'<text x="{x + w/2:.1f}" y="42" font-size="12" font-weight="bold" fill="#11111b" text-anchor="middle">{s_name}</text>'
+            )
+
+    svg_parts.append('</svg>')
+    return "".join(svg_parts)

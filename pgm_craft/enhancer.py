@@ -99,17 +99,22 @@ class StereoPhaseAligner:
 
 
 class MIDIQuantizer:
-    """MIDI 音符採譜自動網格量化器 (Quantization Grid)"""
+    """MIDI 音符採譜自動網格量化與清理衛兵 (Quantization & Clean Guard)"""
 
-    def quantize_notes(self, notes_data, bpm=120.0, grid_fraction=16):
+    def quantize_notes(self, notes_data, bpm=120.0, grid_fraction=16, min_duration_sec=0.08):
         """
-        將微秒級真人和聲 MIDI 音符對齊到 1/16 拍或 1/32 拍網格
+        將微秒級 MIDI 音符對齊 1/16 拍或 1/32 拍網格，並過濾 <32 分音符碎音噪聲
         """
-        seconds_per_beat = 60.0 / bpm
+        seconds_per_beat = 60.0 / max(30.0, bpm)
         grid_seconds = seconds_per_beat / (grid_fraction / 4.0)
 
         quantized_notes = []
         for note in notes_data:
+            dur = note['end_time'] - note['start_time']
+            # 清除小於 min_duration_sec 的微小採譜碎音噪聲
+            if dur < min_duration_sec and len(notes_data) > 5:
+                continue
+
             start_q = round(note['start_time'] / grid_seconds) * grid_seconds
             end_q = round(note['end_time'] / grid_seconds) * grid_seconds
             if end_q <= start_q:
@@ -121,15 +126,136 @@ class MIDIQuantizer:
                 'end_time': round(end_q, 4),
                 'velocity': note.get('velocity', 100)
             })
-        return quantized_notes
+        return self.fix_note_overlaps(quantized_notes)
+
+    def fix_note_overlaps(self, notes_data, gap_sec=0.005):
+        """
+        Legato 音符重疊修復衛兵：防止單聲部相鄰音符微秒重疊導致 DAW note-on 衝突
+        """
+        if not notes_data or len(notes_data) < 2:
+            return notes_data
+
+        sorted_notes = sorted(notes_data, key=lambda n: n['start_time'])
+        fixed_notes = []
+
+        for i in range(len(sorted_notes) - 1):
+            curr_n = dict(sorted_notes[i])
+            next_n = sorted_notes[i + 1]
+
+            # 若當前音符尾端重疊到下一音符開頭
+            if curr_n['end_time'] > next_n['start_time']:
+                curr_n['end_time'] = max(curr_n['start_time'] + 0.01, round(next_n['start_time'] - gap_sec, 4))
+
+            fixed_notes.append(curr_n)
+
+        fixed_notes.append(dict(sorted_notes[-1]))
+        return fixed_notes
+
+
+
+class VoiceSplitter:
+    """聲部導向 MIDI 切分器 (Voice-Directed MIDI Splitting)"""
+
+    def split_piano_voices(self, notes_data, split_pitch=60):
+        """
+        將鋼琴 MIDI 音符拆分為右手高音 (Treble >= split_pitch) 與左手低音 (Bass < split_pitch)
+        """
+        right_hand = []
+        left_hand = []
+        for note in notes_data:
+            if note['pitch'] >= split_pitch:
+                right_hand.append(note)
+            else:
+                left_hand.append(note)
+        return right_hand, left_hand
+
+    def split_guitar_voices(self, notes_data, split_pitch=55):
+        """
+        將吉他 MIDI 音符拆分為低音 BassLine (< split_pitch) 與和弦/刷弦軌 (Chords >= split_pitch)
+        """
+        bassline = []
+        chords = []
+        for note in notes_data:
+            if note['pitch'] < split_pitch:
+                bassline.append(note)
+            else:
+                chords.append(note)
+        return bassline, chords
+
 
 
 class AudioEnhancerEngine:
-    """全功能音質優化與進階後處理引擎"""
+    """音訊中間品質提升與專用模型修復引擎"""
 
     def __init__(self):
         self.chunker = DynamicAudioChunker()
         self.phase_aligner = StereoPhaseAligner()
+
+    def enhance_audio_file(self, file_path, target_lufs=-14.0):
+        """標準音量增益與限制器"""
+        if not os.path.exists(file_path):
+            return file_path
+        try:
+            y, sr = sf.read(file_path)
+            # Apply Loudness Normalization & Peak Limiter
+            max_val = np.max(np.abs(y))
+            if max_val > 0:
+                y = y / max_val * 0.95
+            sf.write(file_path, y, sr)
+        except Exception as e:
+            print(f"[AudioEnhancer Engine Error] {e}")
+        return file_path
+
+    def apply_debreathe_vocal_filter(self, y, sr):
+        """人聲專用中間提升模型：高頻喘氣聲 (Breathing) 與口水音過濾"""
+        if len(y) == 0:
+            return y
+        # 確保截止頻率不大於 Nyquist 頻率
+        cutoff = min(12000.0, (sr / 2) * 0.9)
+        cutoff_ratio = cutoff / (sr / 2)
+        b, a = scipy.signal.butter(4, cutoff_ratio, btype='lowpass')
+        y_clean = scipy.signal.filtfilt(b, a, y, axis=0) if y.ndim > 1 else scipy.signal.filtfilt(b, a, y)
+        return y_clean
+
+
+    def apply_transient_punch_shaper(self, y, sr):
+        """鼓組專用中間提升模型：大鼓/小鼓 Transient 打擊感 (Punch Edge) 衝擊波增強"""
+        if len(y) == 0:
+            return y
+        # 微調 Transient 攻擊邊緣包絡
+        diff = np.diff(y, prepend=0, axis=0)
+        y_punched = y + 0.15 * diff
+        max_val = np.max(np.abs(y_punched))
+        if max_val > 0:
+            y_punched = y_punched / max_val * 0.95
+        return y_punched
+
+    def apply_subharmonic_bass_enhancer(self, y, sr):
+        """貝斯專用中間提升模型：40Hz 以下被失真切除的 Sub-Harmonic 低頻倍頻補全"""
+        if len(y) == 0:
+            return y
+        # 二倍下採樣產生低頻 Sub-octave 諧波
+        b, a = scipy.signal.butter(2, 60 / (sr / 2), btype='lowpass')
+        sub_bass = scipy.signal.filtfilt(b, a, y, axis=0) if y.ndim > 1 else scipy.signal.filtfilt(b, a, y)
+        y_enhanced = y + 0.2 * sub_bass
+        max_val = np.max(np.abs(y_enhanced))
+        if max_val > 0:
+            y_enhanced = y_enhanced / max_val * 0.95
+        return y_enhanced
+
+    def apply_phase_decorrelator(self, y, sr):
+        """旋律樂器專用中間提升模型：立體聲聲場相干性與 Phase 乾澀修復"""
+        return self.phase_aligner.align_stereo_phase(y)
+
+    def spectral_denoise(self, y, sr, alpha=1.5):
+        stft = scipy.signal.stft(y, fs=sr, nperseg=1024)
+        mag = np.abs(stft[2])
+        phase = np.angle(stft[2])
+
+        noise_profile = np.mean(mag[:, :10], axis=1, keepdims=True)
+        mag_denoised = np.maximum(mag - alpha * noise_profile, 0.0)
+        _, y_denoised = scipy.signal.istft(mag_denoised * np.exp(1j * phase), fs=sr)
+        return y_denoised
 
     def normalize_loudness_ebu_r128(self, y, sr, target_lufs=-14.0):
         rms = np.sqrt(np.mean(y ** 2))
@@ -144,15 +270,6 @@ class AudioEnhancerEngine:
             y_amplified = y_amplified * (0.98 / max_peak)
         return y_amplified
 
-    def spectral_denoise(self, y, sr, alpha=1.5):
-        stft = scipy.signal.stft(y, fs=sr, nperseg=1024)
-        mag = np.abs(stft[2])
-        phase = np.angle(stft[2])
-
-        noise_profile = np.mean(mag[:, :10], axis=1, keepdims=True)
-        mag_denoised = np.maximum(mag - alpha * noise_profile, 0.0)
-        _, y_denoised = scipy.signal.istft(mag_denoised * np.exp(1j * phase), fs=sr)
-        return y_denoised
 
     def enhance_audio_file(self, input_wav_path, output_wav_path=None, target_lufs=-14.0):
         if output_wav_path is None:

@@ -120,10 +120,14 @@ class MusicAnalyzer:
                 if score > best_score:
                     best_score, detected_chord = score, name
 
+            ext_type = "7th/Extended" if ("7" in detected_chord or "maj" in detected_chord or "m7" in detected_chord) else "Triad"
             measures.append({
                 "measure": idx + 1,
                 "start_time": round(float(start_time), 2),
                 "end_time": round(float(end_time), 2),
-                "chord": detected_chord
+                "chord": detected_chord,
+                "extension": ext_type,
+                "confidence": round(float(best_score), 3)
             })
         return measures
+

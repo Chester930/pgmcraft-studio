@@ -63,6 +63,7 @@ class BaseNode:
         try:
             status = self.execute(blackboard)
         except Exception as exc:
+            print(f"[BT Self-Healing Guard: {self.name}] 成功攔截節點執行異常 ({exc}) ➔ 安全降級為 FAILURE 引導 Fallback 替代路徑！")
             blackboard.append_trace({
                 "node": self.name,
                 "node_type": self.__class__.__name__,
@@ -71,7 +72,8 @@ class BaseNode:
                 "duration_ms": round((time.perf_counter() - started_at) * 1000, 3),
                 "error": str(exc),
             })
-            raise
+            return NodeStatus.FAILURE
+
 
         blackboard.append_trace({
             "node": self.name,

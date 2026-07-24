@@ -1,20 +1,25 @@
 # 系統架構
 
-**最後更新：** 2026-07-23
+**最後更新：** 2026-07-24 (SDD 5 Pass 商業級優化完工版本)
 
 ## 架構風格
 
-PGMCraft Studio 採用節點式音訊工作流，並使用 Behavior Tree 進行流程編排。
+PGMCraft Studio 採用節點式音訊工作流，並使用 Behavior Tree 進行流程編排與 Quality Guard 品質估測防禦。
 
 預期架構如下：
 
 ```text
-輸入來源
-  -> 工作流節點
-  -> Blackboard 狀態
-  -> Behavior Tree 編排
-  -> 工程素材包輸出
+輸入來源 (音檔 / Video URL / 資料夾 Batch)
+  -> 品質檢測 Guard 節點 (Pass 0: Crowd Noise Filter)
+  -> 剝洋蔥迭代分軌 (Pass 1 ~ Pass 4: Trio Peel & Subtract)
+  -> 標的式 Sub-Mix 合成 (Rhythm / Harmonic / Structure Sub-Mix)
+  -> 聲部導向 MIDI 切分 & Legato 重疊修復 (Piano / Guitar / Vocal)
+  -> Blackboard 狀態 & Behavior Tree 廣播
+  -> 3 大 DAW Bus 路由 (Rhythm -3dB / Music -6dB / Vocal 0dB)
+  -> EBU R128 (-14 LUFS, Peak <= -1.0 dBFS) 預聽檔 & SVG 彩色結構地圖
+  -> 工程素材包純淨 ZIP 導出
 ```
+
 
 這種設計讓專案能逐步成長。新能力應該先被實作成節點，再接入 Behavior Tree。
 

@@ -79,18 +79,70 @@ class PGMProjectPackager:
         }
 
     def build_zip_archive(self, package_dir: str) -> str:
-        """Compresses the complete project package directory into a zip file."""
+        """Compresses the complete project package directory into a clean, lightweight zip file."""
         import zipfile
         zip_path = f"{package_dir}.zip"
 
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-            for root, _, files in os.walk(package_dir):
+        IGNORE_EXTENSIONS = {".tmp", ".pyc", ".log"}
+        IGNORE_DIRS = {"__pycache__", ".pytest_cache"}
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            for root, dirs, files in os.walk(package_dir):
+                dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
                 for f in files:
+                    if any(f.endswith(ext) for ext in IGNORE_EXTENSIONS):
+                        continue
                     full_p = os.path.join(root, f)
                     rel_p = os.path.relpath(full_p, os.path.dirname(package_dir))
                     z.write(full_p, rel_p)
 
+        print(f"[ZIP Archiver] 成功將 DAW 工程包純淨壓縮打包 ➔ {os.path.basename(zip_path)}")
         return zip_path
+
+    def get_package_tree_markdown(self, package_dir: str) -> str:
+        """Generates a formatted Markdown tree structure representation of the package contents."""
+        if not os.path.exists(package_dir):
+            return "*素材包目錄尚未生成*"
+
+        tree_lines = [f"📦 `{os.path.basename(package_dir)}/`"]
+        for root, dirs, files in os.walk(package_dir):
+            level = root.replace(package_dir, '').count(os.sep)
+            indent = '  ' * (level + 1)
+            subindent = '  ' * (level + 2)
+            if level > 0:
+                tree_lines.append(f"{indent}📁 `{os.path.basename(root)}/`")
+            for f in sorted(files):
+                tree_lines.append(f"{subindent}📄 `{f}`")
+
+        return "\n".join(tree_lines)
+
+    def clean_temp_files(self, temp_dir: str) -> int:
+        """Disk Cleanup Guard: Cleans temporary working files safely."""
+        cleaned_count = 0
+        if not os.path.exists(temp_dir):
+            return 0
+        for f in os.listdir(temp_dir):
+            if f.endswith((".tmp", ".raw")):
+                try:
+                    os.remove(os.path.join(temp_dir, f))
+                    cleaned_count += 1
+                except Exception:
+                    pass
+        print(f"[Temp Cleanup Guard] 成功清理 {cleaned_count} 個微秒級中間臨時檔，保護磁碟容量！")
+        return cleaned_count
+
+    @staticmethod
+    def sanitize_filename(filename: str) -> str:
+        """Cross-Platform Path Sanitizer Guard: Removes unsafe cross-platform characters."""
+        import re
+        if not filename:
+            return "pgm_track"
+        cleaned = re.sub(r'[\\/*?:"<>|]', '_', filename)
+        cleaned = cleaned.strip().replace(' ', '_')
+        return cleaned or "pgm_track"
+
+
+
 
 
     def write_import_guide(self, report, package_dir, package_files):
@@ -124,6 +176,14 @@ class PGMProjectPackager:
             f"- 強拍補強：{report.get('downbeat_refinement', {}).get('status', 'UNKNOWN')}",
             f"- 小節地圖：{report.get('measure_map_status', 'UNKNOWN')}",
             "",
+            "## DAW 建議 Bus 響度平衡矩陣",
+            "| Bus 類型 | 推薦 Fader 平衡值 | 包含音軌/Stem | 說明 |",
+            "| :--- | :--- | :--- | :--- |",
+            "| **RHYTHM BUS** | `-3.0 dB` | Drums, Percussion, Bass | 保障打擊動態衝擊感 |",
+            "| **MUSIC BUS** | `-6.0 dB` | Guitar, Piano, Strings, Synths | 保持和聲開闊度不壓迫主唱 |",
+            "| **VOCAL BUS** | `0.0 dB` | Lead Vocal, Backing Vocals | 確保舞台 Cue 聲與歌詞極致清晰 |",
+            "",
+
             "## 檔案配置",
             "",
             "```text",

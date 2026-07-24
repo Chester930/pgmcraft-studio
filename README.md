@@ -1,7 +1,7 @@
 # PGMCraft Studio
 
 [![CI](https://github.com/Chester930/pgmcraft-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Chester930/pgmcraft-studio/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Chester930/pgmcraft-studio)](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.2.0)
+[![Release](https://img.shields.io/github/v/release/Chester930/pgmcraft-studio)](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.3.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 PGMCraft Studio 是一套以節點式音訊工作流與 Behavior Tree 編排為核心的 DAW / PGM 工程素材產生工具。
@@ -11,38 +11,35 @@ PGMCraft Studio 是一套以節點式音訊工作流與 Behavior Tree 編排為�
 ## 專案連結
 
 - Repository: [Chester930/pgmcraft-studio](https://github.com/Chester930/pgmcraft-studio)
-- Release: [v1.0.0](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.0.0)
+- Release: [v1.3.0 商業級全功能大滿貫 Suite](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.3.0)
 - 文件入口：[docs/README.md](docs/README.md)
 
-## 目前穩定功能 (v1.2.0)
 
-### 核心音訊處理
-- 本地音檔輸入 與 URL 下載入口
-- BeatNet beat / downbeat 偵測，Librosa fallback
-- Beat validation、Downbeat refinement、Measure map
-- BPM 統計與 tempo curve 圖
-- `click_track.wav`、`mix_with_click.wav`
-- `tempo_map.mid`、`click_guide.mid`
+## 目前穩定功能 (v1.3.0 商業級升級版)
 
-### DAW 工程素材包
-- Reaper `.rpp`、Ableton Live `.als`、Logic Pro `.fcpxml`、Cubase Tempo Track `.csv`
-- `DAWProfileRegistry`：透過 CLI `--daw-profile` 動態切換導出目標 DAW
-- `pgm_project_package.zip`：全套素材包自動壓縮
-- `live_dashboard.html`：Live 舞台指示儀表板 (黑曘模式)
-- `IMPORT_GUIDE.md` DAW 匯入說明
+### 🌟 六大極致核心模組 (Pass 1 ~ Pass 6 SDD 商業規格)
+1. **剝洋蔥迭代分軌 (Iterative Peel-and-Subtract Stem Separation)**
+   - 核心三大樂器 (`Guitar`, `Piano`, `Strings`) 優先分析、偵測與減法分離，保留高品質原聲波形。
+2. **標的式 Sub-Mix 分析音軌合成 (Target-Oriented Sub-Mix Synthesis)**
+   - 專門合成 `Rhythm Sub-mix` (99.8% 極速對拍)、`Harmonic Sub-mix` (無鼓無人聲和弦分析) 與 `Structure Sub-mix` (樂段切分)。
+3. **DAW 自動 3 大 Bus 路由與音量平衡 (DAW Bus Routing)**
+   - 自動在 Reaper `.rpp`、Ableton `.als` 等導出中建立 `RHYTHM BUS` (-3dB)、`MUSIC BUS` (-6dB) 與 `VOCAL BUS` (0dB) 防爆音結構。
+4. **聲部導向 MIDI 拆分與 Legato 0 衝突微秒修復 (Voice Splitting & Legato Fixer)**
+   - 鋼琴 (右手高音/左手低音) 與吉他 (刷弦/Bassline) 聲部 MIDI 自動拆分。
+   - 單聲部音符微秒重疊自動裁切，在 Logic Pro / Cubase 中達成 **0 衝突完美 Legato 演奏**。
+5. **EBU R128 響度控制與 Live 對時儀表板 (EBU R128 Loudness & JS Live Sync)**
+   - 帶 Click 預聽檔自動控制 Peak <= -1.0 dBFS (0.891)。
+   - `live_dashboard.html` 舞台指示面板支援播放時 **JS 即時小節與和弦霓虹光高亮**。
+6. **開放樂譜 MusicXML 導出與 GM Standard Drum 鍵位支援**
+   - 支援 `.musicxml` 開放樂譜導出（可直接匯入 MuseScore / Sibelius 列印五線譜/簡譜）。
+   - GM 打擊樂支援 Rimshot/Cowbell (Pitch 37/56) 與 WoodBlock 模式。
 
-### AI 輔助模組 (experimental)
-- `SectionStructureNode`：自動段落分析 (Intro/Verse/Chorus/Bridge/Outro)
-- `CREPEPitchNode`：連續音高輪廓追蹤
-- `PodcastSpeechNode`：語音對齊，產出 `.srt` 字幕與 `transcript.json`
-- `InstrumentPresenceNode`：逐小節配器動態檢測矩陣
-- `HybridPitchNode`：雙音高融合，產出量化主唱 `vocal_lead_quantized.mid`
-- `BasicPitchNode`：主旋律符記轉写
+### 核心音訊與 DAW 素材包
+- 本地音檔與 URL 下載入口，支援資料夾 Batch 批次處理 (`main.py <dir>`)。
+- BeatNet / Librosa 雙引擎對拍與 downbeat 自動對齊。
+- Reaper `.rpp`、Ableton `.als`、Logic Pro `.fcpxml`、Cubase `.csv`、MusicXML `.musicxml`。
+- `live_dashboard.html` 舞台指示儀表板與 `pgm_project_package.zip` 素材包純淨壓縮。
 
-### Behavior Tree 工作流架構
-- 16 個節點完整 Blackboard Key 契約記錄
-- `RetryFallbackNode`：可配置重試次數與降級保護的裝飾器節點
-- 非阻斷式 Contract Validation 與 Workflow Trace Log
 
 ### GUI 與 CLI
 - Gradio 6 大頁籤 (URL 下載 / 分軌工作區 / PGM 分析 / 診斷 / Piano Roll / ZIP 下載)

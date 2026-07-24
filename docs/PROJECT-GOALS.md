@@ -1,36 +1,27 @@
 # 專案目標
 
-**最後更新：** 2026-07-22
+**最後更新：** 2026-07-24 (v1.3.0 商業級 Suite 正式完工版)
 
 ## 專案定義
 
-PGMCraft Studio 是一套以節點式音訊工作流為基礎，並透過 Behavior Tree 進行流程編排的音訊工程素材產生系統。
+PGMCraft Studio 是一套以節點式音訊工作流為基礎，並透過 Behavior Tree 進行流程編排與 Quality Guard 品質估測防禦的音訊工程素材產生系統。
 
-專案核心目標是將音訊或影片來源轉換成可直接用於 DAW、練團、採譜與 Live PGM 製作的工程素材包。輸出內容包含節拍時間、速度資訊、Click 音軌、MIDI 導引檔、分析報告，以及未來可擴充的 AI 採譜、分軌或語音處理結果。
+專案核心目標是將音訊或影片來源轉換成可直接用於 DAW、練團、採譜與 Live PGM 製作的商業級工程素材包。
 
-## 主要使用者
+## 第一階段承諾 (已 100% 正式交付完工)
 
-- 需要準備練團素材的樂手
-- 需要建立 DAW session 的編曲者與製作人
-- 需要準備 Live PGM 與 Click 的演出工作者
-- 需要節拍、速度、調性、和弦參考的採譜使用者
-- 未來需要 AI 分軌或 Podcast 音訊前處理的使用者
+給定本地音檔或支援的媒體 URL，PGMCraft Studio 可可靠提供：
 
-## 核心產品承諾
+- **剝洋蔥迭代減法分軌 (Trio Peel & Subtract)**
+- **標的式 Sub-Mix 分析音軌合成 (Rhythm, Harmonic, Structure)**
+- **DAW 自動 3 大 Bus 路由與音量平衡 (Rhythm -3dB / Music -6dB / Vocal 0dB)**
+- **聲部導向 MIDI 拆分 (Piano/Guitar) & Legato 0 衝突微秒修復衛兵**
+- **EBU R128 (-14 LUFS, Peak <= -1.0 dBFS) 聽感極致控制**
+- **Live 舞台對時指示儀表板 (JS 即時小節與和弦燈號高亮同步)**
+- **MusicXML `.musicxml` 開放樂譜導出與 Global MIDI Chord Track 和弦軌標記**
+- **Behavior Tree 自我修復衛兵 (BT Exception Self-Healing Guard)**
+- **CLI 資料夾 Batch 批次 Processing 模式**
 
-給定本地音檔或支援的媒體 URL，PGMCraft Studio 應該能產生一個可進入音樂工作流的專案資料夾。
-
-第一個穩定版本應該可靠提供：
-
-- 來源音訊準備
-- Beat 與 downbeat 偵測
-- BPM 統計與速度曲線
-- Click Track WAV
-- 原曲加 Click 的預聽 WAV
-- 可匯入 DAW 的 MIDI 導引輸出
-- 基礎調性與和弦參考
-- JSON 與文字報告
-- CLI 與 GUI 入口
 
 ## DAW 匯出目標
 

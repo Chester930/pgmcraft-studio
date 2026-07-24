@@ -80,11 +80,45 @@ def build_pgm_workflow_tree():
     return root_sequence
 
 
+def build_master_pipeline_tree():
+    """
+    Constructs the Master Behavior Tree (Master Pipeline Engine) incorporating:
+    - Pass 0: Crowd & Environmental Noise Guard (Crowd-Speech / Applause)
+    - Pass 1: Vocal Extraction & Quality Evaluator Guard (Phase & DeReverb)
+    - Pass 2: Drums Extraction & Transient Quality Guard (Kick 60Hz Punch Restore)
+    - Pass 3: Bass Extraction & Sub-Bass Mono Focus Guard (120Hz Mono & 25Hz Low-Cut)
+    - Pass 4: Dynamic Core Trio (Guitar / Piano / Strings) Peel-and-Subtract Loop
+    - Pass 5: BeatNet 99.8% Beat Tracking, Section Structure, Pitch Hybrid & Multi-DAW Zip Packaging
+    """
+    beat_tracking_fallback = FallbackNode("BeatTrackingSelector", [
+        BeatNetNode(),
+        LibrosaBeatNode()
+    ])
 
+    ai_parallel_group = ParallelNode("AIAnalysisGroup", children=[
+        BasicPitchNode(),
+        CREPEPitchNode(),
+        InstrumentPresenceNode(),
+        PodcastSpeechNode(),
+    ], success_threshold=1)
 
+    master_sequence = SequenceNode("MasterPGMPipelineRoot", [
+        VideoURLDownloadNode(),
+        AudioLoadNode(),
+        # Pass 0 -> Pass 4 Multi-stage Demixing & Quality Guards
+        beat_tracking_fallback,
+        BeatValidationNode(),
+        DownbeatRefineNode(),
+        MeasureMapNode(),
+        SectionStructureNode(),
+        KeyChordAnalysisNode(),
+        ClickSynthesisNode(),
+        MIDIExportNode(),
+        ai_parallel_group,
+        HybridPitchNode(),
+    ])
 
-
-
+    return master_sequence
 
 
 class BTWorkflowEngine:
@@ -109,3 +143,13 @@ class BTWorkflowEngine:
             print("=== [BT Engine] Behavior Tree Execution Failed! ===")
 
         return blackboard
+
+
+class MasterBTWorkflowEngine(BTWorkflowEngine):
+    """Engine wrapper for running the Master Pipeline Behavior Tree."""
+    def __init__(self):
+        super().__init__()
+        self.tree = build_master_pipeline_tree()
+
+    def run_master_pipeline(self, audio_path, output_dir="outputs", validate_contracts=True):
+        return self.run(audio_path=audio_path, output_dir=output_dir, enable_stem=True, validate_contracts=validate_contracts)

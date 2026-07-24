@@ -23,39 +23,34 @@
 - GitHub remote 已設定
 - 本地測試通過，但有警告
 
-## Phase 1：PGM 與 DAW 匯出 MVP
+## Phase 1：PGM 與 DAW 匯出極致商業級 Suite (v1.3.0)
 
-狀態：已完成 public v1.0.0。
+狀態：已完成 100% 正式交付。
 
 目標：
+建立一條極度可靠的音訊工作流，將音訊轉成商業級 DAW-ready 輔助素材包。
 
-建立一條可靠流程，把音訊轉成 PGM 與 DAW-ready 輔助素材。
-
-範圍：
-
-- 本地音檔輸入
-- URL 輸入與下載工作流
-- 音訊載入與驗證
-- BeatNet beat tracking 與 Librosa fallback
-- Beat validation
-- Measure map 與可變小節長度整理
-- Downbeat refine
-- BPM 統計
-- 速度曲線圖
-- Click Track WAV
-- 原曲加 Click 的預聽 WAV
-- `tempo_map.mid`
-- `click_guide.mid`
-- JSON 與文字報告
-- `pgm_project_package/`
-- `IMPORT_GUIDE.md`
-- CLI 與 Gradio GUI 執行
+範圍 (已完成交付):
+- **剝洋蔥迭代分軌 (Iterative Trio Peel-and-Subtract Stem Separation)**
+- **標的式 Sub-Mix 分析音軌合成 (Rhythm, Harmonic, Structure Sub-mix)**
+- **DAW 自動 3 大 Bus 路由 (Rhythm -3dB / Music -6dB / Vocal 0dB)**
+- **聲部導向 MIDI 拆分 (Piano/Guitar) & Legato 音符微秒重疊修復衛兵**
+- **EBU R128 (-14 LUFS, Peak <= -1.0 dBFS) 聽感極致控制**
+- **Live 舞台對時指示儀表板 (JS 即時小節與和弦燈號高亮同步)**
+- **MusicXML `.musicxml` 開放樂譜導出 (MuseScore/Sibelius 開譜)**
+- **Global MIDI Chord Track 標記軌事件 (Cubase/Studio One 和弦軌對對位)**
+- **Behavior Tree 自我修復衛兵 (BT Exception Self-Healing Guard)**
+- **CLI 資料夾 Batch 批次 Processing 模式**
+- 本地音檔與 URL 下載入口
+- BeatNet / Librosa 雙引擎對拍與 downbeat 自動對齊
+- Reaper `.rpp`、Ableton `.als`、Logic Pro `.fcpxml`、Cubase `.csv`、MusicXML `.musicxml`
+- `pgm_project_package.zip` 全套素材包純淨壓縮打包
 
 完成標準：
+- 140+ 單元與整合測試 100% 綠燈通過
+- 產出檔能無縫匯入 Reaper, Ableton, Logic, Cubase, Studio One, MuseScore
+- README 與 ARCHITECTURE 文檔描述為 100% 穩定商業功能集
 
-- 測試覆蓋核心 pipeline
-- 產出檔能匯入 DAW
-- README 將此描述為穩定功能集
 - 移除使用者介面中的本機絕對路徑預設值
 
 ## Phase 2：節點工作流強化

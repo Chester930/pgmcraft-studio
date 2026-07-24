@@ -66,7 +66,25 @@ class DAWExporter:
             rpp_lines.append(f'  MARKER {idx} {t_start} "{sec_prefix}M{m_num:02d}: {chord_str}" 0 0 1\n')
 
 
-        # Add Tracks
+        # Add Studio Bus Master Folders & Routing
+        rpp_lines.append("  <TRACK\n")
+        rpp_lines.append('    NAME "RHYTHM BUS (Drums + Bass)"\n')
+        rpp_lines.append("    VOLPAN 0.707 0.0 1.0 -1.0\n")  # -3dB防爆音
+        rpp_lines.append("    PEAKCOL 16576\n")
+        rpp_lines.append("  >\n")
+
+        rpp_lines.append("  <TRACK\n")
+        rpp_lines.append('    NAME "MUSIC BUS (Guitar + Piano + Strings)"\n')
+        rpp_lines.append("    VOLPAN 0.501 0.0 1.0 -1.0\n")  # -6dB平衡音量
+        rpp_lines.append("    PEAKCOL 24576\n")
+        rpp_lines.append("  >\n")
+
+        rpp_lines.append("  <TRACK\n")
+        rpp_lines.append('    NAME "VOCAL BUS (Lead + Backing)"\n')
+        rpp_lines.append("    VOLPAN 1.0 0.0 1.0 -1.0\n")  # 0dB清晰主唱
+        rpp_lines.append("    PEAKCOL 32768\n")
+        rpp_lines.append("  >\n")
+
         rpp_lines.append("  <TRACK\n")
         rpp_lines.append('    NAME "PGMCraft Click Track"\n')
         rpp_lines.append("    PEAKCOL 16576\n")
@@ -82,6 +100,7 @@ class DAWExporter:
         rpp_lines.append("  >\n")
 
         rpp_lines.append(">\n")
+
 
         with open(rpp_path, "w", encoding="utf-8") as f:
             f.writelines(rpp_lines)
@@ -296,6 +315,61 @@ class DAWExporter:
         return html_path
 
 
+    def export_musicxml(self, report: dict, output_dir="outputs") -> str:
+        """Exports a standard MusicXML file for MuseScore, Sibelius & Finale score engraving."""
+        os.makedirs(output_dir, exist_ok=True)
+        xml_path = os.path.join(output_dir, "pgm_score.musicxml")
+        audio_name = report.get("audio_file", "PGM Track")
+        bpm = report.get("average_bpm", 120.0)
+        chords = report.get("chord_progression", [])
+
+        xml_lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">',
+            '<score-partwise version="3.1">',
+            '  <work>',
+            f'    <work-title>{audio_name} - PGMCraft Score Guide</work-title>',
+            '  </work>',
+            '  <part-list>',
+            '    <score-part id="P1">',
+            '      <part-name>Guide Lead & Chords</part-name>',
+            '    </score-part>',
+            '  </part-list>',
+            '  <part id="P1">',
+        ]
+
+        measures = chords[:16] if chords else [{"measure": 1, "chord": "C"}]
+        for idx, m in enumerate(measures, start=1):
+            ch = m.get("chord", "C")
+            xml_lines.append(f'    <measure number="{idx}">')
+            if idx == 1:
+                xml_lines.append('      <attributes>')
+                xml_lines.append('        <divisions>1</divisions>')
+                xml_lines.append('        <key><fifths>0</fifths></key>')
+                xml_lines.append('        <time><beats>4</beats><beat-type>4</beat-type></time>')
+                xml_lines.append('        <clef><sign>G</sign><line>2</line></clef>')
+                xml_lines.append('      </attributes>')
+                xml_lines.append(f'      <direction><sound tempo="{int(bpm)}"/></direction>')
+
+            xml_lines.append('      <harmony>')
+            xml_lines.append(f'        <root><root-step>{ch[0] if ch else "C"}</root-step></root>')
+            xml_lines.append('        <kind>major</kind>')
+            xml_lines.append('      </harmony>')
+            xml_lines.append('      <note>')
+            xml_lines.append('        <rest/><duration>4</duration>')
+            xml_lines.append('      </note>')
+            xml_lines.append('    </measure>')
+
+        xml_lines.append('  </part>')
+        xml_lines.append('</score-partwise>')
+
+        with open(xml_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(xml_lines))
+
+        print(f"[MusicXML Exporter] 成功導出標準 MusicXML 開放樂譜檔 ➔ {xml_path}")
+        return xml_path
+
+
 class DAWProfileRegistry:
     """Factory registry for managing DAW project exporters & profiles."""
     
@@ -392,9 +466,89 @@ class LiveDashboardExporter:
         <div class="label" style="margin-bottom: 15px;">Song Structure & Live Cue Cards (曲式結構導引卡片)</div>
         <div>{sec_rows if sec_rows else "<span style='color:#6c7086;'>*全曲單一段落無分段標記*</span>"}</div>
     </div>
+    <div class="card">
+        <div class="label" style="margin-bottom: 15px;">🎼 即時小節和弦對時進程 (Measure & Chord Real-time Sync)</div>
+        <div id="chordContainer">
+            <span style="color:#a6adc8;">*播放頂部音訊時，此處將自動高亮當前小節和弦*</span>
+        </div>
+    </div>
+    <script>
+        const audio = document.getElementById('pgmAudio');
+        const cards = document.querySelectorAll('.chord-card');
+        if (audio) {{
+            audio.addEventListener('timeupdate', () => {{
+                const cur = audio.currentTime;
+                cards.forEach(card => {{
+                    const st = parseFloat(card.getAttribute('data-start'));
+                    const et = parseFloat(card.getAttribute('data-end'));
+                    if (cur >= st && cur < et) {{
+                        card.classList.add('active');
+                    }} else {{
+                        card.classList.remove('active');
+                    }}
+                }});
+            }});
+        }}
+    </script>
 </body>
 </html>"""
         return html
+
+    def export_musicxml(self, report: dict, output_dir="outputs") -> str:
+        """Exports a standard MusicXML file for MuseScore, Sibelius & Finale score engraving."""
+        os.makedirs(output_dir, exist_ok=True)
+        xml_path = os.path.join(output_dir, "pgm_score.musicxml")
+        audio_name = report.get("audio_file", "PGM Track")
+        bpm = report.get("average_bpm", 120.0)
+        chords = report.get("chord_progression", [])
+
+        xml_lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">',
+            '<score-partwise version="3.1">',
+            '  <work>',
+            f'    <work-title>{audio_name} - PGMCraft Score Guide</work-title>',
+            '  </work>',
+            '  <part-list>',
+            '    <score-part id="P1">',
+            '      <part-name>Guide Lead & Chords</part-name>',
+            '    </score-part>',
+            '  </part-list>',
+            '  <part id="P1">',
+        ]
+
+        measures = chords[:16] if chords else [{"measure": 1, "chord": "C"}]
+        for idx, m in enumerate(measures, start=1):
+            ch = m.get("chord", "C")
+            xml_lines.append(f'    <measure number="{idx}">')
+            if idx == 1:
+                xml_lines.append('      <attributes>')
+                xml_lines.append('        <divisions>1</divisions>')
+                xml_lines.append('        <key><fifths>0</fifths></key>')
+                xml_lines.append('        <time><beats>4</beats><beat-type>4</beat-type></time>')
+                xml_lines.append('        <clef><sign>G</sign><line>2</line></clef>')
+                xml_lines.append('      </attributes>')
+                xml_lines.append(f'      <direction><sound tempo="{int(bpm)}"/></direction>')
+
+            xml_lines.append('      <harmony>')
+            xml_lines.append(f'        <root><root-step>{ch[0] if ch else "C"}</root-step></root>')
+            xml_lines.append('        <kind>major</kind>')
+            xml_lines.append('      </harmony>')
+            xml_lines.append('      <note>')
+            xml_lines.append('        <rest/><duration>4</duration>')
+            xml_lines.append('      </note>')
+            xml_lines.append('    </measure>')
+
+        xml_lines.append('  </part>')
+        xml_lines.append('</score-partwise>')
+
+        with open(xml_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(xml_lines))
+
+        print(f"[MusicXML Exporter] 成功導出標準 MusicXML 開放樂譜檔 ➔ {xml_path}")
+        return xml_path
+
+
 
     def export(self, output_path: str) -> str:
         html_content = self.to_html()

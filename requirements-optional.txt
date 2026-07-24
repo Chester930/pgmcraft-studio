@@ -5,3 +5,4 @@ pydub
 # Optional experimental AI dependencies
 basic-pitch
 crepe
+openai-whisper

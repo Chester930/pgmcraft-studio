@@ -41,10 +41,13 @@ class PGMSynthesizer:
 
         sf.write(click_path, click_audio, sr)
         mixed = 0.7 * y + 0.5 * click_audio
+        # EBU R128 Peak & Loudness Guard: Limit Peak <= -1.0 dBFS (0.891)
         max_val = np.max(np.abs(mixed))
-        if max_val > 1.0:
-            mixed /= max_val
+        target_peak = 0.891  # -1.0 dBFS headroom
+        if max_val > target_peak:
+            mixed = (mixed / max_val) * target_peak
         sf.write(mix_path, mixed, sr)
+
 
         return click_path, mix_path
 
@@ -133,8 +136,8 @@ class PGMSynthesizer:
         midi.save(midi_path)
         return midi_path
 
-    def export_midi_click_guide(self, beats, output_dir="outputs"):
-        """Exports MIDI click notes aligned to the generated tempo map."""
+    def export_midi_click_guide(self, beats, output_dir="outputs", mode="rimshot_cowbell"):
+        """Exports MIDI click notes aligned to the generated tempo map (Supports GM Rimshot/Cowbell & WoodBlock)."""
         os.makedirs(output_dir, exist_ok=True)
         beat_rows = self._normalize_beats(beats)
         midi = mido.MidiFile(type=1, ticks_per_beat=TICKS_PER_BEAT)
@@ -142,22 +145,31 @@ class PGMSynthesizer:
 
         click_track = mido.MidiTrack()
         midi.tracks.append(click_track)
-        click_track.append(mido.MetaMessage("track_name", name="PGMCraft Click Guide", time=0))
-        click_track.append(mido.Message("program_change", program=115, channel=0, time=0))
+        click_track.append(mido.MetaMessage("track_name", name="PGMCraft Click Guide (GM Percussion Ch10)", time=0))
+        click_track.append(mido.Message("program_change", program=0, channel=9, time=0))
 
         last_tick = 0
         note_length_ticks = max(1, int(TICKS_PER_BEAT * 0.12))
         lead_in_ticks = self._lead_in_ticks(beat_rows)
+
+        # GM Drum Key Mapping Guard
+        if mode == "rimshot_cowbell":
+            hi_pitch, lo_pitch = 56, 37  # GM Cowbell (Beat 1) / Side Stick (Beats 2-4)
+        else:
+            hi_pitch, lo_pitch = 76, 77  # High/Low Wood Block
+
         for index, (_, beat_num) in enumerate(beat_rows):
             absolute_tick = lead_in_ticks + index * TICKS_PER_BEAT
-            pitch = 76 if int(beat_num) == 1 else 77
+            pitch = hi_pitch if int(beat_num) == 1 else lo_pitch
             velocity = 115 if int(beat_num) == 1 else 85
             click_track.append(
-                mido.Message("note_on", note=pitch, velocity=velocity, channel=0, time=max(0, absolute_tick - last_tick))
+                mido.Message("note_on", note=pitch, velocity=velocity, channel=9, time=max(0, absolute_tick - last_tick))
             )
+
             click_track.append(
-                mido.Message("note_off", note=pitch, velocity=0, channel=0, time=note_length_ticks)
+                mido.Message("note_off", note=pitch, velocity=0, channel=9, time=note_length_ticks)
             )
+
             last_tick = absolute_tick + note_length_ticks
 
         click_track.append(mido.MetaMessage("end_of_track", time=max(0, self._final_tick(beat_rows) - last_tick)))
@@ -216,8 +228,10 @@ class PGMSynthesizer:
                 m_beat_idx = (m_num - 1) * 4
                 abs_tick = lead_in_ticks + m_beat_idx * TICKS_PER_BEAT
                 delta = max(0, abs_tick - last_marker_tick)
-                tempo_track.append(mido.MetaMessage("marker", text=f"M{m_num:02d}: {chord_str}", time=delta))
+                # Meta Marker prefix "Chord: " for Cubase & Studio One Global Chord Track Auto-Detection
+                tempo_track.append(mido.MetaMessage("marker", text=f"Chord: {chord_str} (M{m_num:02d})", time=delta))
                 last_marker_tick = abs_tick
+
 
         final_tick = self._final_tick(beat_rows)
         tempo_track.append(mido.MetaMessage("end_of_track", time=max(0, final_tick - last_tick)))

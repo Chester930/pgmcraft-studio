@@ -132,7 +132,7 @@ def run_batch_processing(input_dir: str, output_dir: str = "outputs", max_worker
     return summary_csv
 
 
-def parse_args(args_list=None):
+def build_parser():
     parser = argparse.ArgumentParser(
         description="PGMCraft Studio: AI Audio Stem Separation, Music Transcription & PGM Backing Track Suite"
     )
@@ -144,11 +144,17 @@ def parse_args(args_list=None):
     parser.add_argument("--plugin-dir", help="Path to custom Behavior Tree node plugins directory")
     parser.add_argument("--diagnostics", "-d", action="store_true", help="Print detailed workflow execution trace & contract diagnostics")
     parser.add_argument("--export-schema", action="store_true", help="Export workflow node JSON schema")
-    return parser.parse_args(args_list)
+    parser.add_argument("--quiet", "-q", action="store_true", help="Suppress console stdout logging for CI/CD or automated script integration")
+    return parser
+
+
+def parse_args(args_list=None):
+    return build_parser().parse_args(args_list)
 
 
 def main():
-    args = parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
 
     if args.plugin_dir:
         from pgm_craft.plugin_loader import PluginLoader

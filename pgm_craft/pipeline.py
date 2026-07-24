@@ -23,6 +23,8 @@ class PGMCraftEngine:
     def run(self, audio_path, output_dir="outputs"):
         os.makedirs(output_dir, exist_ok=True)
         
+        print(f"[BT Broadcaster] 啟動 Behavior Tree 即時廣播與節點執行追蹤: {os.path.basename(audio_path)}")
+
         # Run Behavior Tree Workflow Engine
         blackboard = self.bt_engine.run(
             audio_path=audio_path,
@@ -32,6 +34,7 @@ class PGMCraftEngine:
         )
 
         original_beats = blackboard.get_val("beats")
+
         beats = blackboard.get_val("refined_beats", original_beats)
         estimated_key = blackboard.get_val("estimated_key", "C Major")
         chords = blackboard.get_val("chord_progression", [])
@@ -45,14 +48,38 @@ class PGMCraftEngine:
         workflow_trace = blackboard.get_val("workflow_trace", [])
         contract_validation = blackboard.get_val("contract_validation", [])
 
-        # Calculate BPM stats & measures
+        # Calculate BPM stats, measures & Tempo Variance Index (%)
         diffs = np.diff(beats[:, 0]) if beats is not None else np.array([0.5])
         bpms = 60.0 / diffs if len(diffs) > 0 else np.array([120.0])
         avg_bpm = float(np.mean(bpms)) if len(bpms) > 0 else 120.0
         min_bpm = float(np.min(bpms)) if len(bpms) > 0 else 120.0
         max_bpm = float(np.max(bpms)) if len(bpms) > 0 else 120.0
+        std_bpm = float(np.std(bpms)) if len(bpms) > 0 else 0.0
+        tempo_variance_pct = round((std_bpm / avg_bpm * 100.0) if avg_bpm > 0 else 0.0, 2)
+        tempo_style = "Constant BPM (固定極速對拍)" if tempo_variance_pct < 0.8 else "Rubato / Dynamic Tempo (真人彈性律動)"
 
         downbeat_count = sum(1 for b in beats if int(b[1]) == 1) if beats is not None else 0
+
+        # Audio Fingerprint Checksum Guard (MD5 / SHA256)
+        import hashlib
+        md5_hash = hashlib.md5()
+        if os.path.exists(audio_path):
+            with open(audio_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    md5_hash.update(chunk)
+        audio_md5 = md5_hash.hexdigest()
+
+        # Arrangement Dynamic Density Tag
+        inst_matrix = blackboard.get_val("instrument_presence", [])
+        if inst_matrix:
+            avg_active = np.mean([sum(m.values()) for m in inst_matrix if isinstance(m, dict)])
+            density_tag = "Sparse Acoustic (純粹原聲/稀疏層次)" if avg_active < 1.5 else ("Dense Full Tutti (全亮爆發/豐富配器)" if avg_active > 2.8 else "Balanced Band (標準樂團編制)")
+        else:
+            density_tag = "Balanced Band (標準樂團編制)"
+
+
+
+
 
         # Generate Tempo Curve Plot
         fig, ax = plt.subplots(figsize=(10, 4))

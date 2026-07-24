@@ -118,6 +118,10 @@ def render_plugin_manager_html(plugin_dirs: list[str] = None) -> str:
             html += f"<td style='padding:8px; color:#89dceb;'><code>{out}</code></td>"
             html += "<td style='padding:8px; color:#a6e3a1;'>🟢 Active</td></tr>"
 
+    html += "</table></div>"
+    return html
+
+
 def render_batch_summary_html(batch_results: list[dict]) -> str:
     """渲染多檔案批次 PGM 分析任務摘要 HTML 表格卡片。"""
     if not batch_results:
@@ -366,6 +370,15 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
     if not input_source:
         return "⚠️ 請輸入影片/音訊 URL 或選擇上傳本地檔！", None, None, None, None, None, None, None
 
+    # Offline Environment Diagnostic Guard
+    if url_input and url_input.strip() and not audio_file:
+        import socket
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=1)
+        except OSError:
+            err_msg = "### ⚠️ 【舞台 Live 離線衛兵警示】\n檢測到目前處於**無網路離線狀態**，無法進行 URL 線上下載！\n請直接使用下方「**拖曳上傳本地音檔**」模式進行 PGM 節目軌分析！"
+            return err_msg, None, None, None, None, None, None, None, err_msg, "", "", None, ""
+
     output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
     os.makedirs(output_dir, exist_ok=True)
 
@@ -449,6 +462,53 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
     """)
 
     with gr.Tabs():
+        # 頁籤 0: 使用指南與快速入門
+        with gr.TabItem("📖 使用指南與快速入門"):
+            gr.Markdown("""
+            ## 🚀 PGMCraft Studio 快速使用指南
+
+            歡迎使用 **PGMCraft Studio**！本系統能將任何音訊或影片來源，自動轉換為練團、Live PGM 與 DAW (Reaper, Ableton Live, Logic Pro, Cubase) 可直接使用的工程素材包。
+
+            ---
+
+            ### 🎯 快速開始 (3 步驟操作流程)
+
+            1. **切換至「🎛️ PGM 節目軌與採譜分析」頁籤**：
+               - **網址輸入**：貼上 YouTube、Bilibili 或影音直連網址。
+               - **或上傳本地檔案**：拖曳 `.mp3` / `.wav` / `.flac` / `.m4a` 音檔。
+            2. **設定與執行**：
+               - 可勾選是否開啟鼓組/人聲 Stem 分離（可提高複雜樂曲的節拍分析精度）。
+               - 點擊 **「🚀 產生 PGM 專案檔與採譜分析」** 按鈕開始處理。
+            3. **試聽與下載素材**：
+               - **線上試聽**：試聽帶 Click 的 PGM 節目軌與獨立耳監 Click 打點音軌。
+               - **查看報告**：檢視 BPM 速度曲線圖與小節/和弦參考。
+               - **下載工程包**：切換至 **「📦 PGM 工程素材包一鍵打包與下載」** 取得全套 DAW 工程 `.zip` 壓縮檔。
+
+            ---
+
+            ### 🗺️ 功能頁籤導覽地圖
+
+            | 頁籤名稱 | 主要功能說明 | 適用情境 |
+            | :--- | :--- | :--- |
+            | **📖 使用指南與快速入門** | 本說明文件與 FAQ 指引 | 初次使用、操作查閱 |
+            | **📥 獨立影音無損下載區塊** | 輸入網址，一鍵下載原品質 MP4 影片、WAV 與 MP3 音檔 | 預先備料、線上記錄素材下載 |
+            | **🎛️ 獨立音色分軌工作區** | 支援 4-Stem、6-Stem、人聲/鼓組/貝斯/吉他/鋼琴分離與去殘響防呆處理 | 音軌分離、採譜練習素材 |
+            | **🎛️ PGM 節目軌與採譜分析** | 核心分析引擎：自動算節拍 (Beat/Downbeat)、BPM 曲線、生成 MIDI 軌 | Live 練團、DAW 工程建置 |
+            | **🔍 Workflow 執行與診斷** | 檢視 Behavior Tree 節點執行軌跡、執行耗時與 Blackboard key 契約驗證 | 系統診斷、效能與狀態檢查 |
+            | **🎹 MIDI 鋼琴卷軸預覽** | 視覺化瀏覽樂曲和弦與主唱/旋律音高卷軸 (Piano Roll) | 快速確認和弦與樂曲段落結構 |
+            | **📦 PGM 工程素材包下載** | 一鍵匯出包含 `.rpp` (Reaper)、`.als` (Ableton)、`.fcpxml` (Logic Pro)、`.csv` (Cubase) 的完整 `.zip` | 匯入 DAW 進行正式音樂製作 |
+            | **🔌 BT 節點動態插件管理器** | 檢視與管理動態加載的 Behavior Tree 自訂節點與 SDK 插件 | 擴充開發與進階除錯 |
+
+            ---
+
+            ### 💡 DAW 素材包匯入指引 (FAQ)
+
+            - **如何匯入我的音樂工作站 (DAW)？**
+              解壓打包的 `.zip` 檔後，將 `midi/tempo_map.mid` 拖入 DAW 的速度軌 (Tempo Map) 即可自動對齊 BPM 曲線。隨後將 `audio/mix_with_click.wav` 與 `midi/click_guide.mid` 匯入即可作為練團對時與參考。
+            - **支援哪些 DAW 工程檔？**
+              專案資料夾內自動提供 `pgm_session.rpp` (Reaper)、`project_ableton.als` (Ableton Live)、`project_logic.fcpxml` (Logic Pro) 與 `tempo_track_cubase.csv` (Cubase)。
+            """)
+
         # 頁籤 1: 獨立影音下載區塊
         with gr.TabItem("📥 獨立影音無損下載區塊"):
             gr.Markdown("### 🔗 貼上網址自動建立專屬資料夾並下載 MP4 / MP3 / WAV 檔案")
@@ -556,6 +616,26 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         label="🥁 開啟 Stem 鼓組/人聲分離 (分離後提高動態節拍精度)", 
                         value=False
                     )
+
+                    with gr.Accordion("🎛️ 高階錄音室控制選項 (Advanced Studio Options)", open=False):
+                        ebu_r128_chk = gr.Checkbox(
+                            label="🎧 EBU R128 (-14 LUFS) 聽感控制與 -1.0 dBFS Peak 防剪峰衛兵",
+                            value=True
+                        )
+                        legato_fixer_chk = gr.Checkbox(
+                            label="🎼 啟用 Legato 音符微秒重疊修復衛兵 (防止 DAW Note-On 衝突)",
+                            value=True
+                        )
+                        export_musicxml_chk = gr.Checkbox(
+                            label="🎼 自動導出 MusicXML (.musicxml) 開放樂譜檔 (MuseScore/Sibelius)",
+                            value=True
+                        )
+                        midi_drum_mode = gr.Dropdown(
+                            choices=[("Rimshot / Cowbell (Pitch 37/56)", "rimshot_cowbell"), ("WoodBlock (Pitch 76/77)", "woodblock")],
+                            value="rimshot_cowbell",
+                            label="🥁 MIDI Click 打擊樂音色模式 (GM Ch10 Key Map)"
+                        )
+
                     with gr.Row():
                         output_folder_box = gr.Textbox(
                             value=DEFAULT_OUTPUT_DIR, 
@@ -564,12 +644,20 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         )
                         pgm_browse_btn = gr.Button("📂 選擇資料夾", variant="secondary", scale=1)
 
+
                     analyze_btn = gr.Button("🚀 產生 PGM 專案檔與採譜分析", variant="primary")
 
                 with gr.Column(scale=2):
                     gr.Markdown("### 2. 採譜分析與速度曲線")
                     result_markdown = gr.Markdown("### 待分析...")
+                    clipboard_textbox = gr.Textbox(
+                        label="📋 一鍵複製 PGM 分析摘要 (Line / Discord 團隊通訊群組速貼板)",
+                        lines=6,
+                        placeholder="分析完成後可在此點擊右上方複製按鈕貼至工作群組..."
+                    )
                     tempo_curve_img = gr.Image(label="PGM 速度變化曲線圖 (Tempo Profile)")
+
+
 
             gr.Markdown("### 🎧 PGM 音軌試聽與導出檔")
             with gr.Row():
@@ -652,6 +740,11 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
 
 
+def build_ui():
+    """Helper method returning the Gradio Demo instance for app initialization and testing."""
+    return demo
+
+
 if __name__ == "__main__":
     demo.launch(
         server_name="127.0.0.1", 
@@ -659,5 +752,6 @@ if __name__ == "__main__":
         share=False,
         allowed_paths=[DEFAULT_OUTPUT_DIR]
     )
+
 
 

@@ -242,3 +242,101 @@ class CascadedStemSeparator:
 class StemSeparator(CascadedStemSeparator):
     def separate_stems(self, audio_path, output_dir="stems"):
         return self.separate_general_4stems(audio_path, output_dir=output_dir)
+
+
+class PeelCoreTrioStemSeparator(CascadedStemSeparator):
+    """
+    同層核心樂器 (吉他 Guitar / 鋼琴 Piano / 弦樂 Strings)
+    動態優先比對 ➔ 抽取 ➔ 音質 Guard ➔ 殘音減算 (Peel-and-Subtract) 循環引擎
+    """
+
+    CORE_TRIO = ["guitar", "piano", "strings"]
+
+    def probe_core_trio_scores(self, audio_path):
+        """
+        同層檢測：比對吉他 (Guitar)、鋼琴 (Piano) 與弦樂 (Strings) 的動態顯著度得分 (0.0 ~ 1.0)
+        """
+        import numpy as np
+        import librosa
+
+        scores = {"guitar": 0.0, "piano": 0.0, "strings": 0.0}
+        try:
+            y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=30.0)
+            if len(y) == 0:
+                return scores
+
+            # 1. 鋼琴 (Piano): 音域寬廣、擊弦 Transient 與正弦和弦衰減
+            stft = np.abs(librosa.stft(y))
+            onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+            piano_score = float(np.mean(onset_env) * 0.15 + np.mean(stft[20:300, :]) * 0.05)
+            scores["piano"] = min(1.0, max(0.0, piano_score))
+
+            # 2. 吉他 (Guitar): 中頻彈撥脈衝 (800Hz - 3kHz) 箱體共鳴
+            guitar_band = np.mean(stft[40:150, :])
+            guitar_score = float(guitar_band * 0.08 + np.std(onset_env) * 0.1)
+            scores["guitar"] = min(1.0, max(0.0, guitar_score))
+
+            # 3. 弦樂 (Strings): 中高頻長音擦弦 (Sustain Energy)
+            harmonic, _ = librosa.effects.hpss(y)
+            strings_score = float(np.mean(np.abs(harmonic)) * 12.0)
+            scores["strings"] = min(1.0, max(0.0, strings_score))
+
+        except Exception as e:
+            print(f"[CoreTrioProbe Warning] 聲學比對異常: {e}")
+
+        return scores
+
+    def run_peel_trio_loop(self, input_residual_path, output_dir="stems", min_threshold=0.10):
+        """
+        執行動態剝洋蔥減算循環：
+        1. 在同層 (吉他/鋼琴/弦樂) 中找出最顯著樂器。
+        2. 抽離該樂器，進行 Phase & Quality Guard 把關。
+        3. 進行殘量減算，解開頻譜遮蔽。
+        4. 迴圈再次比對，直到同層主要樂器全數抽離或低於門檻。
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        extracted_results = {}
+        remaining_candidates = set(self.CORE_TRIO)
+        current_residual = input_residual_path
+
+        print(f"[PeelCoreTrio] 啟動吉他/鋼琴/弦樂 同層動態減算循環...")
+
+        while remaining_candidates:
+            # 1. 探測剩餘同層候選者的分數
+            scores = self.probe_core_trio_scores(current_residual)
+            print(f"[PeelCoreTrio Probe] 當前音軌同層樂器分數: {scores}")
+
+            # 2. 篩選在候選池中分數最高者
+            candidate_scores = {k: scores[k] for k in remaining_candidates}
+            best_instrument = max(candidate_scores, key=candidate_scores.get)
+            best_score = candidate_scores[best_instrument]
+
+            # 若最高分仍低於門檻，說明這三者已被抽完或不存在，跳出循環
+            if best_score < min_threshold:
+                print(f"[PeelCoreTrio Loop End] 剩餘樂器顯著度 {best_score:.3f} < 門檻 {min_threshold}，結束同層循環。")
+                break
+
+            print(f"[PeelCoreTrio Step] 檢測到最顯著同層樂器 ➔ 【{best_instrument.upper()}】(分數: {best_score:.3f})，開始抽取...")
+
+            # 3. 抽取特定樂器並進行品質 Guard
+            target_stem_path = os.path.join(output_dir, f"{best_instrument}.wav")
+            next_residual_path = os.path.join(output_dir, f"residual_after_{best_instrument}.wav")
+
+            if best_instrument == "guitar":
+                stem_path, res_path = self.separate_guitar(current_residual, output_dir, is_already_instrumental=True)
+            elif best_instrument == "piano":
+                stem_path, res_path = self.separate_piano(current_residual, output_dir, is_already_instrumental=True)
+            else:  # strings
+                stem_path, res_path = self.separate_strings(current_residual, output_dir)
+
+            # 4. 相位與音質把关修復
+            if os.path.exists(stem_path):
+                self.enhancer.enhance_audio_file(stem_path, target_lufs=-14.0)
+
+            extracted_results[best_instrument] = stem_path
+            remaining_candidates.remove(best_instrument)
+            current_residual = res_path
+
+        extracted_results["trio_residual"] = current_residual
+        return extracted_results
+

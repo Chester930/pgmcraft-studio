@@ -63,9 +63,34 @@ def main():
         else:
             audio_path = generate_sample_test_audio()
 
+    if os.path.isdir(audio_path):
+        print(f"\n📁 檢測到輸入為資料夾路徑，啟動 Batch 批次 Processing 模式: {audio_path}")
+        audio_exts = ('.wav', '.mp3', '.flac', '.m4a')
+        target_files = [os.path.join(audio_path, f) for f in os.listdir(audio_path) if f.lower().endswith(audio_exts)]
+        if not target_files:
+            print(f"資料夾內無符合相容格式的音檔 ({audio_exts})")
+            sys.exit(1)
+
+        print(f"找到 {len(target_files)} 個音軌，開始執行批次全自動分析...")
+        from pgm_craft.pipeline import PGMCraftEngine
+        engine = PGMCraftEngine(enable_stem_separation=False)
+        batch_results = []
+        for i, file_p in enumerate(target_files, 1):
+            print(f"\n[{i}/{len(target_files)}] 處理批次音軌 ➔ {os.path.basename(file_p)}")
+            res = engine.run(file_p, output_dir=args.output_dir)
+            batch_results.append({"file": file_p, "package": res.get("zip_archive")})
+
+        summary_path = os.path.join(args.output_dir, "batch_summary.json")
+        import json
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(batch_results, f, indent=2, ensure_ascii=False)
+        print(f"\n🎉 批次處理完成！完成報告儲存於: {summary_path}")
+        return
+
     if not os.path.exists(audio_path):
         print(f"錯誤：找不到音檔 '{audio_path}'")
         sys.exit(1)
+
 
     print(f"\n==========================================")
     print(f"開始處理音檔: {audio_path}")
