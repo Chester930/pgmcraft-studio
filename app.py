@@ -118,6 +118,30 @@ def render_plugin_manager_html(plugin_dirs: list[str] = None) -> str:
             html += f"<td style='padding:8px; color:#89dceb;'><code>{out}</code></td>"
             html += "<td style='padding:8px; color:#a6e3a1;'>🟢 Active</td></tr>"
 
+def render_batch_summary_html(batch_results: list[dict]) -> str:
+    """渲染多檔案批次 PGM 分析任務摘要 HTML 表格卡片。"""
+    if not batch_results:
+        return "<div style='padding:12px; color:#aaa;'>*尚無多檔案批次任務紀錄*</div>"
+
+    html = "<div style='padding:15px; border-radius:8px; background:#181825; color:#cdd6f4; border:1px solid #313244; margin-top:15px;'>"
+    html += "<h4 style='margin-top:0; color:#00f0ff;'>📦 多檔案批次 PGM 分析任務摘要</h4>"
+    html += "<table style='width:100%; border-collapse:collapse; text-align:left; font-size:13px;'>"
+    html += "<tr style='background:#313244; color:#f5e0dc;'><th style='padding:8px;'>檔名</th><th style='padding:8px;'>狀態</th><th style='padding:8px;'>調性 (Key)</th><th style='padding:8px;'>BPM</th><th style='padding:8px;'>小節數</th></tr>"
+
+    for res in batch_results:
+        fname = res.get("file_name", "N/A")
+        status = res.get("status", "N/A")
+        key = res.get("key", "N/A")
+        bpm = res.get("bpm", 0.0)
+        measures = res.get("measures", 0)
+        status_color = "#a6e3a1" if status == "SUCCESS" else "#f38ba8"
+        
+        html += f"<tr style='border-bottom:1px solid #313244;'><td style='padding:8px; font-weight:bold;'>{fname}</td>"
+        html += f"<td style='padding:8px; color:{status_color};'>{status}</td>"
+        html += f"<td style='padding:8px; color:#fab387;'>{key}</td>"
+        html += f"<td style='padding:8px; color:#89dceb;'>{bpm:.1f}</td>"
+        html += f"<td style='padding:8px;'>{measures} m</td></tr>"
+
     html += "</table></div>"
     return html
 

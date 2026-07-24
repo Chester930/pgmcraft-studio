@@ -1,6 +1,6 @@
 # 開發路線圖
 
-**最後更新：** 2026-07-24 (v1.4.0)
+**最後更新：** 2026-07-24 (v1.4.1)
 
 本路線圖定義 PGMCraft Studio 的階段。每個階段都應產生一個可理解、可測試、可繼續擴充的專案狀態。
 
@@ -199,11 +199,10 @@ project-name/
 - **83 項單元測試與整合測試全數通過** (80+ passed, 1 skipped)
 - 模型授權與契約文件已記錄
 
-## Phase 9：多軌音訊自動節拍量化對齊節點 (AudioQuantizerNode)
+## Phase 10：Gradio GUI 多檔案批次處理面板
 
-狀態：已完成 (v1.4.0 Release)。
+狀態：已完成 (v1.4.1 Release)。
 
-- [x] `AudioQuantizerNode` 音訊與節拍脈衝 1/16 格點自動對齊 (`pgm_craft/workflow/audio_nodes.py`)
-- [x] 自動計算量化微秒/毫秒偏移 `quantization_offset_ms` 與對齊拍點 `quantized_beats`
-- [x] 單元測試 `tests/test_audio_quantizer_node.py` 100% 通過
-- [x] 全套 122 項測試集合完全相容與通過
+- [x] Gradio `render_batch_summary_html()` 批次處理佇列與任務摘要對比面板 (`app.py`)
+- [x] 單元測試 `tests/test_app_batch_processing.py` 100% 通過
+- [x] 全套 123 項測試集合完全相容與通過
