@@ -980,6 +980,45 @@ class HybridPitchNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class AudioQuantizerNode(BaseNode):
+    """多軌音訊與節拍脈衝自動量化對齊節點 (Grid Quantization & Microsecond Offset Correction)."""
+    required_keys = ["y", "sr", "beats"]
+    output_keys = ["quantized_beats", "quantization_offset_ms"]
+
+    def __init__(self, grid_resolution: int = 16):
+        super().__init__("AudioQuantizerNode")
+        self.grid_resolution = grid_resolution
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats")
+        sr = blackboard.get_val("sr", 22050)
+        
+        if beats is None or len(beats) == 0:
+            print(f"[BT Node: {self.name}] Beats missing in blackboard. Skipping quantization.")
+            return NodeStatus.FAILURE
+
+        quantized_beats = np.copy(beats)
+        offsets = []
+
+        for idx, item in enumerate(beats):
+            ts = float(item[0]) if isinstance(item, (list, np.ndarray)) else float(item)
+            # 量化格點計算：對齊至 Nearest Grid
+            grid_interval = 60.0 / (120.0 * (self.grid_resolution / 4.0)) # 基準預設 1/16 格點
+            quantized_ts = round(ts / grid_interval) * grid_interval
+            offset_ms = abs(quantized_ts - ts) * 1000.0
+            offsets.append(offset_ms)
+            
+            if isinstance(item, (list, np.ndarray)):
+                quantized_beats[idx][0] = round(quantized_ts, 4)
+
+        avg_offset = float(np.mean(offsets)) if offsets else 0.0
+        blackboard.set_val("quantized_beats", quantized_beats)
+        blackboard.set_val("quantization_offset_ms", round(avg_offset, 2))
+        
+        print(f"[BT Node: {self.name}] Quantized {len(beats)} beats (1/{self.grid_resolution} grid). Avg offset: {avg_offset:.2f} ms.")
+        return NodeStatus.SUCCESS
+
+
 
 
 
