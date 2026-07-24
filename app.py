@@ -95,6 +95,33 @@ def format_workflow_diagnostics(report: dict) -> tuple[str, str]:
 
 
 
+def render_plugin_manager_html(plugin_dirs: list[str] = None) -> str:
+    """渲染 v2.0 雙向 BT 節點動態插件管理器 HTML 儀表板。"""
+    from pgm_craft.plugin_loader import PluginLoader
+    loader = PluginLoader(plugin_dirs=plugin_dirs)
+    loaded_nodes = loader.load_plugins()
+
+    html = "<div style='padding:15px; border-radius:8px; background:#1e1e2e; color:#cdd6f4; border:1px solid #45475a;'>"
+    html += "<h3 style='margin-top:0; color:#89b4fa;'>🔌 BT 節點動態插件管理器 (Behavior Tree Node Plugin SDK)</h3>"
+    html += f"<p style='color:#a6adc8;'>共掃描加載 <b>{len(loaded_nodes)}</b> 個自訂 Behavior Tree 節點插件</p>"
+    html += "<table style='width:100%; border-collapse:collapse; text-align:left; font-size:13px;'>"
+    html += "<tr style='background:#313244; color:#f5e0dc;'><th style='padding:8px;'>插件節點名稱</th><th style='padding:8px;'>Required Keys</th><th style='padding:8px;'>Output Keys</th><th style='padding:8px;'>狀態</th></tr>"
+
+    if not loaded_nodes:
+        html += "<tr><td colspan='4' style='padding:12px; color:#6c7086; text-align:center;'>*目前尚未載入任何外部自訂插件節點*</td></tr>"
+    else:
+        for name, cls in loaded_nodes.items():
+            req = getattr(cls, "required_keys", [])
+            out = getattr(cls, "output_keys", [])
+            html += f"<tr style='border-bottom:1px solid #313244;'><td style='padding:8px; font-weight:bold; color:#a6e3a1;'>{name}</td>"
+            html += f"<td style='padding:8px; color:#fab387;'><code>{req}</code></td>"
+            html += f"<td style='padding:8px; color:#89dceb;'><code>{out}</code></td>"
+            html += "<td style='padding:8px; color:#a6e3a1;'>🟢 Active</td></tr>"
+
+    html += "</table></div>"
+    return html
+
+
 def render_piano_roll_html(report: dict) -> str:
     """渲染現代感 HTML/SVG 鋼琴卷軸與和弦/段落預覽。"""
     if not report:
@@ -566,6 +593,13 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             包含全套 DAW 專案檔 (`.rpp`, `.als`, `.fcpxml`)、Tempo / Click / Chord MIDI 軌、Live 舞台指示面板與逐字稿字幕報告。
             """)
             file_zip_download = gr.File(label="📦 一鍵下載全套 DAW 工程素材包 (.zip Archive)")
+
+        # 頁籤 7: BT 節點動態插件管理器 (Node Plugin SDK)
+        with gr.TabItem("🔌 BT 節點動態插件管理器"):
+            plugin_manager_html_box = gr.HTML(
+                value=render_plugin_manager_html(),
+                label="v2.0 Behavior Tree 節點插件加載與黑板契約診斷"
+            )
 
             pgm_browse_btn.click(
                 fn=open_folder_picker,
