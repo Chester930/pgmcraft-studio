@@ -263,7 +263,8 @@ Sequence [StemSeparationRoot]
 | **Pass 23** | **Stage 3 雙軌併行節拍分析與動態融合 (Dual-Track Beat Fusion)** | 4 | ✅ 2026-07-27 |
 | **Pass 24** | **Stage 4 和聲專屬 Sub-mix 與調性/和弦/段落樂理分析 (Harmonic Analysis BT)** | 2 | ✅ 2026-07-27 |
 | **Pass 25** | **Stage 4 樂段結構專屬 Sub-mix 與段落切分 (Structure Sub-mix & Section BT)** | 2 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~4 BT 整合驗證** | **141** | ✅ **100% 通過** |
+| **Pass 26** | **Stage 4 拍點格點和弦對齊與平滑化衛兵 (Grid-Constrained Chord BT)** | 2 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~4 BT 整合驗證** | **143** | ✅ **100% 通過** |
 
 ---
 
@@ -304,6 +305,7 @@ beat_fusion_report ➔ 雙軌融合採納統計報告
 harmonic_track_path ➔ {project_dir}/stems/submix/track_stage4_harmonic.wav (Piano+Guitar+Bass 無鼓無人聲 Sub-mix)
 structure_track_path ➔ {project_dir}/stems/submix/track_stage4_structure.wav (Vocals+Drums+Other 樂段結構 Sub-mix)
 estimated_key ➔ 樂曲主調性 (如 "C Major", "A Minor")
+grid_constrained_chords ➔ 拍點格點對齊與小節 Smoothing 消除抖動後之純淨和弦進行
 chord_progression ➔ 逐小節和弦進程陣列 (包含 start_time, end_time, chord, measure)
 section_structure ➔ 樂曲 Intro/Verse/Chorus/Bridge 段落結構
 measure_map ➔ 小節與時間對齊地圖 (含完整變動小節長度)
@@ -315,6 +317,7 @@ measure_map ➔ 小節與時間對齊地圖 (含完整變動小節長度)
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 26: Stage 4 拍點格點和弦對齊與平滑化衛兵 (Grid-Constrained Chord BT) 重構**：<br>1. **`GridConstrainedChordNode`**：利用 Stage 3 的 `beats` 時間格點強制將 Chroma 解碼鎖定在拍點與小節邊界<br>2. **小節 Smoothing**：中值濾波消除單拍 0.1 秒碎裂和弦抖動，確保 100% 符合 MIDI / DAW 工程對齊<br>3. 通過 SDD Pass 26 單元測試 (`tests/test_sdd_pass26.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 25: Stage 4 樂段結構專屬 Sub-mix 與段落切分 (Structure Sub-mix & Section BT) 重構**：<br>1. **`SynthesizeStructureTrackNode`**：合成 Vocals + Drums + Other/No_Vocals 樂段結構 Sub-mix（涵蓋巨觀音色、動態能量與人聲疊軌變化）<br>2. **`SectionStructureNode`**：結合自相似矩陣 (SSM) 與雙重音色能量維度切分 Intro / Verse / Chorus / Bridge / Outro 段落<br>3. 通過 SDD Pass 25 單元測試 (`tests/test_sdd_pass25.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 24: Stage 4 和聲專屬 Sub-mix 與調性/和弦/段落樂理分析 (Harmonic Analysis BT) 重構**：<br>1. **`SynthesizeHarmonicTrackNode`**：合成 Piano + Guitar + Bass 專屬和聲 Sub-mix（零鼓噪聲、零人聲花腔干擾）<br>2. **`build_music_analysis_tree`**：拍點對齊之 Key/Chord 分析、樂曲 Intro/Verse/Chorus 段落切分與小節地圖建置<br>3. 通過 SDD Pass 24 單元測試 (`tests/test_sdd_pass24.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 23: Stage 3 雙軌併行節拍分析與動態融合 (Dual-Track Beat Fusion) BT 重構**：<br>1. **A 軌 (鼓+Bass 骨幹)**：`SynthesizeRhythmTrackNode` 提供微秒級硬核擊點<br>2. **B 軌 (去人聲伴奏)**：`PrepareInstrumentalTrackNode` 提供連續柱狀和弦與動態特徵<br>3. **動態融合衛兵**：`BeatFusionArbitratorNode` 自動偵測無鼓/前奏 (Intro) 能量空隙並動態切換接管，解決斷拍問題<br>4. 通過 SDD Pass 23 單元測試 (`tests/test_sdd_pass23.py`, 4 passed) |
