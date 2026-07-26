@@ -237,7 +237,7 @@ class BeatNetNode(BaseNode):
         target_path = blackboard.get_val("target_analysis_path")
         try:
             from BeatNet.BeatNet import BeatNet
-            estimator = BeatNet(1, mode='offline', inference_model='dbn', plot=[], thread=False)
+            estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False)
             output = estimator.process(target_path)
             if output is not None and len(output) > 0:
                 blackboard.set_val("beats", output)
