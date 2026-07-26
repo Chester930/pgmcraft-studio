@@ -420,9 +420,11 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
 - **節拍檢查**: `{report.get('beat_validation', {}).get('status', 'UNKNOWN')}`
 - **強拍補強**: `{report.get('downbeat_refinement', {}).get('status', 'UNKNOWN')}`
 - **小節地圖**: `{report.get('measure_map_status', 'UNKNOWN')}`
+- **Stage 4 樂段結構**: `{len(report.get('sections', []))} 個段落 ({', '.join([s['name'] for s in report.get('sections', [])]) if report.get('sections') else '無'})`
+- **Stage 4 和弦對齊**: `{report.get('chord_smoothing_report', {}).get('status', 'GRID_ALIGNED')}`
 
 ---
-### 🎸 抓譜和弦進行預覽 (前 16 小節):
+### 🎸 抓譜與樂段和弦進行預覽 (前 16 小節):
 """
     warnings = report.get("beat_validation", {}).get("warnings", [])
     warnings += report.get("downbeat_refinement", {}).get("warnings", [])
@@ -434,12 +436,15 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
             summary += f"- {warning}\n"
         summary += "\n---\n"
 
-    chords_preview = ""
-    for c in report['chord_progression'][:16]:
-        chords_preview += f"- **第 {c['measure']:02d} 小節** ({c['start_time']}s ~ {c['end_time']}s): `{c['chord']}`\n"
+    sections_map = {s.get("measure"): s.get("name") for s in report.get("sections", []) if "measure" in s}
 
-    if len(report['chord_progression']) > 16:
-        chords_preview += f"\n*(已省略其餘 {len(report['chord_progression'])-16} 小節)*"
+    chords_preview = ""
+    for c in report.get('chord_progression', [])[:16]:
+        sec_prefix = f" [{sections_map[c['measure']]}]" if c['measure'] in sections_map else ""
+        chords_preview += f"- **第 {c['measure']:02d} 小節**{sec_prefix} ({c.get('start_time', 0.0)}s ~ {c.get('end_time', 0.0)}s): `{c.get('chord', 'N/A')}`\n"
+
+    if len(report.get('chord_progression', [])) > 16:
+        chords_preview += f"\n*(已省略其餘 {len(report.get('chord_progression', []))-16} 小節)*"
 
     full_text = summary + chords_preview
     report_txt_path = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}_pgm_report.txt")
