@@ -107,11 +107,14 @@ class PrepareInstrumentalTrackNode(BaseNode):
 
 class BeatNetSingleTrackNode(BaseNode):
     """通用單軌 BeatNet 節拍分析節點"""
+    output_keys = ["beats_rhythm"]
 
     def __init__(self, input_key: str, beats_key: str, node_name: str = "BeatNetSingleTrackNode"):
         super().__init__(node_name)
         self.input_key = input_key
         self.beats_key = beats_key
+        self.required_keys = [input_key]
+        self.output_keys = [beats_key]
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         target_path = blackboard.get_val(self.input_key)
@@ -135,11 +138,14 @@ class BeatNetSingleTrackNode(BaseNode):
 
 class LibrosaSingleTrackNode(BaseNode):
     """通用單軌 Librosa Fallback 節拍分析節點"""
+    output_keys = ["beats_rhythm"]
 
     def __init__(self, input_key: str, beats_key: str, node_name: str = "LibrosaSingleTrackNode"):
         super().__init__(node_name)
         self.input_key = input_key
         self.beats_key = beats_key
+        self.required_keys = [input_key]
+        self.output_keys = [beats_key]
         self.analyzer = MusicAnalyzer(use_beatnet=False)
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
@@ -155,11 +161,14 @@ class LibrosaSingleTrackNode(BaseNode):
 
 class TrackValidationNode(BaseNode):
     """對特定單軌節拍進行品質指標與 Confidence 分數計算」"""
+    output_keys = ["conf_rhythm"]
 
     def __init__(self, beats_key: str, conf_key: str, node_name: str = "TrackValidationNode"):
         super().__init__(node_name)
         self.beats_key = beats_key
         self.conf_key = conf_key
+        self.required_keys = [beats_key]
+        self.output_keys = [conf_key]
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val(self.beats_key)
@@ -263,7 +272,19 @@ class BeatFusionArbitratorNode(BaseNode):
             final_beats_list.append([t, label])
             used_a += 1
 
-        final_beats_arr = np.array(final_beats_list)
+        # 依時間升序排序
+        final_beats_list.sort(key=lambda x: x[0])
+
+        # 淨化與衛兵防護：強制 timestamp 必須嚴格遞增 (解決浮點數或替換造成之微秒退步/重複問題)
+        sanitized_beats = []
+        last_t = -1.0
+        for b_item in final_beats_list:
+            t_val, b_label = b_item[0], b_item[1]
+            if t_val > last_t + 1e-4:
+                sanitized_beats.append([t_val, b_label])
+                last_t = t_val
+
+        final_beats_arr = np.array(sanitized_beats)
         blackboard.set_val("beats", final_beats_arr)
 
         report = {

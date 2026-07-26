@@ -102,14 +102,14 @@ class DAWExporter:
         rpp_lines.append("  <TRACK\n")
         rpp_lines.append('    NAME "PGMCraft Click Track"\n')
         rpp_lines.append("    PEAKCOL 16576\n")
-        if "click_track" in outputs:
+        if outputs.get("click_track"):
             rpp_lines.append(f'    # File: {os.path.basename(outputs["click_track"])}\n')
         rpp_lines.append("  >\n")
 
         rpp_lines.append("  <TRACK\n")
         rpp_lines.append('    NAME "PGMCraft Original Mix + Click"\n')
         rpp_lines.append("    PEAKCOL 32768\n")
-        if "mix_with_click" in outputs:
+        if outputs.get("mix_with_click"):
             rpp_lines.append(f'    # File: {os.path.basename(outputs["mix_with_click"])}\n')
         rpp_lines.append("  >\n")
 

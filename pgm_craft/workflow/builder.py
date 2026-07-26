@@ -120,3 +120,8 @@ class BTWorkflowEngine:
             print("=== [BT Engine] Behavior Tree Execution Failed! ===")
 
         return blackboard
+
+
+# 為向下相容測試別名導出
+MasterBTWorkflowEngine = BTWorkflowEngine
+
