@@ -776,9 +776,10 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                             ("Stage 1: 音質分析與 ABC 多階層降噪 (不跑分軌)", "stage1"),
                             ("Stage 1 + Stage 2: 音質分析 + 需求驅動 AI 樂器分軌", "stage2"),
                             ("Stage 1 + Stage 2 + Stage 3: 音質分析 + AI 分軌 + 雙軌節拍與 Downbeat 分析", "stage3"),
+                            ("Stage 1 ~ Stage 4: 音質 + 分軌 + 雙軌節拍 + 和聲 Sub-mix 調性與和弦分析", "stage4"),
                             ("Stage 1 ~ Stage 6: 全管道 (預設，含樂理/MIDI/DAW工程包打包)", "full"),
                         ],
-                        value="stage3",
+                        value="stage4",
                         label="🎯 選擇 BT 執行目標階段 (階段式累加控制)"
                     )
                     diag_run_btn = gr.Button("🚀 啟動 BT 工作流並進行實體診斷", variant="primary")
@@ -806,7 +807,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 input_src = url if url else audio
                 
                 # 根據選擇的階段設定 enable_stem
-                enable_stem = (stage_mode in ("stage2", "stage3", "full"))
+                enable_stem = (stage_mode in ("stage2", "stage3", "stage4", "full"))
                 
                 report = engine.run(input_src, output_dir=DEFAULT_OUTPUT_DIR, enable_stem=enable_stem)
                 md, html = format_workflow_diagnostics(report)

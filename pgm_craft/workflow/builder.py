@@ -7,11 +7,9 @@ from pgm_craft.workflow.input_acquisition_bt import build_input_acquisition_tree
 from pgm_craft.workflow.audio_quality_bt import build_audio_quality_tree
 from pgm_craft.workflow.stem_separation_bt import build_stem_separation_tree
 from pgm_craft.workflow.beat_tracking_bt import build_beat_tracking_tree
+from pgm_craft.workflow.music_analysis_bt import build_music_analysis_tree
 
 from pgm_craft.workflow.audio_nodes import (
-    MeasureMapNode,
-    SectionStructureNode,
-    KeyChordAnalysisNode,
     ClickSynthesisNode,
     MIDIExportNode,
     BasicPitchNode,
@@ -31,7 +29,8 @@ def build_full_pipeline_tree():
     - Stage 1: Audio Quality & Crowd/Environmental Noise Discard
     - Stage 2: Stem Separation Tree (Vocals, Drums, Bass, Guitar)
     - Stage 3: Beat Tracking Tree (Dual-Track Parallel & Dynamic Fusion)
-    - Stage 4~6: Music Analysis, DAW Export
+    - Stage 4: Music Analysis Tree (Harmonic Sub-Mix & Key-Chord Analysis)
+    - Stage 5~6: DAW Export & Packaging
     """
     # 四個 AI 分析節點彼此獨立，可安全並行
     ai_parallel_group = ParallelNode("AIAnalysisGroup", children=[
@@ -46,10 +45,8 @@ def build_full_pipeline_tree():
         build_audio_quality_tree(),     # Stage 1: 載入 + 11項品質評估 + 去雜訊人群 + 正規化
         build_stem_separation_tree(),   # Stage 2: 需求驅動樂器分軌
         build_beat_tracking_tree(),      # Stage 3: 雙軌併行節拍分析與動態融合
+        build_music_analysis_tree(),     # Stage 4: 和聲專屬 Sub-mix 與調性/和弦/段落分析
         AudioQuantizerNode(),
-        MeasureMapNode(),
-        SectionStructureNode(),
-        KeyChordAnalysisNode(),
         ClickSynthesisNode(),
         MIDIExportNode(),
         ai_parallel_group,
@@ -68,7 +65,8 @@ def build_master_pipeline_tree():
     - Stage 1: Audio Quality & Crowd/Environmental Noise Discard
     - Stage 2: Stem Separation Tree (Vocals, Drums, Bass, Guitar)
     - Stage 3: Beat Tracking Tree (Dual-Track Parallel & Dynamic Fusion)
-    - Stage 4~6: Music Analysis, DAW Export
+    - Stage 4: Music Analysis Tree (Harmonic Sub-Mix & Key-Chord Analysis)
+    - Stage 5~6: DAW Export & Packaging
     """
     ai_parallel_group = ParallelNode("AIAnalysisGroup", children=[
         BasicPitchNode(),
@@ -82,10 +80,8 @@ def build_master_pipeline_tree():
         build_audio_quality_tree(),
         build_stem_separation_tree(),
         build_beat_tracking_tree(),
+        build_music_analysis_tree(),
         AudioQuantizerNode(),
-        MeasureMapNode(),
-        SectionStructureNode(),
-        KeyChordAnalysisNode(),
         ClickSynthesisNode(),
         MIDIExportNode(),
         ai_parallel_group,

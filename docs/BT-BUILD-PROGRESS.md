@@ -261,7 +261,8 @@ Sequence [StemSeparationRoot]
 | **Pass 21** | **CLAP 語意探測門閥與 Formant 物理破壞 Rollback Guard** | 3 | ✅ 2026-07-26 |
 | **Pass 22** | **Stems 音色資料夾嚴格隔離衛兵 (Strict Stem Isolation)** | 1 | ✅ 2026-07-27 |
 | **Pass 23** | **Stage 3 雙軌併行節拍分析與動態融合 (Dual-Track Beat Fusion)** | 4 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~3 BT 整合驗證** | **137** | ✅ **100% 通過** |
+| **Pass 24** | **Stage 4 和聲專屬 Sub-mix 與調性/和弦/段落樂理分析 (Harmonic Analysis BT)** | 2 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~4 BT 整合驗證** | **139** | ✅ **100% 通過** |
 
 ---
 
@@ -298,8 +299,12 @@ conf_rhythm / conf_inst ➔ A/B 軌信心度分數
 beats ➔ 經 BeatFusionArbitratorNode 仲裁能量段落與無鼓補全後之最終微秒級節拍陣列
 beat_fusion_report ➔ 雙軌融合採納統計報告
 
-[Stage 4 以後]
-refined_beats, measure_map, estimated_key, chord_progression, click_track, tempo_map_midi
+[Stage 4 和聲與樂理分析]
+harmonic_track_path ➔ {project_dir}/stems/submix/track_stage4_harmonic.wav (Piano+Guitar+Bass 無鼓無人聲 Sub-mix)
+estimated_key ➔ 樂曲主調性 (如 "C Major", "A Minor")
+chord_progression ➔ 逐小節和弦進程陣列 (包含 start_time, end_time, chord, measure)
+section_structure ➔ 樂曲 Intro/Verse/Chorus/Bridge 段落結構
+measure_map ➔ 小節與時間對齊地圖 (含完整變動小節長度)
 ```
 
 ---
@@ -308,6 +313,7 @@ refined_beats, measure_map, estimated_key, chord_progression, click_track, tempo
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 24: Stage 4 和聲專屬 Sub-mix 與調性/和弦/段落樂理分析 (Harmonic Analysis BT) 重構**：<br>1. **`SynthesizeHarmonicTrackNode`**：合成 Piano + Guitar + Bass 專屬和聲 Sub-mix（零鼓噪聲、零人聲花腔干擾）<br>2. **`build_music_analysis_tree`**：拍點對齊之 Key/Chord 分析、樂曲 Intro/Verse/Chorus 段落切分與小節地圖建置<br>3. 通過 SDD Pass 24 單元測試 (`tests/test_sdd_pass24.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 23: Stage 3 雙軌併行節拍分析與動態融合 (Dual-Track Beat Fusion) BT 重構**：<br>1. **A 軌 (鼓+Bass 骨幹)**：`SynthesizeRhythmTrackNode` 提供微秒級硬核擊點<br>2. **B 軌 (去人聲伴奏)**：`PrepareInstrumentalTrackNode` 提供連續柱狀和弦與動態特徵<br>3. **動態融合衛兵**：`BeatFusionArbitratorNode` 自動偵測無鼓/前奏 (Intro) 能量空隙並動態切換接管，解決斷拍問題<br>4. 通過 SDD Pass 23 單元測試 (`tests/test_sdd_pass23.py`, 4 passed) |
 | 2026-07-27 | 完成 **Pass 22: Stems 音色資料夾嚴格隔離衛兵 (Strict Stem Isolation)**：實作 `StrictStemDirectoryGuardNode`，對 `stems/` 根目錄與各音色子資料夾進行白名單嚴格掃描與雜音過濾。 |
 | 2026-07-26 | 完成 **Pass 21: CLAP 語意探測門閥與 Formant 物理破壞 Rollback Guard 整合**：<br>1. **語意門閥**：實作 `CLAPSemanticProbeConditionNode`，相似度 $< 0.35$ 時短路 Skip 避免無效剝離<br>2. **物理防禦與 Rollback**：實作 `FormantSafetyGuardNode`，變形破壞率 $> 0.40$ 時自動觸發 Rollback 還原伴奏殘音<br>3. 通過 Pass 21 測試 (`tests/test_sdd_pass21.py`, 3 passed) 及主 BT 樹契約測試 (19 passed) |
