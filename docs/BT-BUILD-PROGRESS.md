@@ -1,6 +1,6 @@
 # BT 建構進度同步紀錄
 
-**最後更新：** 2026-07-26
+**最後更新：** 2026-07-27
 
 本文件是 PGMCraft Studio 全自動音訊工作流 BT 的**實作進度活文件**。
 每次討論與實作完成後同步更新，避免重複討論或重建相同決策。
@@ -199,8 +199,15 @@ Sequence [StemSeparationRoot]
 │   │                                           │    ➔ 弦樂細分: violins_viola.wav / cello_doublebass.wav / pizzicato / legato
 │   └── SkipPeelCoreTrioPassthrough             │
 │
-└── RegisterStemsToBlackboardNode               ← 6. 遞迴註冊純音軌檔至 Blackboard (過濾 no_*, residual_* 殘餘檔)
+├── StrictStemDirectoryGuardNode                 ← 6. 【Stems 音色資料夾隔離衛兵】(移除非白名單副產品與異物檔，按需歸類)
+│
+└── RegisterStemsToBlackboardNode               ← 7. 遞迴註冊純音軌檔至 Blackboard (過濾 no_*, residual_* 殘餘檔)
 ```
+
+### 嚴格音色資料夾隔離契約 (Strict Stem Directory Isolation)
+
+- **`stems/` 根目錄**：僅保留 `no_vocals.wav`（純去人聲伴奏）與 `instrumental.wav`（全樂器剝離殘音）。
+- **`stems/{instrument}/` 子目錄**：只允許放置屬於該音色白名單之音檔（例如 `vocals/` 內絕不出現 `bass.wav` 或 `drums.wav`），其餘在分軌過程由 Demucs 多軌落盤產生之異物音檔自動移出或刪除清理。
 
 ### Blackboard 輸出契約
 

@@ -543,9 +543,100 @@ class PeelCoreTrioNode(BaseNode):
             return NodeStatus.FAILURE
 
 
-# ---------------------------------------------------------------------------
-# 2-E RegisterStemsToBlackboardNode
-# ---------------------------------------------------------------------------
+class StrictStemDirectoryGuardNode(BaseNode):
+    """
+    音色資料夾嚴格隔離與異物清理衛兵 (Strict Stem Directory Isolation Guard)
+    - 根目錄只允許放置 no_vocals.wav 與 instrumental.wav
+    - 子目錄 (vocals, drums, bass, guitars, pianos, strings, events) 只允許放置該音色白名單音檔
+    - 移除非白名單副產品與多軌 Demucs 產生的異物音檔
+    """
+    required_keys = ["stems_dir"]
+    optional_keys = ["stems"]
+    output_keys = ["stems"]
+
+    WHITELIST_MAP = {
+        "": {"no_vocals.wav", "instrumental.wav"},  # stems/ 根目錄
+        "vocals": {"vocals.wav", "lead_vocal.wav", "backing_vocals.wav", "vocals_debreathed.wav", "breath_noises.wav"},
+        "drums": {"drums.wav", "kick.wav", "snare.wav", "hihat.wav"},
+        "bass": {"bass.wav", "electric_bass.wav", "synth_bass_808.wav"},
+        "guitars": {"guitar.wav", "acoustic_guitar.wav", "electric_guitar.wav", "guitar_left.wav", "guitar_right.wav"},
+        "pianos": {"piano.wav", "piano_treble_hand.wav", "piano_bass_hand.wav", "electric_rhodes_piano.wav"},
+        "strings": {"strings.wav", "violins_viola.wav", "cello_double_bass.wav", "pizzicato_strings.wav", "bowed_legato_strings.wav"},
+        "events": {"glass.wav", "applause.wav", "cheering.wav", "screaming.wav", "speech_subtitles.srt"}
+    }
+
+    # 根目錄搬移對應表 (檔名 -> 子資料夾)
+    MOVE_MAP = {
+        "guitar.wav": "guitars",
+        "piano.wav": "pianos",
+        "strings.wav": "strings",
+        "organ.wav": "pianos",
+        "glockenspiel.wav": "events",
+        "brass.wav": "events",
+        "sub_bass_808.wav": "bass",
+        "bass.wav": "bass",
+        "drums.wav": "drums",
+        "vocals.wav": "vocals"
+    }
+
+    def __init__(self):
+        super().__init__("StrictStemDirectoryGuardNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        stems_dir = blackboard.get_val("stems_dir")
+        if not stems_dir or not os.path.exists(stems_dir):
+            return NodeStatus.FAILURE
+
+        import shutil
+        cleaned_files = 0
+        moved_files = 0
+
+        # 1. 整理 stems 根目錄
+        root_files = [f for f in os.listdir(stems_dir) if os.path.isfile(os.path.join(stems_dir, f))]
+        for fname in root_files:
+            file_path = os.path.join(stems_dir, fname)
+            if fname in self.WHITELIST_MAP[""]:
+                continue
+
+            # 若能歸類至子資料夾則搬移
+            if fname in self.MOVE_MAP:
+                target_sub = self.MOVE_MAP[fname]
+                target_dir = os.path.join(stems_dir, target_sub)
+                os.makedirs(target_dir, exist_ok=True)
+                target_path = os.path.join(target_dir, fname)
+                if not os.path.exists(target_path):
+                    shutil.move(file_path, target_path)
+                    moved_files += 1
+                else:
+                    os.remove(file_path)
+                    cleaned_files += 1
+            else:
+                # 刪除非白名單的中間殘餘檔 (e.g. no_guitar.wav, residual_*.wav)
+                try:
+                    os.remove(file_path)
+                    cleaned_files += 1
+                except Exception as e:
+                    print(f"[StrictStemGuard] Failed to remove {fname}: {e}")
+
+        # 2. 整理音色子目錄 (刪除非白名單檔案)
+        for sub_folder, whitelist in self.WHITELIST_MAP.items():
+            if not sub_folder:
+                continue
+            sub_dir_path = os.path.join(stems_dir, sub_folder)
+            if os.path.exists(sub_dir_path):
+                sub_files = [f for f in os.listdir(sub_dir_path) if os.path.isfile(os.path.join(sub_dir_path, f))]
+                for fname in sub_files:
+                    if fname not in whitelist:
+                        file_path = os.path.join(sub_dir_path, fname)
+                        try:
+                            os.remove(file_path)
+                            cleaned_files += 1
+                        except Exception as e:
+                            print(f"[StrictStemGuard] Failed to clean unwanted {fname} in {sub_folder}: {e}")
+
+        print(f"[StrictStemGuard] Cleaned up {cleaned_files} extraneous files, moved {moved_files} files.")
+        return NodeStatus.SUCCESS
+
 
 class RegisterStemsToBlackboardNode(BaseNode):
     """遞迴檢查並寫入最終 `stems` 字典與狀態記錄 (只註冊純音軌檔，過濾中間殘餘檔)。"""
@@ -907,6 +998,7 @@ def build_stem_separation_tree(separator: CascadedStemSeparator = None) -> BaseN
         trio_branch,
         tier2_branch,
         tier3_branch,
+        StrictStemDirectoryGuardNode(),
         RegisterStemsToBlackboardNode()
     ])
 

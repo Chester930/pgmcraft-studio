@@ -14,7 +14,7 @@ class TestBeatNetEngine(unittest.TestCase):
         except ImportError:
             self.skipTest("環境未安裝 BeatNet，跳過測試")
 
-        estimator = BeatNet(1, mode='offline', inference_model='dbn', plot=[], thread=False)
+        estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False)
         output = estimator.process(self.audio_path)
 
         self.assertIsNotNone(output, "BeatNet 輸出不應為 None")
