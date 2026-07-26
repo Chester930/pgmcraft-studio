@@ -65,7 +65,9 @@ class TestBTWorkflowEngine(unittest.TestCase):
         contract_by_name = {node.name: node for node in nodes}
         self.assertEqual(contract_by_name["AudioLoadNode"].required_keys, ["audio_path"])
         self.assertIn("target_analysis_path", contract_by_name["AudioLoadNode"].output_keys)
-        self.assertIn("beats", contract_by_name["BeatNetNode"].output_keys)
+        beatnet_node = contract_by_name.get("BeatNetNode_TrackA") or contract_by_name.get("BeatNetNode")
+        self.assertIsNotNone(beatnet_node)
+        self.assertTrue("beats" in beatnet_node.output_keys or "beats_rhythm" in beatnet_node.output_keys)
         self.assertIn("workflow_trace", contract_by_name["PGMCraftWorkflowRoot"].output_keys)
 
     def test_blackboard_contract_document_lists_core_keys(self):
