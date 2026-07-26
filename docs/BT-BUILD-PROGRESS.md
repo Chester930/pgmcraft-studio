@@ -259,7 +259,9 @@ Sequence [StemSeparationRoot]
 | **Pass 19** | **非音色/語音事件/環境組跨 Stage BT** | 5 | ✅ 2026-07-26 |
 | **Pass 20** | **三梯隊同層樂器動態減算 (3-Tier Peel-and-Subtract Loop)** | 2 | ✅ 2026-07-26 |
 | **Pass 21** | **CLAP 語意探測門閥與 Formant 物理破壞 Rollback Guard** | 3 | ✅ 2026-07-26 |
-| **聯合測試** | **全套系統核心與 Stage 0~2 BT 整合驗證** | **132** | ✅ **100% 通過** |
+| **Pass 22** | **Stems 音色資料夾嚴格隔離衛兵 (Strict Stem Isolation)** | 1 | ✅ 2026-07-27 |
+| **Pass 23** | **Stage 3 雙軌併行節拍分析與動態融合 (Dual-Track Beat Fusion)** | 4 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~3 BT 整合驗證** | **137** | ✅ **100% 通過** |
 
 ---
 
@@ -288,8 +290,16 @@ clap_similarity_score ➔ CLAP 語意相似度分數 (>= 0.35 始進行 Tier-3 �
 formant_guard_status ➔ "PASSED" | "PASSED_NO_CHANGE" | "ROLLBACK_EXECUTED" (失真超標自動還原)
 target_analysis_path ➔ 指向最精準節拍音軌 (stems/drums/drums.wav > stems/instrumental.wav > denoised_wav_path)
 
-[Stage 3 以後]
-beats, refined_beats, measure_map, estimated_key, chord_progression, click_track, tempo_map_midi
+[Stage 3 雙軌併行與融合]
+rhythm_track_path ➔ {project_dir}/stems/submix/track_a_rhythm.wav (A軌 Drums+Bass 骨幹)
+inst_track_path ➔ {project_dir}/stems/no_vocals.wav (B軌 純伴奏全音軌)
+beats_rhythm / beats_inst ➔ A/B 軌各自特徵節拍陣列
+conf_rhythm / conf_inst ➔ A/B 軌信心度分數
+beats ➔ 經 BeatFusionArbitratorNode 仲裁能量段落與無鼓補全後之最終微秒級節拍陣列
+beat_fusion_report ➔ 雙軌融合採納統計報告
+
+[Stage 4 以後]
+refined_beats, measure_map, estimated_key, chord_progression, click_track, tempo_map_midi
 ```
 
 ---
@@ -298,6 +308,8 @@ beats, refined_beats, measure_map, estimated_key, chord_progression, click_track
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 23: Stage 3 雙軌併行節拍分析與動態融合 (Dual-Track Beat Fusion) BT 重構**：<br>1. **A 軌 (鼓+Bass 骨幹)**：`SynthesizeRhythmTrackNode` 提供微秒級硬核擊點<br>2. **B 軌 (去人聲伴奏)**：`PrepareInstrumentalTrackNode` 提供連續柱狀和弦與動態特徵<br>3. **動態融合衛兵**：`BeatFusionArbitratorNode` 自動偵測無鼓/前奏 (Intro) 能量空隙並動態切換接管，解決斷拍問題<br>4. 通過 SDD Pass 23 單元測試 (`tests/test_sdd_pass23.py`, 4 passed) |
+| 2026-07-27 | 完成 **Pass 22: Stems 音色資料夾嚴格隔離衛兵 (Strict Stem Isolation)**：實作 `StrictStemDirectoryGuardNode`，對 `stems/` 根目錄與各音色子資料夾進行白名單嚴格掃描與雜音過濾。 |
 | 2026-07-26 | 完成 **Pass 21: CLAP 語意探測門閥與 Formant 物理破壞 Rollback Guard 整合**：<br>1. **語意門閥**：實作 `CLAPSemanticProbeConditionNode`，相似度 $< 0.35$ 時短路 Skip 避免無效剝離<br>2. **物理防禦與 Rollback**：實作 `FormantSafetyGuardNode`，變形破壞率 $> 0.40$ 時自動觸發 Rollback 還原伴奏殘音<br>3. 通過 Pass 21 測試 (`tests/test_sdd_pass21.py`, 3 passed) 及主 BT 樹契約測試 (19 passed) |
 | 2026-07-26 | 完成 **Pass 20: 三梯隊同層樂器動態減算 (3-Tier Peel-and-Subtract Loop) 整合**：<br>1. **Tier-1 Core Trio** (Guitar, Piano, Strings, 門檻 0.10)<br>2. **Tier-2 High-Confidence** (Organ, Sub-Bass 808, Glockenspiel, 門檻 0.15)<br>3. **Tier-3 Medium-Confidence** (Synth Pads, Brass, Saxophone, Accordion, 嚴格 Guard 門檻 0.25)<br>4. 修復所有 BT 節點 `output_keys` 契約宣告，`test_bt_workflow.py` (19 passed) 與 `test_sdd_pass20.py` (2 passed) 100% 綠燈 |
 | 2026-07-26 | 完成 **Pass 19: 非音色 / 語音事件 / 環境場景組跨 Stage 整合**：<br>1. **Pre-Vocal 淨化 (Stage 1)**：整合 `DeHumFilterNode` (50/60Hz 電流聲)、`SeparateCrowdNode` (現場歡呼聲) 與 `DeReverbFilterNode` (還原 Studio 極乾聲)<br>2. **Post-Vocal 精細事件 (Stage 2)**：整合 `ExtractCountInVoiceNode` (1-2-3-4 喊拍倒數) 與 `ExtractClapSnapEventsNode` (拍手響指脈衝，供 Downbeat 對齊)<br>3. 建立 `stems/events/` 專屬 Session 交付目錄規範，通過 Pass 19 測試 (127 項測試 100% 通過) |
