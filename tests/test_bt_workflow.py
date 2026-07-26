@@ -86,6 +86,9 @@ class TestBTWorkflowEngine(unittest.TestCase):
             "contract_validation",
             "tempo_map_midi",
             "click_guide_midi",
+            "sections_json",
+            "measure_map_json",
+            "ai_model_status",
         ):
             self.assertIn(f"`{key}`", contract)
 

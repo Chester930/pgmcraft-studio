@@ -89,6 +89,13 @@
 | `instrument_presence_json` | `str` | `InstrumentPresenceNode` | 配器存在性矩陣 JSON |
 | `instrument_matrix` | `list[dict]` | `InstrumentPresenceNode` | 逐小節配器動態矩陣 |
 | `sections` | `list[dict]` | `SectionStructureNode` | 樂曲段落分析 |
+| `sections_json` | `str` | `SectionStructureNode` | 樂曲段落結構 JSON 檔路徑 |
+| `measure_map_json` | `str` | `MeasureMapNode` | 獨立小節地圖 JSON 檔路徑 |
+| `quantized_beats` | array-like Nx2 | `AudioQuantizerNode` | 自動量化對齊網格後的節拍列表 |
+| `quantization_offset_ms` | `float` | `AudioQuantizerNode` | 節拍網格微秒級平均對齊偏置 |
+| `quantized_vocal_notes` | `list[dict]` | `MIDIQuantizerGuardNode` | 1/16 網格修復與微小碎音過濾後的音符列表 |
+| `voice_split_midis` | `dict[str, str]` | `VoiceSplitMIDIExportNode` | 鋼琴左右手與吉低音/刷弦拆分後的 MIDI 路徑 |
+| `ai_model_status` | `dict[str, str]` | AI Nodes | 記錄各 AI 模組實作狀態 (REAL_MODEL vs FALLBACK_DSP) |
 | `daw_profile` | `str` | caller / CLI `--daw-profile` | 目標 DAW 導出格式 (reaper/ableton/logic/cubase/all) |
 
 ## Workflow Observability Keys

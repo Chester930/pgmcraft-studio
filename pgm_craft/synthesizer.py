@@ -94,11 +94,32 @@ class PGMSynthesizer:
         tempo_track = mido.MidiTrack()
         midi_file.tracks.append(tempo_track)
         tempo_track.append(mido.MetaMessage("track_name", name="PGMCraft Tempo Map", time=0))
-        tempo_track.append(mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0))
+
+        downbeat_indices = [i for i, b in enumerate(beat_rows) if int(b[1]) == 1]
+        current_num = 4
+        if len(downbeat_indices) >= 2:
+            first_m_len = downbeat_indices[1] - downbeat_indices[0]
+            if 2 <= first_m_len <= 12:
+                current_num = first_m_len
+
+        tempo_track.append(mido.MetaMessage("time_signature", numerator=current_num, denominator=4, time=0))
 
         last_tick = 0
-        for absolute_tick, tempo in self._tempo_events(beat_rows):
+        events = self._tempo_events(beat_rows)
+
+        for idx, (absolute_tick, tempo) in enumerate(events):
             delta = max(0, absolute_tick - last_tick)
+
+            # 當前為小節第一拍時，動態比對寫入 time_signature 變更事件
+            if idx < len(beat_rows) and int(beat_rows[idx][1]) == 1:
+                next_dbs = [i for i in downbeat_indices if i > idx]
+                if next_dbs:
+                    m_len = next_dbs[0] - idx
+                    if 2 <= m_len <= 12 and m_len != current_num:
+                        current_num = m_len
+                        tempo_track.append(mido.MetaMessage("time_signature", numerator=current_num, denominator=4, time=delta))
+                        delta = 0  # Delta 已消費給 time_signature
+
             tempo_track.append(mido.MetaMessage("set_tempo", tempo=tempo, time=delta))
             last_tick = absolute_tick
 

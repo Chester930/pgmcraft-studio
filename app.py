@@ -8,6 +8,7 @@ Includes:
 
 import os
 import json
+import asyncio
 import tkinter as tk
 from tkinter import filedialog
 import gradio as gr
@@ -17,6 +18,20 @@ from pgm_craft.workflow.downloaders import URLDownloaderDispatcher
 from pgm_craft.bt_visualizer import build_tree_schema, render_bt_html
 from pgm_craft.workflow.builder import build_pgm_workflow_tree
 from pgm_craft.workflow_report import WorkflowReportExporter
+
+# Windows asyncio proactor 已知 bug：ConnectionResetError [WinError 10054]
+# 在 WebSocket/Gradio 連線正常斷開時觸發，靜音避免干擾 log
+def _suppress_win_connection_reset(loop, context):
+    exc = context.get("exception")
+    if isinstance(exc, ConnectionResetError):
+        return  # 靜音
+    loop.default_exception_handler(context)
+
+try:
+    _loop = asyncio.get_event_loop()
+    _loop.set_exception_handler(_suppress_win_connection_reset)
+except RuntimeError:
+    pass
 
 
 
@@ -386,11 +401,18 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
     report = engine.run(input_source, output_dir=output_dir)
 
     filename = os.path.basename(report.get("audio_file", "audio"))
+    quality_report = report.get("quality_report", {})
+    quality_grade = report.get("quality_grade", "N/A")
+    stems_dict = report.get("stems", {})
+    stems_str = ", ".join(stems_dict.keys()) if stems_dict else "無 (或未啟用)"
+
     summary = f"""# 🎛️ PGMCraft Studio 分析與 PGM 報告: `{filename}`
 
 - **輸入來源**: `{input_source}`
 - **產出目標目錄**: `{os.path.abspath(output_dir)}`
 - **工程素材包**: `{report.get('project_package', {}).get('project_package_dir', '尚未建立')}`
+- **Stage 0/1 音質評估等級**: `{quality_grade}` (LUFS: `{quality_report.get('integrated_lufs', 'N/A')}`, True Peak: `{quality_report.get('true_peak_dbtp', 'N/A')} dBTP`)
+- **Stage 2 樂器分軌結果**: `{stems_str}`
 - **樂曲調性 (Key)**: `{report['estimated_key']}`
 - **平均速度 (BPM)**: `{report['average_bpm']}` (`{report['min_bpm']}` ~ `{report['max_bpm']}`)
 - **總小節數**: `{report['total_measures']}` 小節
@@ -430,7 +452,6 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
     report["outputs"]["import_guide"] = project_package["import_guide"]
     with open(report["outputs"]["json_report"], "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
-    engine.packager.build(report, output_dir=output_dir)
 
     diagnostics_markdown, diagnostics_html = format_workflow_diagnostics(report)
 
@@ -450,6 +471,16 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
         diagnostics_html,
         piano_roll_html,
         zip_path
+    )
+
+
+def process_full_auto_pgm(url_input, audio_file, custom_output_dir):
+    """一鍵全自動模式：強制啟動多階層 AI Stem 分軌與全套 PGM 素材包打包流程。"""
+    return process_pgm(
+        url_input=url_input,
+        audio_file=audio_file,
+        enable_stem=True,
+        custom_output_dir=custom_output_dir
     )
 
 
@@ -491,6 +522,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             | 頁籤名稱 | 主要功能說明 | 適用情境 |
             | :--- | :--- | :--- |
             | **📖 使用指南與快速入門** | 本說明文件與 FAQ 指引 | 初次使用、操作查閱 |
+            | **⚡ 一鍵全自動 Live PGM 生成站** | 零設定一鍵完成下載、AI 分軌、節拍分析與 DAW 素材包打包 | 快速產出、舞台 PGM |
             | **📥 獨立影音無損下載區塊** | 輸入網址，一鍵下載原品質 MP4 影片、WAV 與 MP3 音檔 | 預先備料、線上記錄素材下載 |
             | **🎛️ 獨立音色分軌工作區** | 支援 4-Stem、6-Stem、人聲/鼓組/貝斯/吉他/鋼琴分離與去殘響防呆處理 | 音軌分離、採譜練習素材 |
             | **🎛️ PGM 節目軌與採譜分析** | 核心分析引擎：自動算節拍 (Beat/Downbeat)、BPM 曲線、生成 MIDI 軌 | Live 練團、DAW 工程建置 |
@@ -508,6 +540,61 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             - **支援哪些 DAW 工程檔？**
               專案資料夾內自動提供 `pgm_session.rpp` (Reaper)、`project_ableton.als` (Ableton Live)、`project_logic.fcpxml` (Logic Pro) 與 `tempo_track_cubase.csv` (Cubase)。
             """)
+
+        # 頁籤 1: ⚡ 一鍵全自動 Live PGM 素材包生成站 (Full Auto One-Click Mode)
+        with gr.TabItem("⚡ 一鍵全自動 Live PGM 生成站"):
+            gr.Markdown("""
+            ### ⚡ 一鍵極速全自動管道 (Full Auto Master Pipeline)
+            只需貼上網址或拖曳音檔，系統將**自動開啟 AI 多階層分軌 (Demucs/HPSS)**、低頻大鼓對齊、節拍校正、MIDI 生成與全套 DAW 工程包 (.zip) 一鍵打包！
+            """)
+            with gr.Row():
+                with gr.Column(scale=1):
+                    auto_url_input = gr.Textbox(
+                        label="🌐 貼上影片/音訊 URL (YouTube / Bilibili / NicoNico / SoundCloud)",
+                        placeholder="https://www.youtube.com/watch?v=..."
+                    )
+                    auto_audio_input = gr.File(
+                        label="📁 或拖曳上傳本地音檔 (MP3/WAV/FLAC/M4A)",
+                        type="filepath",
+                        file_types=[".mp3", ".wav", ".flac", ".m4a"]
+                    )
+                    with gr.Row():
+                        auto_output_dir = gr.Textbox(
+                            value=DEFAULT_OUTPUT_DIR,
+                            label="📁 素材包儲存位置 (Output Directory)",
+                            scale=4
+                        )
+                        auto_browse_btn = gr.Button("📂 選擇資料夾", variant="secondary", scale=1)
+
+                    auto_start_btn = gr.Button("⚡ 一鍵啟動全自動 Live PGM 生成與打包", variant="primary")
+
+                with gr.Column(scale=1):
+                    auto_status_markdown = gr.Markdown("### ⚡ 待啟動全自動管道...")
+                    auto_mix_player = gr.Audio(label="PGM 節目軌 + Click 試聽")
+                    auto_click_player = gr.Audio(label="耳監 Click 打點音軌")
+                    auto_zip_download = gr.File(label="📦 下載全套 DAW 工程素材包 (.zip)")
+
+            auto_browse_btn.click(
+                fn=open_folder_picker,
+                inputs=[auto_output_dir],
+                outputs=[auto_output_dir]
+            )
+
+            def _handle_full_auto(url, audio, outdir):
+                yield "### 🚀 [1/3] 正在進行 AI 多階層聲學分軌、低頻對齊與節拍分析中...", None, None, None
+                res = process_full_auto_pgm(url, audio, outdir)
+                if isinstance(res, tuple) and len(res) >= 12:
+                    zip_name = os.path.basename(res[11]) if res[11] else "pgm_project_package.zip"
+                    status_md = f"### 🎉 全自動 Live PGM 素材包打包完成！\n- **成功產出素材包**: `{zip_name}`\n- 已包含 Reaper (.rpp), Ableton (.als), Logic (.fcpxml), Cubase (.csv) 專案檔及 MIDI Tempo Map！"
+                    yield status_md, res[2], res[3], res[11]
+                else:
+                    yield "❌ 執行過程發生錯誤，請檢查輸入檔格式或 URL 狀態！", None, None, None
+
+            auto_start_btn.click(
+                fn=_handle_full_auto,
+                inputs=[auto_url_input, auto_audio_input, auto_output_dir],
+                outputs=[auto_status_markdown, auto_mix_player, auto_click_player, auto_zip_download]
+            )
 
         # 頁籤 1: 獨立影音下載區塊
         with gr.TabItem("📥 獨立影音無損下載區塊"):
@@ -672,20 +759,62 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
         # 頁籤 4: Workflow 執行與診斷 (Diagnostics)
         with gr.TabItem("🔍 Workflow 執行與診斷"):
+            gr.Markdown("### 🔍 Behavior Tree 工作流即時執行與診斷主控台")
             with gr.Row():
-                with gr.Column(scale=3):
+                with gr.Column(scale=1):
+                    diag_url_input = gr.Textbox(
+                        label="🌐 貼上影音 URL (YouTube / Bilibili / HTTP 直連)",
+                        placeholder="https://www.youtube.com/watch?v=..."
+                    )
+                    diag_audio_input = gr.File(
+                        label="📁 或上傳本地檔 (MP3/WAV/FLAC/M4A)",
+                        type="filepath",
+                        file_types=[".mp3", ".wav", ".flac", ".m4a"]
+                    )
+                    diag_stage_select = gr.Dropdown(
+                        choices=[
+                            ("Stage 1: 音質分析與 ABC 多階層降噪 (不跑分軌)", "stage1"),
+                            ("Stage 1 + Stage 2: 音質分析 + 需求驅動 AI 樂器分軌", "stage2"),
+                            ("Stage 1 + Stage 2 + Stage 3~6: 全管道 (預設，含節拍/MIDI/DAW打包)", "full"),
+                        ],
+                        value="full",
+                        label="🎯 選擇 BT 執行目標階段 (階段式累加控制)"
+                    )
+                    diag_run_btn = gr.Button("🚀 啟動 BT 工作流並進行實體診斷", variant="primary")
+                
+                with gr.Column(scale=2):
                     diagnostics_markdown_box = gr.Markdown(
                         "### 🔍 Workflow 診斷資訊\n"
-                        "*執行 PGM 節目軌分析後，將於此處呈現 Behavior Tree 執行軌跡、節點耗時與 Blackboard Key 契約檢查。*"
+                        "*請於左側提供 URL 或音檔後點擊執行，此處將即時呈現 Behavior Tree 執行軌跡、節點耗時與 Blackboard Key 契約檢查。*"
                     )
                     diagnostics_html_box = gr.HTML(
                         "<div style='padding:12px; color:#aaa;'>*詳細 HTML 診斷報告將於分析完成後顯示於此。*</div>"
                     )
-                with gr.Column(scale=1, min_width=180):
-                    bt_refresh_btn = gr.Button("🌲 重新整理 BT 流程圖", variant="secondary")
+
+            with gr.Row():
+                bt_refresh_btn = gr.Button("🌲 重新整理 BT 流程圖", variant="secondary")
+
             bt_visualizer_html = gr.HTML(
                 value=render_bt_html(build_tree_schema(build_pgm_workflow_tree())),
                 label="Behavior Tree 工作流節點架構圖"
+            )
+
+            def _handle_diagnostics_run(url, audio, stage_mode):
+                if not url and not audio:
+                    return "### ⚠️ 請先輸入 URL 或上傳音檔檔案！", "<div style='color:red;'>未提供輸入來源</div>"
+                input_src = url if url else audio
+                
+                # 根據選擇的階段設定 enable_stem
+                enable_stem = (stage_mode in ("stage2", "full"))
+                
+                report = engine.run(input_src, output_dir=DEFAULT_OUTPUT_DIR, enable_stem=enable_stem)
+                md, html = format_workflow_diagnostics(report)
+                return md, html
+
+            diag_run_btn.click(
+                fn=_handle_diagnostics_run,
+                inputs=[diag_url_input, diag_audio_input, diag_stage_select],
+                outputs=[diagnostics_markdown_box, diagnostics_html_box]
             )
 
             def _refresh_bt_html():
@@ -746,11 +875,12 @@ def build_ui():
 
 
 if __name__ == "__main__":
+    allowed_drives = [f"{d}:\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.exists(f"{d}:\\")]
     demo.launch(
         server_name="127.0.0.1", 
         server_port=7860, 
         share=False,
-        allowed_paths=[DEFAULT_OUTPUT_DIR]
+        allowed_paths=[DEFAULT_OUTPUT_DIR] + allowed_drives
     )
 
 

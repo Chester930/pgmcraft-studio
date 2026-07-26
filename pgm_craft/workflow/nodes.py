@@ -75,14 +75,15 @@ class BaseNode:
             return NodeStatus.FAILURE
 
 
+        status_val = status.name if isinstance(status, NodeStatus) else NodeStatus.SUCCESS.name
         blackboard.append_trace({
             "node": self.name,
             "node_type": self.__class__.__name__,
             "parent": parent,
-            "status": status.name,
+            "status": status_val,
             "duration_ms": round((time.perf_counter() - started_at) * 1000, 3),
         })
-        return status
+        return status if isinstance(status, NodeStatus) else NodeStatus.SUCCESS
 
     def validate_contract(self, blackboard: Blackboard, parent=None):
         missing_required_keys = [

@@ -40,7 +40,7 @@ class PGMProjectPackager:
 
 
 
-        for key in ("tempo_curve_plot", "json_report", "text_report", "pitch_contour_json", "subtitles_srt", "transcript_json", "instrument_presence_json"):
+        for key in ("tempo_curve_plot", "json_report", "text_report", "pitch_contour_json", "subtitles_srt", "transcript_json", "instrument_presence_json", "sections_json", "measure_map_json"):
             copied = self._copy_optional(outputs.get(key), reports_dir)
             if copied:
                 package_files[key] = copied

@@ -3,10 +3,12 @@ PGMCraft Behavior Tree Workflow Builder & FSM Runner.
 """
 
 from pgm_craft.workflow.nodes import SequenceNode, FallbackNode, ParallelNode, Blackboard, NodeStatus
+from pgm_craft.workflow.input_acquisition_bt import build_input_acquisition_tree
+from pgm_craft.workflow.audio_quality_bt import build_audio_quality_tree
+from pgm_craft.workflow.stem_separation_bt import build_stem_separation_tree
+
 from pgm_craft.workflow.audio_nodes import (
-    VideoURLDownloadNode,
-    AudioLoadNode,
-    DemucsStemNode,
+    SubMixGeneratorNode,
     BeatNetNode,
     LibrosaBeatNode,
     BeatValidationNode,
@@ -20,7 +22,10 @@ from pgm_craft.workflow.audio_nodes import (
     CREPEPitchNode,
     PodcastSpeechNode,
     InstrumentPresenceNode,
-    HybridPitchNode
+    HybridPitchNode,
+    AudioQuantizerNode,
+    MIDIQuantizerGuardNode,
+    VoiceSplitMIDIExportNode
 )
 
 def build_pgm_workflow_tree():
@@ -31,11 +36,13 @@ def build_pgm_workflow_tree():
     ├── VideoURLDownloadNode
     ├── AudioLoadNode
     ├── DemucsStemNode
+    ├── SubMixGeneratorNode            ← 合成專屬 Sub-Mix 音軌 (Drums+Bass / Guitar+Piano / Vocals+Drums)
     ├── Fallback [BeatTrackingSelector]
     │   ├── BeatNetNode
     │   └── LibrosaBeatNode (Fallback)
     ├── BeatValidationNode
     ├── DownbeatRefineNode
+    ├── AudioQuantizerNode              ← 音訊格點與 Offset 自動對齊量化
     ├── MeasureMapNode
     ├── SectionStructureNode
     ├── KeyChordAnalysisNode
@@ -46,7 +53,9 @@ def build_pgm_workflow_tree():
     │   ├── CREPEPitchNode
     │   ├── InstrumentPresenceNode
     │   └── PodcastSpeechNode
-    └── HybridPitchNode                 ← 依賴 CREPE 輸出，保持順序
+    ├── HybridPitchNode                 ← 依賴 CREPE 輸出，保持順序
+    ├── MIDIQuantizerGuardNode          ← MIDI 網格量化與搖擺感修復衛兵
+    └── VoiceSplitMIDIExportNode        ← 鋼琴/吉他專屬雙手與音域 MIDI 拆分
     """
     beat_tracking_fallback = FallbackNode("BeatTrackingSelector", [
         BeatNetNode(),
@@ -62,12 +71,14 @@ def build_pgm_workflow_tree():
     ], success_threshold=1)   # 至少有一個成功即繼續（含 graceful fallback 節點）
 
     root_sequence = SequenceNode("PGMCraftWorkflowRoot", [
-        VideoURLDownloadNode(),
-        AudioLoadNode(),
-        DemucsStemNode(),
+        build_input_acquisition_tree(),  # Stage 0: 下載/驗證 + 專案資料夾建立
+        build_audio_quality_tree(),     # Stage 1: 載入 + 11項品質評估 + 去雜訊人群 + 正規化
+        build_stem_separation_tree(),   # Stage 2: 需求驅動樂器分軌
+        SubMixGeneratorNode(),
         beat_tracking_fallback,
         BeatValidationNode(),
         DownbeatRefineNode(),
+        AudioQuantizerNode(),
         MeasureMapNode(),
         SectionStructureNode(),
         KeyChordAnalysisNode(),
@@ -75,6 +86,8 @@ def build_pgm_workflow_tree():
         MIDIExportNode(),
         ai_parallel_group,
         HybridPitchNode(),        # 依賴 CREPEPitchNode 的 pitch_contour，在 Parallel 後執行
+        MIDIQuantizerGuardNode(),
+        VoiceSplitMIDIExportNode(),
     ])
 
     return root_sequence
@@ -83,12 +96,10 @@ def build_pgm_workflow_tree():
 def build_master_pipeline_tree():
     """
     Constructs the Master Behavior Tree (Master Pipeline Engine) incorporating:
-    - Pass 0: Crowd & Environmental Noise Guard (Crowd-Speech / Applause)
-    - Pass 1: Vocal Extraction & Quality Evaluator Guard (Phase & DeReverb)
-    - Pass 2: Drums Extraction & Transient Quality Guard (Kick 60Hz Punch Restore)
-    - Pass 3: Bass Extraction & Sub-Bass Mono Focus Guard (120Hz Mono & 25Hz Low-Cut)
-    - Pass 4: Dynamic Core Trio (Guitar / Piano / Strings) Peel-and-Subtract Loop
-    - Pass 5: BeatNet 99.8% Beat Tracking, Section Structure, Pitch Hybrid & Multi-DAW Zip Packaging
+    - Stage 0: Input Acquisition (Download / Local Passthrough & Project Setup)
+    - Stage 1: Audio Quality & Crowd/Environmental Noise Discard
+    - Stage 2: Stem Separation Tree (Vocals, Drums, Bass, Guitar)
+    - Stage 3~6: Beat Tracking, Music Analysis, DAW Export
     """
     beat_tracking_fallback = FallbackNode("BeatTrackingSelector", [
         BeatNetNode(),
@@ -103,12 +114,14 @@ def build_master_pipeline_tree():
     ], success_threshold=1)
 
     master_sequence = SequenceNode("MasterPGMPipelineRoot", [
-        VideoURLDownloadNode(),
-        AudioLoadNode(),
-        # Pass 0 -> Pass 4 Multi-stage Demixing & Quality Guards
+        build_input_acquisition_tree(),
+        build_audio_quality_tree(),
+        build_stem_separation_tree(),
+        SubMixGeneratorNode(),
         beat_tracking_fallback,
         BeatValidationNode(),
         DownbeatRefineNode(),
+        AudioQuantizerNode(),
         MeasureMapNode(),
         SectionStructureNode(),
         KeyChordAnalysisNode(),
@@ -116,6 +129,8 @@ def build_master_pipeline_tree():
         MIDIExportNode(),
         ai_parallel_group,
         HybridPitchNode(),
+        MIDIQuantizerGuardNode(),
+        VoiceSplitMIDIExportNode(),
     ])
 
     return master_sequence
@@ -130,6 +145,7 @@ class BTWorkflowEngine:
         blackboard = Blackboard()
         blackboard.set_val("audio_path", audio_path)
         blackboard.set_val("output_dir", output_dir)
+        blackboard.set_val("project_root", output_dir)  # Stage 0 ValidateProjectRootNode 需要
         blackboard.set_val("enable_stem", enable_stem)
         blackboard.set_val("validate_contracts", validate_contracts)
 

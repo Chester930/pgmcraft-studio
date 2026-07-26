@@ -54,8 +54,9 @@ class MusicAnalyzer:
         if len(beat_times) == 0:
             return np.array([[0.0, 1]])
 
-        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-        beat_onsets = onset_env[np.minimum(beat_frames, len(onset_env) - 1)]
+        # 針對低頻大鼓帶 (fmax=200Hz) 計算 Onset 能量，避免第 2/4 拍小鼓與高頻切拍誤判第一拍
+        onset_env_low = librosa.onset.onset_strength(y=y, sr=sr, fmax=200)
+        beat_onsets = onset_env_low[np.minimum(beat_frames, len(onset_env_low) - 1)]
 
         best_offset, max_energy = 0, -1.0
         for offset in range(4):

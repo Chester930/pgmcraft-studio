@@ -14,14 +14,16 @@ from pgm_craft.workflow.builder import BTWorkflowEngine
 from pgm_craft.packager import PGMProjectPackager
 
 class PGMCraftEngine:
-    def __init__(self, enable_stem_separation=False, validate_contracts=False):
+    def __init__(self, enable_stem_separation=True, validate_contracts=False):
         self.enable_stem_separation = enable_stem_separation
         self.validate_contracts = validate_contracts
         self.bt_engine = BTWorkflowEngine()
         self.packager = PGMProjectPackager()
 
-    def run(self, audio_path, output_dir="outputs"):
+    def run(self, audio_path, output_dir="outputs", enable_stem=None):
         os.makedirs(output_dir, exist_ok=True)
+        if enable_stem is not None:
+            self.enable_stem_separation = enable_stem
         
         print(f"[BT Broadcaster] 啟動 Behavior Tree 即時廣播與節點執行追蹤: {os.path.basename(audio_path)}")
 
@@ -47,6 +49,9 @@ class PGMCraftEngine:
         workflow_status = blackboard.get_val("workflow_status", "UNKNOWN")
         workflow_trace = blackboard.get_val("workflow_trace", [])
         contract_validation = blackboard.get_val("contract_validation", [])
+
+        quality_report = blackboard.get_val("quality_report", {})
+        quality_grade = blackboard.get_val("quality_grade", "A")
 
         # Calculate BPM stats, measures & Tempo Variance Index (%)
         diffs = np.diff(beats[:, 0]) if beats is not None else np.array([0.5])
@@ -108,8 +113,11 @@ class PGMCraftEngine:
             "total_measures": len(measure_map) if measure_map else (downbeat_count if downbeat_count > 0 else (len(beats) // 4 if beats is not None else 0)),
             "beat_validation": beat_validation,
             "downbeat_refinement": downbeat_refinement,
+            "quality_report": quality_report,
+            "quality_grade": quality_grade,
             "workflow_status": workflow_status,
             "workflow_trace": workflow_trace,
+            "ai_model_status": blackboard.get_val("ai_model_status", {}),
             "measure_map_status": measure_map_status,
             "measure_map_warnings": measure_map_warnings,
             "measure_map": measure_map,
@@ -120,6 +128,19 @@ class PGMCraftEngine:
                 "mix_with_click": blackboard.get_val("mix_with_click"),
                 "tempo_map_midi": blackboard.get_val("tempo_map_midi"),
                 "click_guide_midi": blackboard.get_val("click_guide_midi"),
+                "chord_guide_midi": blackboard.get_val("chord_guide_midi"),
+                "melody_lead_midi": blackboard.get_val("melody_lead_midi"),
+                "vocal_pitch_midi": blackboard.get_val("vocal_pitch_midi"),
+                "vocal_lead_quantized_midi": blackboard.get_val("vocal_lead_quantized_midi"),
+                "pitch_contour_json": blackboard.get_val("pitch_contour_json"),
+                "subtitles_srt": blackboard.get_val("subtitles_srt"),
+                "transcript_json": blackboard.get_val("transcript_json"),
+                "instrument_presence_json": blackboard.get_val("instrument_presence_json"),
+                "sections_json": blackboard.get_val("sections_json"),
+                "measure_map_json": blackboard.get_val("measure_map_json"),
+                "rhythm_submix": blackboard.get_val("rhythm_submix"),
+                "harmonic_submix": blackboard.get_val("harmonic_submix"),
+                "structure_submix": blackboard.get_val("structure_submix"),
                 "tempo_curve_plot": plot_path,
                 "json_report": json_report_path,
             }
@@ -127,17 +148,24 @@ class PGMCraftEngine:
         if contract_validation:
             report["contract_validation"] = contract_validation
 
-        # Write JSON metadata report
+        # 1. Write placeholder JSON first so packager can locate the file for copying
         with open(json_report_path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
 
+        # 2. Build DAW project package (copies JSON into reports/ dir)
         project_package = self.packager.build(report, output_dir=output_dir)
         report["project_package"] = project_package
         report["outputs"]["project_package_dir"] = project_package["project_package_dir"]
         report["outputs"]["import_guide"] = project_package["import_guide"]
 
+        # 3. Overwrite JSON with final complete report (includes project_package)
         with open(json_report_path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
-        self.packager.build(report, output_dir=output_dir)
+
+        # 4. Sync final JSON into the package reports dir copy
+        packaged_json = project_package.get("files", {}).get("json_report")
+        if packaged_json and os.path.isfile(packaged_json):
+            import shutil as _shutil
+            _shutil.copy2(json_report_path, packaged_json)
 
         return report

@@ -149,6 +149,13 @@ class SubMixGeneratorNode(BaseNode):
             import soundfile as sf
             import numpy as np
 
+            def _to_mono(y_arr):
+                if y_arr is None or len(y_arr) == 0:
+                    return np.array([], dtype=np.float32)
+                if y_arr.ndim > 1:
+                    return np.mean(y_arr, axis=1)
+                return y_arr.astype(np.float32)
+
             # 1. 節奏組 Sub-mix (Drums + Bass) -> 節拍精準度 99.8%
             drums_path = stems.get("drums")
             bass_path = stems.get("bass")
@@ -157,6 +164,7 @@ class SubMixGeneratorNode(BaseNode):
             if drums_path and bass_path and os.path.exists(drums_path) and os.path.exists(bass_path):
                 y_d, sr = sf.read(drums_path)
                 y_b, _ = sf.read(bass_path)
+                y_d, y_b = _to_mono(y_d), _to_mono(y_b)
                 min_len = min(len(y_d), len(y_b))
                 y_rhythm = 0.6 * y_d[:min_len] + 0.6 * y_b[:min_len]
                 sf.write(rhythm_out, y_rhythm, sr)
@@ -176,7 +184,7 @@ class SubMixGeneratorNode(BaseNode):
             for p in [guitar_path, piano_path, bass_path]:
                 if p and os.path.exists(p):
                     y_t, sr_t = sf.read(p)
-                    mix_tracks.append((y_t, sr_t))
+                    mix_tracks.append((_to_mono(y_t), sr_t))
 
             if mix_tracks:
                 min_l = min(len(t[0]) for t in mix_tracks)
@@ -196,7 +204,7 @@ class SubMixGeneratorNode(BaseNode):
             for p in [vocals_path, drums_path, other_path]:
                 if p and os.path.exists(p):
                     y_t, sr_t = sf.read(p)
-                    struct_tracks.append((y_t, sr_t))
+                    struct_tracks.append((_to_mono(y_t), sr_t))
 
             if struct_tracks:
                 min_l = min(len(t[0]) for t in struct_tracks)
@@ -426,6 +434,18 @@ class DownbeatRefineNode(BaseNode):
         refined = beat_array.copy()
         timestamps = refined[:, 0].astype(float)
         beat_numbers = refined[:, 1].astype(int)
+
+        # 拍距離群值平滑 Guard: 防止極端突發爭議拍點 (Artifacts) 導致後續整個小節相位發散
+        if len(timestamps) > 4:
+            diffs = np.diff(timestamps)
+            med_diff = np.median(diffs)
+            if med_diff > 0:
+                for i in range(1, len(diffs)):
+                    # 當單一拍距離群超過正常中位數 2.2 倍或小於 0.45 倍，自動進行中位數修復
+                    if diffs[i] > 2.2 * med_diff or diffs[i] < 0.45 * med_diff:
+                        timestamps[i + 1] = timestamps[i] + med_diff
+                        refined[i + 1, 0] = round(timestamps[i + 1], 6)
+
         downbeat_indexes = np.where(beat_numbers == 1)[0].tolist()
 
         if len(downbeat_indexes) >= 2:
@@ -518,13 +538,21 @@ class MeasureMapNode(BaseNode):
         blackboard.set_val("measure_map_status", status)
         blackboard.set_val("measure_map_warnings", warnings)
 
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        json_path = os.path.join(output_dir, "measure_map.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"measure_map": measure_map, "status": status, "warnings": warnings}, f, ensure_ascii=False, indent=2)
+
+        blackboard.set_val("measure_map_json", json_path)
+
         if status == "FAIL":
             print(f"[BT Node: {self.name}] Measure map failed: {warnings}")
             return NodeStatus.FAILURE
 
         if warnings:
             print(f"[BT Node: {self.name}] Measure map warnings: {warnings}")
-        print(f"[BT Node: {self.name}] Built {len(measure_map)} measures.")
+        print(f"[BT Node: {self.name}] Built {len(measure_map)} measures to {json_path}.")
         return NodeStatus.SUCCESS
 
     def build_measure_map(self, beats, beat_validation=None, downbeat_refinement=None):
@@ -750,12 +778,17 @@ class BasicPitchNode(BaseNode):
 
         midi_path = os.path.join(output_dir, "melody_lead.mid")
 
+        ai_status = blackboard.get_val("ai_model_status", {})
         try:
             from basic_pitch.inference import predict_and_save
             predict_and_save([audio_path], output_dir, save_midi=True, sonify_midi=False, save_model_outputs=False, save_notes=False)
+            ai_status["basic_pitch"] = "REAL_MODEL"
         except Exception as exc:
             print(f"[BT Node: {self.name}] basic_pitch not available ({exc}). Using fallback melody guide.")
             self._write_fallback_melody_midi(beats, midi_path)
+            ai_status["basic_pitch"] = f"FALLBACK_DSP ({exc})"
+
+        blackboard.set_val("ai_model_status", ai_status)
 
         blackboard.set_val("melody_lead_midi", midi_path)
         print(f"[BT Node: {self.name}] Transcribed melody lead MIDI to {midi_path}.")
@@ -812,8 +845,15 @@ class SectionStructureNode(BaseNode):
             if chorus_end <= total_measures and chorus_end < total_measures:
                 sections.append({"measure": chorus_end, "name": "Outro", "start_time": measure_map[chorus_end - 1]["start_time"]})
 
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        json_path = os.path.join(output_dir, "sections.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"sections": sections}, f, ensure_ascii=False, indent=2)
+
         blackboard.set_val("sections", sections)
-        print(f"[BT Node: {self.name}] Segmented track into {len(sections)} sections.")
+        blackboard.set_val("sections_json", json_path)
+        print(f"[BT Node: {self.name}] Segmented track into {len(sections)} sections and exported to {json_path}.")
         return NodeStatus.SUCCESS
 
 
@@ -834,6 +874,7 @@ class CREPEPitchNode(BaseNode):
         midi_path = os.path.join(output_dir, "vocal_pitch.mid")
         json_path = os.path.join(output_dir, "pitch_contour.json")
 
+        ai_status = blackboard.get_val("ai_model_status", {})
         try:
             import crepe  # pyright: ignore[reportMissingImports]
             y = blackboard.get_val("y")
@@ -845,9 +886,13 @@ class CREPEPitchNode(BaseNode):
                 {"time": round(float(t), 3), "freq_hz": round(float(f), 2), "confidence": round(float(c), 2)}
                 for t, f, c in zip(time_stamps, frequency, confidence) if c > 0.5
             ]
+            ai_status["crepe_pitch"] = "REAL_MODEL"
         except Exception as exc:
             print(f"[BT Node: {self.name}] CREPE unavailable ({exc}). Using Librosa pyin fallback.")
             pitch_data = self._fallback_pitch_tracking(audio_path, blackboard)
+            ai_status["crepe_pitch"] = f"FALLBACK_DSP ({exc})"
+
+        blackboard.set_val("ai_model_status", ai_status)
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump({"pitch_contour": pitch_data}, f, ensure_ascii=False, indent=2)
@@ -865,6 +910,8 @@ class CREPEPitchNode(BaseNode):
             sr = blackboard.get_val("sr", 22050)
             if y is None:
                 y, sr = librosa.load(audio_path, sr=sr, mono=True)
+            elif y.ndim > 1:
+                y = y.mean(axis=0) if y.shape[0] <= 2 else y.mean(axis=1)
             f0, voiced_flag, _ = librosa.pyin(y, fmin=float(librosa.note_to_hz('C2')), fmax=float(librosa.note_to_hz('C7')), sr=sr)
             times = librosa.times_like(f0, sr=sr)
             results = []
@@ -912,6 +959,7 @@ class PodcastSpeechNode(BaseNode):
         srt_path = os.path.join(output_dir, "subtitles.srt")
         json_path = os.path.join(output_dir, "transcript.json")
 
+        ai_status = blackboard.get_val("ai_model_status", {})
         try:
             import whisper
             import torch
@@ -922,9 +970,15 @@ class PodcastSpeechNode(BaseNode):
             transcript_list = [{"id": seg["id"], "start": seg["start"], "end": seg["end"], "text": seg["text"].strip()} for seg in segments]
             if not transcript_list:
                 transcript_list = self._fallback_speech_segmentation(audio_path, blackboard)
+                ai_status["whisper_speech"] = "FALLBACK_SPEECH_ENERGY"
+            else:
+                ai_status["whisper_speech"] = "REAL_MODEL"
         except Exception as exc:
             print(f"[BT Node: {self.name}] Whisper unavailable ({exc}). Using speech energy fallback.")
             transcript_list = self._fallback_speech_segmentation(audio_path, blackboard)
+            ai_status["whisper_speech"] = f"FALLBACK_SPEECH_ENERGY ({exc})"
+
+        blackboard.set_val("ai_model_status", ai_status)
 
 
         self._write_srt(transcript_list, srt_path)
@@ -1141,8 +1195,8 @@ class MIDIQuantizerGuardNode(BaseNode):
     MIDI 網格量化與搖擺感修復衛兵 (MIDI Quantization & Swing Guard Node)
     清除 <32 分音符碎音噪聲，修復 Legato/Staccato 對齊，產出版面乾淨漂亮的樂譜與 MIDI。
     """
-    required_keys = ["vocal_pitch"]
-    optional_keys = ["bpm"]
+    required_keys = []
+    optional_keys = ["vocal_pitch", "bpm"]
     output_keys = ["quantized_vocal_notes"]
 
     def __init__(self):

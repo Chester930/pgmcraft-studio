@@ -65,6 +65,20 @@ class DAWExporter:
             sec_prefix = f"[{section_map[m_num]}] " if m_num in section_map else ""
             rpp_lines.append(f'  MARKER {idx} {t_start} "{sec_prefix}M{m_num:02d}: {chord_str}" 0 0 1\n')
 
+        # Add Dynamic Tempo Map Envelope (TEMPOENVEX) for Reaper Grid Sync
+        beats = report.get("beats")
+        if beats is not None and len(beats) > 1:
+            rpp_lines.append("  <TEMPOENVEX\n")
+            rpp_lines.append("    ACT 1\n")
+            rpp_lines.append("    VIS 1 0 1\n")
+            for idx in range(len(beats) - 1):
+                t_pos = float(beats[idx][0])
+                interval = float(beats[idx + 1][0]) - t_pos
+                if interval > 0:
+                    inst_bpm = 60.0 / interval
+                    rpp_lines.append(f"    PT {t_pos:.6f} {inst_bpm:.2f} 1 0 0 1\n")
+            rpp_lines.append("  >\n")
+
 
         # Add Studio Bus Master Folders & Routing
         rpp_lines.append("  <TRACK\n")
