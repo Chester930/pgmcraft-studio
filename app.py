@@ -375,7 +375,7 @@ def standalone_download(url_input, custom_output_dir):
         return f"❌ 下載過程發生錯誤: {e}", None, None, None
 
 
-def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
+def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_stage="full"):
     input_source = None
     if url_input and url_input.strip():
         input_source = url_input.strip()
@@ -398,7 +398,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     engine.enable_stem_separation = enable_stem
-    report = engine.run(input_source, output_dir=output_dir)
+    report = engine.run(input_source, output_dir=output_dir, target_stage=target_stage)
 
     filename = os.path.basename(report.get("audio_file", "audio"))
     quality_report = report.get("quality_report", {})
@@ -708,6 +708,17 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         label="🥁 開啟 Stem 鼓組/人聲分離 (分離後提高動態節拍精度)", 
                         value=False
                     )
+                    pgm_stage_select = gr.Dropdown(
+                        choices=[
+                            ("Stage 1: 音質分析與 ABC 多階層降噪 (不跑分軌)", "stage1"),
+                            ("Stage 1 + Stage 2: 音質分析 + 需求驅動 AI 樂器分軌", "stage2"),
+                            ("Stage 1 ~ Stage 3: 音質 + 分軌 + 雙軌節拍與 Downbeat 分析", "stage3"),
+                            ("Stage 1 ~ Stage 4: 音質 + 分軌 + 節拍 + 和聲 Sub-mix 調性/和弦/段落", "stage4"),
+                            ("Stage 1 ~ Stage 5: 全管道 (預設，含 DAW 工程包素材導出)", "full"),
+                        ],
+                        value="full",
+                        label="🎯 選擇 BT 執行目標階段 (Stage 1 ~ 5 階段式獨立/累加控制)"
+                    )
 
                     with gr.Accordion("🎛️ 高階錄音室控制選項 (Advanced Studio Options)", open=False):
                         ebu_r128_chk = gr.Checkbox(
@@ -780,11 +791,11 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         choices=[
                             ("Stage 1: 音質分析與 ABC 多階層降噪 (不跑分軌)", "stage1"),
                             ("Stage 1 + Stage 2: 音質分析 + 需求驅動 AI 樂器分軌", "stage2"),
-                            ("Stage 1 + Stage 2 + Stage 3: 音質分析 + AI 分軌 + 雙軌節拍與 Downbeat 分析", "stage3"),
-                            ("Stage 1 ~ Stage 4: 音質 + 分軌 + 雙軌節拍 + 和聲 Sub-mix 調性與和弦分析", "stage4"),
-                            ("Stage 1 ~ Stage 6: 全管道 (預設，含樂理/MIDI/DAW工程包打包)", "full"),
+                            ("Stage 1 ~ Stage 3: 音質 + 分軌 + 雙軌節拍與 Downbeat 分析", "stage3"),
+                            ("Stage 1 ~ Stage 4: 音質 + 分軌 + 節拍 + 和聲 Sub-mix 調性/和弦/段落", "stage4"),
+                            ("Stage 1 ~ Stage 5: 全管道 (預設，含樂理/MIDI/DAW工程包打包)", "full"),
                         ],
-                        value="stage4",
+                        value="full",
                         label="🎯 選擇 BT 執行目標階段 (階段式累加控制)"
                     )
                     diag_run_btn = gr.Button("🚀 啟動 BT 工作流並進行實體診斷", variant="primary")
@@ -857,7 +868,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
             analyze_btn.click(
                 fn=process_pgm,
-                inputs=[pgm_url_box, pgm_audio_input, enable_stem_chk, output_folder_box],
+                inputs=[pgm_url_box, pgm_audio_input, enable_stem_chk, output_folder_box, pgm_stage_select],
                 outputs=[
                     result_markdown,
                     tempo_curve_img,

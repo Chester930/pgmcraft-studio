@@ -20,12 +20,12 @@ class PGMCraftEngine:
         self.bt_engine = BTWorkflowEngine()
         self.packager = PGMProjectPackager()
 
-    def run(self, audio_path, output_dir="outputs", enable_stem=None):
+    def run(self, audio_path, output_dir="outputs", enable_stem=None, target_stage: str = "full"):
         os.makedirs(output_dir, exist_ok=True)
         if enable_stem is not None:
             self.enable_stem_separation = enable_stem
         
-        print(f"[BT Broadcaster] 啟動 Behavior Tree 即時廣播與節點執行追蹤: {os.path.basename(audio_path)}")
+        print(f"[BT Broadcaster] 啟動 Behavior Tree 即時廣播與節點執行追蹤: {os.path.basename(audio_path)} (Target: {target_stage})")
 
         # Run Behavior Tree Workflow Engine
         blackboard = self.bt_engine.run(
@@ -33,6 +33,7 @@ class PGMCraftEngine:
             output_dir=output_dir,
             enable_stem=self.enable_stem_separation,
             validate_contracts=self.validate_contracts,
+            target_stage=target_stage
         )
 
         original_beats = blackboard.get_val("beats")

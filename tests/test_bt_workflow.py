@@ -53,7 +53,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
         nodes = self._flatten_tree(tree)
         concrete_nodes = [
             node for node in nodes
-            if node.__class__.__name__ not in {"SequenceNode", "FallbackNode"}
+            if node.__class__.__name__ not in {"SequenceNode", "FallbackNode", "ParallelNode"}
         ]
 
         for node in concrete_nodes:
@@ -68,7 +68,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
         beatnet_node = contract_by_name.get("BeatNetNode_TrackA") or contract_by_name.get("BeatNetNode")
         self.assertIsNotNone(beatnet_node)
         self.assertTrue("beats" in beatnet_node.output_keys or "beats_rhythm" in beatnet_node.output_keys)
-        self.assertIn("workflow_trace", contract_by_name["PGMCraftWorkflowRoot"].output_keys)
+        self.assertIn("workflow_trace", tree.output_keys)
 
     def test_blackboard_contract_document_lists_core_keys(self):
         """測試 blackboard contract 文件保留核心 key"""
@@ -115,7 +115,8 @@ class TestBTWorkflowEngine(unittest.TestCase):
         blackboard = bt_engine.run(
             self.test_audio,
             output_dir=self.temp_dir,
-            enable_stem=False,
+            enable_stem=True,
+            target_stage="stage5",
             validate_contracts=True,
         )
         validations = blackboard.get_val("contract_validation")
@@ -408,7 +409,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
     def test_bt_engine_full_run(self):
         """測試 BT 引擎完整行為樹節點執行流水線 (包含 VideoURLDownloadNode 進入點)"""
         bt_engine = BTWorkflowEngine()
-        blackboard = bt_engine.run(self.test_audio, output_dir=self.temp_dir, enable_stem=False)
+        blackboard = bt_engine.run(self.test_audio, output_dir=self.temp_dir, enable_stem=True, target_stage="stage5")
 
         self.assertIsNotNone(blackboard.get_val("beats"))
         self.assertIsNotNone(blackboard.get_val("beat_validation"))

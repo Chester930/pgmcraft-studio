@@ -232,18 +232,6 @@ Sequence [StemSeparationRoot]
   └── events/                     ← 🗣️ 非音色/語音事件/環境組 (speech_口白, crowd_現場歡呼, count_in_倒數, hum_電流聲)
 ```
 
-### 🗣️ 【非音色 / 語音事件 / 環境場景組】整合與處理矩陣
-
-| 序號 | 標的類型 | 最佳模型 / 演算法 | 信任品質 | 整合至分軌流程位置與 PGM/Live 實務價值 |
-| :---: | :--- | :--- | :---: | :--- |
-| **1** | **人聲口語 vs BGM** | `UVR_MDXNET_Crowd_Speech` | **95% (高)** | **Stage 2 人聲分支入口**：Podcast 一鍵將口白與 BGM 背景音樂分離。 |
-| **2** | **觀眾歡呼聲 (Crowd)** | `UVR-MDX-NET Crowd` | **92% (高)** | **Stage 1 降噪 / Stage 2 獨立軌**：Live 錄音檔剝離現場尖叫，獨立落盤至 `events/crowd.wav`。 |
-| **3** | **喊拍倒數 (Count-in)** | `Whisper / VAD` + Speech Extractor | **96% (高)** | **Stage 3 節拍前置**：提取 1-2-3-4 喊拍聲，直接自動轉為 Live PGM 團員對拍 Cue 軌。 |
-| **4** | **交流電嗡嗡聲 (Hum)** | `DeepFilterNet3` / `UVR_DeHum` | **98% (高)** | **Stage 1 音質修復**：強效消除 50/60Hz 電流聲與線材接觸不良雜音。 |
-| **5** | **換氣聲 (De-Breathe)** | `UVR_DeBreathe.pth` | **94% (高)** | **Stage 2 人聲二階**：剝離氣音至 `vocals/breath_noises.wav`，大幅提升 MIDI 歌聲採譜與對詞準確率。 |
-| **6** | **拍手聲 (Clap/Snap)** | `Transient Peak Extractor (>3kHz)`| **93% (高)** | **Stage 3 節拍校正**：提取拍手響指聲，作為首拍 (Downbeat) 自動網格校正參考。 |
-| **7** | **房間殘響 (De-Reverb)** | `UVR-DeEcho-DeReverb.pth` | **90% (高)** | **Stage 1/2 前置濾鏡**：將現場迴音還原為 Studio Dry 乾聲軌。 |
-
 ---
 
 ## 五、SDD 測試進度匯總
@@ -261,10 +249,29 @@ Sequence [StemSeparationRoot]
 | **Pass 21** | **CLAP 語意探測門閥與 Formant 物理破壞 Rollback Guard** | 3 | ✅ 2026-07-26 |
 | **Pass 22** | **Stems 音色資料夾嚴格隔離衛兵 (Strict Stem Isolation)** | 1 | ✅ 2026-07-27 |
 | **Pass 23** | **Stage 3 雙軌併行節拍分析與動態融合 (Dual-Track Beat Fusion)** | 4 | ✅ 2026-07-27 |
-| **Pass 24** | **Stage 4 和聲專屬 Sub-mix 與調性/和弦/段落樂理分析 (Harmonic Analysis BT)** | 2 | ✅ 2026-07-27 |
 | **Pass 25** | **Stage 4 樂段結構專屬 Sub-mix 與段落切分 (Structure Sub-mix & Section BT)** | 2 | ✅ 2026-07-27 |
 | **Pass 26** | **Stage 4 拍點格點和弦對齊與平滑化衛兵 (Grid-Constrained Chord BT)** | 2 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~4 BT 整合驗證** | **143** | ✅ **100% 通過** |
+| **Pass 27** | **Stage 4 BT 順序修正、和聲 Sub-mix 多樂器擴充與小節和弦 Smoothing** | 3 | ✅ 2026-07-27 |
+| **Pass 28** | **Stage 3 Count-In/Clap 事件 1 號拍錨定、 Validation 維度防護與音波緩存** | 3 | ✅ 2026-07-27 |
+| **Pass 29** | **Stage 5 Export BT 重構、DAW Section Markers 導出與工程交付** | 2 | ✅ 2026-07-27 |
+| **Pass 30** | **Stage 0~5 全管道整合修復、Pipeline 順序調整與專案 Session 落盤對齊** | 1 | ✅ 2026-07-27 |
+| **Pass 31** | **前端 Stage 1~5 選擇器 UI 補全與後端 BT 樹動態階段截斷** | 2 | ✅ 2026-07-27 |
+| **Pass 32** | **Stage 6 PackageRoot Behavior Tree 重構與 DAW 全套素材包自動歸檔** | 2 | ✅ 2026-07-27 |
+| **Pass 33** | **舞台語音提示音軌合成 (Voice Cue Guide Synthesis)** | 1 | ✅ 2026-07-27 |
+| **Pass 34** | **AI 貝斯與主旋律 MIDI 獨立導出 (`bass_line.mid`, `lead_melody.mid`)** | 1 | ✅ 2026-07-27 |
+| **Pass 35** | **Groove Micro-timing 雙軌 MIDI 律動導出** | 1 | ✅ 2026-07-27 |
+| **Pass 36** | **Web-based Live 舞台動態滾動提詞器 HTML 自動化** | 1 | ✅ 2026-07-27 |
+| **Pass 37** | **Lyrics-to-Marker MIDI Text Event 歌詞標註** | 1 | ✅ 2026-07-27 |
+| **Pass 38** | **Pro Tools / AAF 全 DAW 泛用工程包 (`project_protools.aaf`)** | 1 | ✅ 2026-07-27 |
+| **Pass 39** | **Kick & Snare 獨立聲學脈衝提取衛兵 (`KickSnarePulseNode`)** | 1 | ✅ 2026-07-27 |
+| **Pass 40** | **Tempo Inertia 速度慣性等速內插引擎 (無鼓區間 Click 防摔)** | 1 | ✅ 2026-07-27 |
+| **Pass 41** | **Re-Entry Re-Anchoring 鼓聲切入第一拍自動校正重錨衛兵** | 1 | ✅ 2026-07-27 |
+| **Pass 42** | **Stage 3 Behavior Tree 全管道連動與無鼓/切入重音防禦測試** | 2 | ✅ 2026-07-27 |
+| **Pass 43** | **HarmonicSilenceGateNode (和聲靜音閘門，消滅前奏/尾奏 Ghost Chords)** | 1 | ✅ 2026-07-27 |
+| **Pass 44** | **DownbeatAlignedSectionNode (樂段 100% 強制吸附對齊小節第 1 拍)** | 1 | ✅ 2026-07-27 |
+| **Pass 45** | **MultiBandChromaKeyNode (Bass 根音 + 鋼琴和聲多頻段色譜調性校正)** | 1 | ✅ 2026-07-27 |
+| **Pass 46** | **Stage 4 Behavior Tree 全管道連動與和聲/樂段小節對齊測試** | 2 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **172** | ✅ **100% 通過** |
 
 ---
 
@@ -299,16 +306,32 @@ inst_track_path ➔ {project_dir}/stems/no_vocals.wav (B軌 純伴奏全音軌)
 beats_rhythm / beats_inst ➔ A/B 軌各自特徵節拍陣列
 conf_rhythm / conf_inst ➔ A/B 軌信心度分數
 beats ➔ 經 BeatFusionArbitratorNode 仲裁能量段落與無鼓補全後之最終微秒級節拍陣列
+count_in_events / clap_events ➔ 用於 DownbeatRefineNode 第一拍 (Downbeat) 第一小節對對齊與弱起對位
 beat_fusion_report ➔ 雙軌融合採納統計報告
 
 [Stage 4 和聲與樂理分析]
-harmonic_track_path ➔ {project_dir}/stems/submix/track_stage4_harmonic.wav (Piano+Guitar+Bass 無鼓無人聲 Sub-mix)
+harmonic_track_path ➔ {project_dir}/stems/submix/track_stage4_harmonic.wav (Piano+Guitar+Bass+Organ+Strings+Pads 無鼓無人聲 Sub-mix)
 structure_track_path ➔ {project_dir}/stems/submix/track_stage4_structure.wav (Vocals+Drums+Other 樂段結構 Sub-mix)
 estimated_key ➔ 樂曲主調性 (如 "C Major", "A Minor")
-grid_constrained_chords ➔ 拍點格點對齊與小節 Smoothing 消除抖動後之純淨和弦進行
+grid_constrained_chords ➔ 按小節多數決對齊與平滑化後之純淨和弦進行
 chord_progression ➔ 逐小節和弦進程陣列 (包含 start_time, end_time, chord, measure)
 section_structure ➔ 樂曲 Intro/Verse/Chorus/Bridge 段落結構
 measure_map ➔ 小節與時間對齊地圖 (含完整變動小節長度)
+
+[Stage 5 成果導出與 DAW 素材交付]
+click_track ➔ {project_dir}/click/click_track.wav (高低音打點音軌)
+mix_with_click ➔ {project_dir}/click/mix_with_click.wav (原曲+Click預聽檔)
+tempo_map_midi ➔ {project_dir}/midi/tempo_map.mid (BPM與小節變速度曲線軌)
+click_guide_midi ➔ {project_dir}/midi/click_guide.mid (對齊節拍點 MIDI 軌)
+chord_guide_midi ➔ {project_dir}/midi/chord_guide.mid (和弦 MIDI 導引軌)
+section_markers_midi ➔ {project_dir}/midi/section_markers.mid (DAW 樂段 Marker 標籤軌)
+
+[Stage 6 工程專案歸檔與素材包交付]
+project_package_dir ➔ {project_dir}/pgm_project_package/ (完整 DAW 素材包目錄)
+zip_archive ➔ {project_dir}/pgm_project_package.zip (純淨壓縮高密度 zip 檔)
+live_dashboard ➔ {project_dir}/pgm_project_package/reports/live_dashboard.html (Live 舞台指示面板)
+markers_csv ➔ {project_dir}/pgm_project_package/tempo_track_cubase.csv (Cubase / 泛用 Marker CSV)
+import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入說明文件)
 ```
 
 ---
@@ -317,6 +340,12 @@ measure_map ➔ 小節與時間對齊地圖 (含完整變動小節長度)
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 32: Stage 6 PackageRoot Behavior Tree 重構與 DAW 全套素材包自動歸檔**：<br>1. **`package_bt.py`**：實作獨立 `PackageRoot` BT 樹包含 `DAWSessionGenerateNode` (Reaper/Ableton/Logic/Cubase CSV)、`LiveDashboardExportNode` (Live 舞台面板 HTML) 與 `ZIPArchivePackagerNode` (壓縮素材包打包)<br>2. **`packager.py` 素材補全**：補齊 Pass 29 產出之 `section_markers_midi` 入 ZIP 打包白名單<br>3. 通過 SDD Pass 32 單元測試 (`tests/test_sdd_pass32.py`, 2 passed) |
+| 2026-07-27 | 完成 **Pass 31: 前端 Stage 1~5 選擇器 UI 補全與後端 BT 樹動態階段截斷**：<br>1. **`app.py` UI 升級**：在「🎛️ PGM 節目軌與採譜分析」主頁籤加入「🎯 選擇 BT 執行目標階段 (Stage 1 ~ 5)」下拉選單<br>2. **`builder.py` 截斷**：`build_master_pipeline_tree(target_stage)` 支援動態截斷在指定的 Stage<br>3. 通過 SDD Pass 31 單元測試 (`tests/test_sdd_pass31.py`, 2 passed) |
+| 2026-07-27 | 完成 **Pass 30: Stage 0~5 全管道整合修復、Pipeline 順序調整與專案 Session 落盤對齊**：<br>1. **順序重排**：將 `ai_parallel_group` 與 `VoiceSplitMIDIExportNode` 前移至 `build_export_tree()` 前，確保 AI 旋律 MIDI 完全進入導出包<br>2. **Session 落盤對齊**：`ClickSynthesisNode` / `MIDIExportNode` / `MIDIMarkerSectionExportNode` 設為 `project_dir` 優先<br>3. 通過 SDD Pass 30 全管道測試 (`tests/test_sdd_pass30.py`, 1 passed) |
+| 2026-07-27 | 完成 **Pass 29: Stage 5 Export BT 重構與 DAW Section Markers 素材導出**：<br>1. **`export_bt.py`**：模組化 Stage 5 獨立 Behavior Tree (`ExportRoot`)<br>2. **`MIDIMarkerSectionExportNode`**：將 Stage 4 產出之樂段 (`Intro`/`Verse`/`Chorus`/`Outro`) 寫入 MIDI Text Marker，支援 Cubase/Logic/Ableton 時間軸自動標籤<br>3. **`builder.py` 串接**：將 `build_export_tree()` 正式整合進 Master Pipeline 主樹<br>4. 通過 SDD Pass 29 單元測試 (`tests/test_sdd_pass29.py`, 2 passed) |
+| 2026-07-27 | 完成 **Pass 28: Stage 3 Count-In/Clap 事件 1 號拍錨定、Validation 維度防護與音波緩存**：<br>1. **喊拍與響指第一拍錨定**：`DownbeatRefineNode` 自動讀取 `count_in_events` / `clap_events` 作為 Downbeat 參考<br>2. **極限維度防禦**：`TrackValidationNode` 增加 `beats.ndim != 2` 防衛<br>3. 通過 SDD Pass 28 單元測試 (`tests/test_sdd_pass28.py`, 3 passed) |
+| 2026-07-27 | 完成 **Pass 27: Stage 4 BT 順序修正、和聲 Sub-mix 多樂器擴充與小節和弦 Smoothing**：<br>1. **順序重排**：將 `MeasureMapNode` 調整至 `SectionStructureNode` 前，徹底解決 `measure_map` 空陣列 Bug<br>2. **多樂器 Sub-mix**：`SynthesizeHarmonicTrackNode` 白名單擴充 `organ`, `strings`, `synth_pads` 等 Tier-2 樂器<br>3. **小節和弦多數決**：`GridConstrainedChordNode` 結合 `measure_map` 消除 0.1 秒碎裂和弦抖動<br>4. 通過 SDD Pass 27 單元測試 (`tests/test_sdd_pass27.py`, 3 passed) |
 | 2026-07-27 | 完成 **Pass 26: Stage 4 拍點格點和弦對齊與平滑化衛兵 (Grid-Constrained Chord BT) 重構**：<br>1. **`GridConstrainedChordNode`**：利用 Stage 3 的 `beats` 時間格點強制將 Chroma 解碼鎖定在拍點與小節邊界<br>2. **小節 Smoothing**：中值濾波消除單拍 0.1 秒碎裂和弦抖動，確保 100% 符合 MIDI / DAW 工程對齊<br>3. 通過 SDD Pass 26 單元測試 (`tests/test_sdd_pass26.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 25: Stage 4 樂段結構專屬 Sub-mix 與段落切分 (Structure Sub-mix & Section BT) 重構**：<br>1. **`SynthesizeStructureTrackNode`**：合成 Vocals + Drums + Other/No_Vocals 樂段結構 Sub-mix（涵蓋巨觀音色、動態能量與人聲疊軌變化）<br>2. **`SectionStructureNode`**：結合自相似矩陣 (SSM) 與雙重音色能量維度切分 Intro / Verse / Chorus / Bridge / Outro 段落<br>3. 通過 SDD Pass 25 單元測試 (`tests/test_sdd_pass25.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 24: Stage 4 和聲專屬 Sub-mix 與調性/和弦/段落樂理分析 (Harmonic Analysis BT) 重構**：<br>1. **`SynthesizeHarmonicTrackNode`**：合成 Piano + Guitar + Bass 專屬和聲 Sub-mix（零鼓噪聲、零人聲花腔干擾）<br>2. **`build_music_analysis_tree`**：拍點對齊之 Key/Chord 分析、樂曲 Intro/Verse/Chorus 段落切分與小節地圖建置<br>3. 通過 SDD Pass 24 單元測試 (`tests/test_sdd_pass24.py`, 2 passed) |
@@ -333,3 +362,4 @@ measure_map ➔ 小節與時間對齊地圖 (含完整變動小節長度)
 | 2026-07-25 | Stage 1 加入 `CrowdNoiseRemovalNode` 人群現場噪聲清洗壓制節點 |
 | 2026-07-25 | Stage 1 加入 `WriteNormalizedWAVNode` 寫入優化音檔至專案 `source/` 目錄 |
 | 2026-07-25 | 建立本文件，同步全自動工作流 BT 狀態 |
+

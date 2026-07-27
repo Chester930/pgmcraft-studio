@@ -361,7 +361,7 @@ class BeatValidationNode(BaseNode):
             measure_lengths=measure_lengths,
             common_measure_length=self.COMMON_MEASURE_LENGTH,
             has_variable_measure_lengths=has_variable_measure_lengths,
-            meter_status="detected_variable" if has_variable_measure_lengths else ("detected" if has_downbeat else "unknown"),
+                meter_status="detected_variable" if has_variable_measure_lengths else ("detected" if has_downbeat else "unknown"),
         )
 
     def _measure_lengths_from_downbeats(self, beat_numbers):
@@ -385,18 +385,13 @@ class BeatValidationNode(BaseNode):
 
 class DownbeatRefineNode(BaseNode):
     """保守補強 downbeat 標籤；不移動 beat timestamp。"""
-    required_keys = ["beats", "beat_validation"]
-    output_keys = [
-        "refined_beats",
-        "downbeat_refinement",
-        "downbeat_refine_status",
-        "downbeat_refine_warnings",
-        "downbeat_candidates",
-    ]
+    required_keys = ["beats"]
+    optional_keys = ["beat_validation", "count_in_events", "clap_events"]
+    output_keys = ["refined_beats", "downbeat_refinement", "downbeat_refine_status", "downbeat_refine_warnings", "downbeat_candidates"]
 
-    FALLBACK_MEASURE_LENGTH = 4
     MIN_REASONABLE_MEASURE_LENGTH = 2
     MAX_REASONABLE_MEASURE_LENGTH = 8
+    FALLBACK_MEASURE_LENGTH = 4
 
     def __init__(self):
         super().__init__("DownbeatRefineNode")
@@ -409,7 +404,10 @@ class DownbeatRefineNode(BaseNode):
             return NodeStatus.FAILURE
 
         beats = blackboard.get_val("beats")
-        refined_beats, result = self.refine(beats)
+        count_in_events = blackboard.get_val("count_in_events", [])
+        clap_events = blackboard.get_val("clap_events", [])
+
+        refined_beats, result = self.refine(beats, count_in_events=count_in_events, clap_events=clap_events)
         blackboard.set_val("refined_beats", refined_beats)
         blackboard.set_val("downbeat_refinement", result)
         blackboard.set_val("downbeat_refine_status", result["status"])
@@ -426,7 +424,7 @@ class DownbeatRefineNode(BaseNode):
             print(f"[BT Node: {self.name}] Downbeat refinement passed.")
         return NodeStatus.SUCCESS
 
-    def refine(self, beats):
+    def refine(self, beats, count_in_events=None, clap_events=None):
         beat_array = np.asarray(beats) if beats is not None else np.empty((0, 2))
         if beat_array.ndim != 2 or beat_array.shape[1] < 2 or len(beat_array) == 0:
             return beat_array, self._result("FAIL", "invalid", ["沒有可用 beat，無法補強 downbeat。"], [], [])
@@ -460,7 +458,28 @@ class DownbeatRefineNode(BaseNode):
                 candidates=self._candidates(timestamps, downbeat_indexes, "existing", 1.0),
             )
 
-        anchor_index = downbeat_indexes[0] if downbeat_indexes else 0
+        # 嘗試利用 count_in_events 或 clap_events 作為第一拍 Anchor
+        anchor_index = 0
+        anchor_found = False
+
+        if count_in_events:
+            # 取最晚的喊拍事件點 (如喊拍倒數完畢的時間點) 作為 Downbeat 參考
+            event_t = count_in_events[-1].get("time", 0.0)
+            closest_idx = int(np.argmin(np.abs(timestamps - event_t)))
+            if abs(timestamps[closest_idx] - event_t) < 0.3:
+                anchor_index = closest_idx
+                anchor_found = True
+
+        if not anchor_found and clap_events:
+            event_t = clap_events[0].get("time", 0.0)
+            closest_idx = int(np.argmin(np.abs(timestamps - event_t)))
+            if abs(timestamps[closest_idx] - event_t) < 0.3:
+                anchor_index = closest_idx
+                anchor_found = True
+
+        if not anchor_found and downbeat_indexes:
+            anchor_index = downbeat_indexes[0]
+
         for index in range(len(refined)):
             refined[index, 1] = ((index - anchor_index) % self.FALLBACK_MEASURE_LENGTH) + 1
 
@@ -713,8 +732,8 @@ class KeyChordAnalysisNode(BaseNode):
 
 
 class ClickSynthesisNode(BaseNode):
-    required_keys = ["audio_path", "beats", "output_dir"]
-    optional_keys = ["refined_beats"]
+    required_keys = ["audio_path", "beats"]
+    optional_keys = ["refined_beats", "output_dir", "project_dir"]
     output_keys = ["click_track", "mix_with_click"]
 
     def __init__(self):
@@ -724,19 +743,21 @@ class ClickSynthesisNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         audio_path = blackboard.get_val("audio_path")
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        output_dir = blackboard.get_val("output_dir", "outputs")
+        target_dir = blackboard.get_val("project_dir", blackboard.get_val("output_dir", "outputs"))
+        click_dir = os.path.join(target_dir, "click") if os.path.basename(target_dir) != "click" else target_dir
+        os.makedirs(click_dir, exist_ok=True)
 
-        click_path, mix_path = self.synthesizer.synthesize_click(audio_path, beats, output_dir=output_dir)
+        click_path, mix_path = self.synthesizer.synthesize_click(audio_path, beats, output_dir=click_dir)
         blackboard.set_val("click_track", click_path)
         blackboard.set_val("mix_with_click", mix_path)
-        print(f"[BT Node: {self.name}] Synthesized click WAV & mixed audio.")
+        print(f"[BT Node: {self.name}] Synthesized click WAV & mixed audio to {click_dir}.")
         return NodeStatus.SUCCESS
 
 
 class MIDIExportNode(BaseNode):
-    required_keys = ["beats", "output_dir"]
-    optional_keys = ["refined_beats", "chord_progression"]
-    output_keys = ["tempo_map_midi", "click_guide_midi", "chord_guide_midi"]
+    required_keys = ["beats"]
+    optional_keys = ["refined_beats", "chord_progression", "pitch_contour", "output_dir", "project_dir"]
+    output_keys = ["tempo_map_midi", "click_guide_midi", "chord_guide_midi", "bass_line_midi", "lead_melody_midi"]
 
     def __init__(self):
         super().__init__("MIDIExportNode")
@@ -744,20 +765,70 @@ class MIDIExportNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        output_dir = blackboard.get_val("output_dir", "outputs")
+        target_dir = blackboard.get_val("project_dir", blackboard.get_val("output_dir", "outputs"))
         chord_progression = blackboard.get_val("chord_progression", [])
+        pitch_contour = blackboard.get_val("pitch_contour", [])
 
-        tempo_map_path = self.synthesizer.export_midi_tempo_map(beats, output_dir=output_dir)
-        click_guide_path = self.synthesizer.export_midi_click_guide(beats, output_dir=output_dir)
-        chord_guide_path = self.synthesizer.export_midi_chord_guide(chord_progression, beats, output_dir=output_dir)
+        midi_dir = os.path.join(target_dir, "midi") if os.path.basename(target_dir) != "midi" else target_dir
+        os.makedirs(midi_dir, exist_ok=True)
+
+        tempo_map_path = self.synthesizer.export_midi_tempo_map(beats, output_dir=midi_dir)
+        click_guide_path = self.synthesizer.export_midi_click_guide(beats, output_dir=midi_dir)
+        chord_guide_path = self.synthesizer.export_midi_chord_guide(chord_progression, beats, output_dir=midi_dir)
+
+        # 導出 bass_line.mid 與 lead_melody.mid
+        bass_line_path = os.path.join(midi_dir, "bass_line.mid")
+        lead_melody_path = os.path.join(midi_dir, "lead_melody.mid")
+
+        import mido
+        # 生成 Bass Line MIDI (低音 1 號通道 / 低八度)
+        mid_bass = mido.MidiFile(type=0, ticks_per_beat=480)
+        tr_bass = mido.MidiTrack()
+        mid_bass.tracks.append(tr_bass)
+        tr_bass.append(mido.MetaMessage('track_name', name='Bass Line Guide', time=0))
+        
+        last_t = 0
+        for item in (chord_progression or []):
+            st = item.get("start_time", 0.0)
+            et = item.get("end_time", st + 1.0)
+            root_note = 36 # C1
+            dur_ticks = int((et - st) * 960)
+            delta = max(0, int(st * 960) - last_t)
+            tr_bass.append(mido.Message('note_on', note=root_note, velocity=90, time=delta))
+            tr_bass.append(mido.Message('note_off', note=root_note, velocity=0, time=dur_ticks))
+            last_t = int(st * 960) + dur_ticks
+        mid_bass.save(bass_line_path)
+
+        # 生成 Lead Melody MIDI
+        mid_lead = mido.MidiFile(type=0, ticks_per_beat=480)
+        tr_lead = mido.MidiTrack()
+        mid_lead.tracks.append(tr_lead)
+        tr_lead.append(mido.MetaMessage('track_name', name='Lead Melody Guide', time=0))
+        
+        last_t = 0
+        for pt in (pitch_contour or []):
+            st = pt.get("time", 0.0)
+            pitch_val = int(pt.get("pitch", 60.0))
+            delta = max(0, int(st * 960) - last_t)
+            tr_lead.append(mido.Message('note_on', note=pitch_val, velocity=85, time=delta))
+            tr_lead.append(mido.Message('note_off', note=pitch_val, velocity=0, time=240))
+            last_t = int(st * 960) + 240
+        mid_lead.save(lead_melody_path)
 
         blackboard.set_val("tempo_map_midi", tempo_map_path)
         blackboard.set_val("click_guide_midi", click_guide_path)
         blackboard.set_val("chord_guide_midi", chord_guide_path)
+        blackboard.set_val("bass_line_midi", bass_line_path)
+        blackboard.set_val("lead_melody_midi", lead_melody_path)
+
+        outputs = blackboard.get_val("outputs", {})
+        outputs["bass_line_midi"] = bass_line_path
+        outputs["lead_melody_midi"] = lead_melody_path
+        blackboard.set_val("outputs", outputs)
 
         print(f"[BT Node: {self.name}] Exported MIDI Tempo Map to {tempo_map_path}.")
-        print(f"[BT Node: {self.name}] Exported MIDI Click Guide to {click_guide_path}.")
-        print(f"[BT Node: {self.name}] Exported MIDI Chord Guide to {chord_guide_path}.")
+        print(f"[BT Node: {self.name}] Exported Bass Line MIDI to {bass_line_path}.")
+        print(f"[BT Node: {self.name}] Exported Lead Melody MIDI to {lead_melody_path}.")
         return NodeStatus.SUCCESS
 
 
@@ -815,7 +886,7 @@ class BasicPitchNode(BaseNode):
 class SectionStructureNode(BaseNode):
     """Segments audio measures into structural sections (Intro, Verse, Chorus, Outro)."""
     required_keys = ["measure_map"]
-    optional_keys = ["y", "sr", "chord_progression"]
+    optional_keys = ["y", "sr", "chord_progression", "stems", "structure_track_path"]
     output_keys = ["sections"]
 
     def __init__(self):

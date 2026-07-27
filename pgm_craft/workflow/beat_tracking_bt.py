@@ -11,6 +11,61 @@ def _to_mono(y):
     return y
 
 
+class KickSnarePulseNode(BaseNode):
+    """
+    【大鼓與小鼓獨立物理脈衝特徵提取衛兵】
+    - 讀取 `stems["kick"]` (40-120Hz) 與 `stems["snare"]` (200-2200Hz)
+    - 提取獨立的大鼓撞擊時間點 `kick_anchors` (做為強位第一拍對齊參考)
+    - 提取獨立的小鼓撞擊時間點 `snare_anchors` (做為 2/4 拍骨幹對齊參考)
+    """
+    optional_keys = ["stems", "stems_dir"]
+    output_keys = ["kick_anchors", "snare_anchors"]
+
+    def __init__(self):
+        super().__init__("KickSnarePulseNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        stems = blackboard.get_val("stems", {})
+        stems_dir = blackboard.get_val("stems_dir", "")
+
+        kick_path = stems.get("kick")
+        snare_path = stems.get("snare")
+
+        if not kick_path and stems_dir:
+            kp = os.path.join(stems_dir, "drums", "kick.wav")
+            if os.path.exists(kp): kick_path = kp
+        if not snare_path and stems_dir:
+            sp = os.path.join(stems_dir, "drums", "snare.wav")
+            if os.path.exists(sp): snare_path = sp
+
+        kick_anchors = []
+        snare_anchors = []
+
+        if kick_path and os.path.exists(kick_path):
+            try:
+                y, sr = sf.read(kick_path)
+                y = _to_mono(y)
+                # 簡單能量峰值提取 (100ms 窗口 Peak)
+                win = int(sr * 0.1)
+                env = np.array([np.max(np.abs(y[i:i+win])) for i in range(0, len(y) - win, win // 2)])
+                threshold = np.max(env) * 0.3 if len(env) > 0 and np.max(env) > 0 else 0.01
+                peaks = [i * (win // 2) / sr for i, val in enumerate(env) if val >= threshold]
+
+                # 濾除相距過近的重複峰值 (< 0.2s)
+                filtered_kicks = []
+                for p in peaks:
+                    if not filtered_kicks or (p - filtered_kicks[-1]) >= 0.2:
+                        filtered_kicks.append(p)
+                kick_anchors = filtered_kicks
+            except Exception as e:
+                print(f"[{self.name} Warning] 提取 Kick 脈衝失敗: {e}")
+
+        blackboard.set_val("kick_anchors", np.array(kick_anchors))
+        blackboard.set_val("snare_anchors", np.array(snare_anchors))
+        print(f"[{self.name}] ✅ 成功提取 {len(kick_anchors)} 個大鼓重音脈衝點 (Kick Anchors)。")
+        return NodeStatus.SUCCESS
+
+
 class SynthesizeRhythmTrackNode(BaseNode):
     """
     A 軌音訊準備：合成 Drums + Bass 作為節奏骨幹軌 (`rhythm_track_path`)
@@ -40,7 +95,7 @@ class SynthesizeRhythmTrackNode(BaseNode):
             bp = os.path.join(stems_dir, "bass", "bass.wav")
             if os.path.exists(bp): bass_path = bp
 
-        submix_dir = os.path.join(stems_dir, "submix") if stems_dir else os.path.dirname(audio_path)
+        submix_dir = os.path.join(stems_dir, "submix") if stems_dir else (os.path.dirname(audio_path) or ".")
         os.makedirs(submix_dir, exist_ok=True)
         rhythm_out = os.path.join(submix_dir, "track_a_rhythm.wav")
 
@@ -172,29 +227,34 @@ class TrackValidationNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val(self.beats_key)
-        if beats is None or len(beats) < 4:
+        if beats is None or not isinstance(beats, np.ndarray) or beats.ndim != 2 or len(beats) < 4:
             blackboard.set_val(self.conf_key, 0.0)
             return NodeStatus.SUCCESS
 
-        timestamps = beats[:, 0].astype(float)
-        intervals = np.diff(timestamps)
-        if len(intervals) == 0 or np.any(intervals <= 0):
+        try:
+            timestamps = beats[:, 0].astype(float)
+            intervals = np.diff(timestamps)
+            if len(intervals) == 0 or np.any(intervals <= 0):
+                blackboard.set_val(self.conf_key, 0.0)
+                return NodeStatus.SUCCESS
+
+            bpms = 60.0 / intervals
+            bpm_std = float(np.std(bpms))
+            mean_bpm = float(np.mean(bpms))
+
+            # 計算信心分數：穩定度高的標準差越小、BPM在常態 50-200 之間得分高
+            stability_score = max(0.0, 1.0 - (bpm_std / (mean_bpm + 1e-6)))
+            has_downbeats = bool(np.any(beats[:, 1] == 1))
+            downbeat_bonus = 0.2 if has_downbeats else 0.0
+
+            confidence = float(np.clip(stability_score + downbeat_bonus, 0.1, 1.0))
+            blackboard.set_val(self.conf_key, confidence)
+            print(f"[{self.name}] Track ({self.beats_key}) confidence score: {confidence:.2f}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] 計算信心度異常: {e}")
             blackboard.set_val(self.conf_key, 0.0)
             return NodeStatus.SUCCESS
-
-        bpms = 60.0 / intervals
-        bpm_std = float(np.std(bpms))
-        mean_bpm = float(np.mean(bpms))
-
-        # 計算信心分數：穩定度高的標準差越小、BPM在常態 50-200 之間得分高
-        stability_score = max(0.0, 1.0 - (bpm_std / (mean_bpm + 1e-6)))
-        has_downbeats = bool(np.any(beats[:, 1] == 1))
-        downbeat_bonus = 0.2 if has_downbeats else 0.0
-
-        confidence = float(np.clip(stability_score + downbeat_bonus, 0.1, 1.0))
-        blackboard.set_val(self.conf_key, confidence)
-        print(f"[{self.name}] Track ({self.beats_key}) confidence score: {confidence:.2f}")
-        return NodeStatus.SUCCESS
 
 
 class BeatFusionArbitratorNode(BaseNode):
@@ -206,6 +266,7 @@ class BeatFusionArbitratorNode(BaseNode):
     - 對齊雙軌 Downbeat (小節 1 號拍) 標籤
     """
     required_keys = ["beats_rhythm", "beats_inst"]
+    optional_keys = ["y_rhythm", "sr_rhythm", "rhythm_track_path"]
     output_keys = ["beats", "fusion_report"]
 
     def __init__(self, energy_threshold: float = 0.02):
@@ -229,12 +290,21 @@ class BeatFusionArbitratorNode(BaseNode):
             blackboard.set_val("beats", beats_a)
             return NodeStatus.SUCCESS
 
-        try:
-            # 讀取 A 軌短時能量
-            y_rhythm, sr = sf.read(rhythm_path)
-            y_rhythm = _to_mono(y_rhythm)
-        except Exception as e:
-            print(f"[{self.name} Warning] 無法讀取 A 軌音訊，改用信心度高者: {e}")
+        y_rhythm = blackboard.get_val("y_rhythm")
+        sr = blackboard.get_val("sr_rhythm")
+
+        if y_rhythm is None or sr is None:
+            try:
+                # 讀取 A 軌短時能量
+                if rhythm_path and os.path.exists(rhythm_path):
+                    y_rhythm, sr = sf.read(rhythm_path)
+                    y_rhythm = _to_mono(y_rhythm)
+                    blackboard.set_val("y_rhythm", y_rhythm)
+                    blackboard.set_val("sr_rhythm", sr)
+            except Exception as e:
+                print(f"[{self.name} Warning] 無法讀取 A 軌音訊，改用信心度高者: {e}")
+
+        if y_rhythm is None:
             selected_beats = beats_a if conf_a >= conf_b else beats_b
             blackboard.set_val("beats", selected_beats)
             return NodeStatus.SUCCESS
@@ -261,12 +331,26 @@ class BeatFusionArbitratorNode(BaseNode):
             segment_rms = np.sqrt(np.mean(y_rhythm[start_sample:end_sample] ** 2)) if end_sample > start_sample else 0.0
 
             if segment_rms < self.energy_threshold:
-                # 鼓軌在此時間點靜音 (Intro/Breakdown)，從 B 軌中找最近的打點
+                # 鼓軌在此時間點靜音 (Intro/Breakdown)：開啟 Tempo Inertia 速度慣性引擎
+                # 優先拿 B 軌最近拍點，但若 B 軌拍點與上一拍步距異常 (<0.3s)，改採前段穩定步距等速內插
                 idx_b = np.argmin(np.abs(timestamps_b - t))
-                if abs(timestamps_b[idx_b] - t) < 0.2:
-                    t_b = float(beats_b[idx_b, 0])
-                    label_b = int(beats_b[idx_b, 1])
-                    final_beats_list.append([t_b, label_b])
+                t_candidate = float(beats_b[idx_b, 0])
+                label_candidate = int(beats_b[idx_b, 1])
+
+                if len(final_beats_list) >= 2:
+                    last_interval = final_beats_list[-1][0] - final_beats_list[-2][0]
+                else:
+                    last_interval = 0.5  # 預設 120 BPM
+
+                # 若選出的 B 軌拍點與上一拍時間過近 (< 0.7 * last_interval) 或過遠，使用穩定慣性內插
+                if final_beats_list and (t_candidate - final_beats_list[-1][0] < 0.7 * last_interval or t_candidate - final_beats_list[-1][0] > 1.4 * last_interval):
+                    inertia_t = final_beats_list[-1][0] + last_interval
+                    inertia_label = (int(final_beats_list[-1][1]) % 4) + 1
+                    final_beats_list.append([inertia_t, inertia_label])
+                    switched_to_b += 1
+                    continue
+                else:
+                    final_beats_list.append([t_candidate, label_candidate])
                     switched_to_b += 1
                     continue
             final_beats_list.append([t, label])
@@ -300,6 +384,45 @@ class BeatFusionArbitratorNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class ReEntryReAnchoringNode(BaseNode):
+    """
+    【鼓聲重返重音第一拍自動鎖定衛兵】
+    - 讀取 `kick_anchors` (大鼓重音脈衝) 與 `beats` (當前拍點陣列)
+    - 檢測無鼓切回有鼓（或大鼓切入撞擊點），強制重錨校正拍號標記為 1 號拍 (Beat 1 Downbeat)
+    """
+    optional_keys = ["beats", "kick_anchors"]
+    output_keys = ["beats"]
+
+    def __init__(self):
+        super().__init__("ReEntryReAnchoringNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats")
+        kick_anchors = blackboard.get_val("kick_anchors")
+
+        if beats is None or len(beats) == 0:
+            return NodeStatus.SUCCESS
+        if kick_anchors is None or len(kick_anchors) == 0:
+            return NodeStatus.SUCCESS
+
+        reanchored_beats = beats.copy()
+        for k_t in kick_anchors:
+            # 找到最近的拍點
+            diffs = np.abs(reanchored_beats[:, 0].astype(float) - k_t)
+            min_idx = np.argmin(diffs)
+            if diffs[min_idx] < 0.12:
+                # 重新鎖定此拍為 Beat 1 Downbeat
+                reanchored_beats[min_idx, 1] = 1
+                # 重新修正後續拍子的倒數 1-2-3-4
+                for step in range(1, 4):
+                    if min_idx + step < len(reanchored_beats):
+                        reanchored_beats[min_idx + step, 1] = step + 1
+
+        blackboard.set_val("beats", reanchored_beats)
+        print(f"[{self.name}] 🎯 強制重錨衛兵對齊完畢，已校正鼓聲切入第一拍 (Beat 1)。")
+        return NodeStatus.SUCCESS
+
+
 def build_beat_tracking_tree() -> SequenceNode:
     """
     建立 Stage 3 雙軌併行節拍分析與動態融合 Behavioral Tree
@@ -328,9 +451,11 @@ def build_beat_tracking_tree() -> SequenceNode:
     return SequenceNode("BeatTrackingRoot", [
         SynthesizeRhythmTrackNode(),
         PrepareInstrumentalTrackNode(),
+        KickSnarePulseNode(),
         track_a_branch,
         track_b_branch,
         BeatFusionArbitratorNode(),
+        ReEntryReAnchoringNode(),
         BeatValidationNode(),
         DownbeatRefineNode()
     ])
@@ -346,6 +471,7 @@ class BeatTrackingBTEngine:
         print("\n=== [BeatTrackingBT] Stage 3 Start ===")
         status = self.tree.run(blackboard)
         blackboard.set_val("beat_tracking_status", status.name)
+        blackboard.set_val("workflow_status", status.name)
         if status == NodeStatus.SUCCESS:
             print(f"=== [BeatTrackingBT] Stage 3 Done beats_count={len(blackboard.get_val('beats', []))} ===")
         else:

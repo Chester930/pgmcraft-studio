@@ -287,3 +287,35 @@ class PGMSynthesizer:
         midi.save(midi_path)
         return midi_path
 
+
+class VoiceCueSynthesizer:
+    """Synthesizes Voice Cue audio track for Live PGM stage countdown & section cues."""
+    def synthesize_cue(self, sections, measure_map, output_dir="outputs", sr=44100):
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 估算總時間長度
+        max_time = 10.0
+        if sections:
+            max_time = max(max_time, max([s.get("end_time", 0.0) for s in sections]) + 2.0)
+        if measure_map:
+            max_time = max(max_time, max([m.get("end_time", 0.0) for m in measure_map]) + 2.0)
+            
+        total_samples = int(max_time * sr)
+        audio = np.zeros(total_samples, dtype=np.float32)
+        
+        # 生成雙音聲學 Cue 提示脈衝 (1200Hz + 800Hz)
+        t = np.linspace(0, 0.15, int(sr * 0.15), endpoint=False)
+        cue_pulse = 0.7 * (np.sin(2 * np.pi * 1200 * t) + 0.5 * np.sin(2 * np.pi * 800 * t)) * np.exp(-t * 20)
+        
+        for sec in (sections or []):
+            start_t = sec.get("start_time", 0.0)
+            idx = int(start_t * sr)
+            if 0 <= idx < total_samples:
+                end_idx = min(idx + len(cue_pulse), total_samples)
+                audio[idx:end_idx] += cue_pulse[:end_idx - idx]
+                
+        cue_path = os.path.join(output_dir, "voice_cue_guide.wav")
+        sf.write(cue_path, audio, sr)
+        return cue_path
+
+

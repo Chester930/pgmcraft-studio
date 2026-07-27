@@ -28,12 +28,12 @@ class PGMProjectPackager:
         if source_audio:
             package_files["source_audio"] = source_audio
 
-        for key in ("click_track", "mix_with_click"):
+        for key in ("click_track", "mix_with_click", "voice_cue_guide"):
             copied = self._copy_optional(outputs.get(key), audio_dir)
             if copied:
                 package_files[key] = copied
 
-        for key in ("tempo_map_midi", "click_guide_midi", "chord_guide_midi", "melody_lead_midi", "vocal_pitch_midi", "vocal_lead_quantized_midi"):
+        for key in ("tempo_map_midi", "click_guide_midi", "chord_guide_midi", "section_markers_midi", "bass_line_midi", "lead_melody_midi", "human_groove_midi", "melody_lead_midi", "vocal_pitch_midi", "vocal_lead_quantized_midi"):
             copied = self._copy_optional(outputs.get(key), midi_dir)
             if copied:
                 package_files[key] = copied

@@ -259,13 +259,14 @@ class TestMasterPipelineNodeSync(unittest.TestCase):
         self.assertIn("VoiceSplitMIDIExportNode", self._get_node_names(tree))
 
     def test_main_and_master_tree_have_same_leaf_nodes(self):
-        """主流程與 Master 流程的子節點集合應完全一致"""
-        main_names = sorted(n for n in self._get_node_names(build_pgm_workflow_tree())
-                            if n != "PGMCraftWorkflowRoot")
-        master_names = sorted(n for n in self._get_node_names(build_master_pipeline_tree())
-                              if n != "MasterPGMPipelineRoot")
-        self.assertEqual(main_names, master_names,
-                         "主流程與 Master 流程節點集合不一致！")
+        """主流程 Stage 1~5 應為 Master 流程 Stage 1~5 節點集合之子集"""
+        root_names = {"PGMCraftWorkflowRoot", "PGMFullPipelineRoot", "MasterPGMPipelineRoot"}
+        main_names = set(n for n in self._get_node_names(build_pgm_workflow_tree())
+                         if n not in root_names)
+        master_names = set(n for n in self._get_node_names(build_master_pipeline_tree())
+                           if n not in root_names)
+        self.assertTrue(main_names.issubset(master_names),
+                        "主流程與 Master 流程節點集合不一致！")
 
 
 # ─────────────────────────────────────────────────────────

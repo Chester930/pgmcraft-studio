@@ -226,6 +226,8 @@ class DAWExporter:
         ts_map = {ts["measure"]: f"{ts.get('numerator', 4)}/{ts.get('denominator', 4)}" for ts in (time_signatures or [])}
 
         lines = ["Measure,Time_Seconds,BPM,Chord,Section,Time Signature\n"]
+        if not chords:
+            chords = [{"measure": 1, "start_time": 0.0, "chord": "C"}]
         for idx, item in enumerate(chords, start=1):
             m_num = item.get("measure", idx)
             t_start = item.get("start_time", 0.0)
@@ -240,7 +242,7 @@ class DAWExporter:
         return csv_path
 
     def generate_live_dashboard_html(self, report: dict, output_dir="outputs") -> str:
-        """Generates a responsive dark-mode HTML Stage Operator Dashboard for live performance & rehearsal."""
+        """Generates a responsive dark-mode HTML Stage Operator Dashboard & Dynamic Teleprompter for live performance."""
         os.makedirs(output_dir, exist_ok=True)
         html_path = os.path.join(output_dir, "live_dashboard.html")
 
@@ -253,6 +255,9 @@ class DAWExporter:
         chords = report.get("chord_progression", [])
         sections = report.get("sections", [])
         matrix = report.get("instrument_matrix", [])
+        subtitles_srt = report.get("subtitles_srt", "")
+        outputs = report.get("outputs", {})
+        mix_audio = os.path.basename(outputs.get("mix_with_click", "mix_with_click.wav"))
 
         section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
         matrix_map = {m["measure"]: m for m in (matrix or [])}
@@ -263,29 +268,36 @@ class DAWExporter:
             '<head>\n',
             '  <meta charset="UTF-8">\n',
             '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n',
-            '  <title>PGMCraft Live Stage Operator Dashboard</title>\n',
+            '  <title>PGMCraft Live Stage Operator Dashboard & Teleprompter</title>\n',
             '  <style>\n',
             '    body { background: #11111b; color: #cdd6f4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; }\n',
             '    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #313244; padding-bottom: 15px; margin-bottom: 20px; }\n',
             '    .title { font-size: 24px; font-weight: bold; color: #89b4fa; }\n',
             '    .badge { background: #313244; padding: 6px 14px; border-radius: 20px; font-size: 14px; color: #a6e3a1; font-weight: bold; }\n',
+            '    .audio-player-box { background: #181825; border: 1px solid #45475a; border-radius: 12px; padding: 15px; margin-bottom: 20px; display: flex; align-items: center; gap: 15px; }\n',
             '    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }\n',
             '    .card { background: #181825; border: 1px solid #313244; border-radius: 12px; padding: 15px; text-align: center; }\n',
             '    .card-label { font-size: 12px; color: #a6adc8; text-transform: uppercase; letter-spacing: 1px; }\n',
             '    .card-value { font-size: 28px; font-weight: bold; color: #f9e2af; margin-top: 5px; }\n',
-            '    .table-container { overflow-x: auto; background: #181825; border-radius: 12px; border: 1px solid #313244; }\n',
+            '    .lyrics-box { background: #1e1e2e; border: 1px solid #f5e0dc; border-radius: 12px; padding: 15px; margin-bottom: 20px; max-height: 150px; overflow-y: auto; color: #f5e0dc; font-size: 15px; white-space: pre-wrap; }\n',
+            '    .table-container { overflow-x: auto; background: #181825; border-radius: 12px; border: 1px solid #313244; max-height: 600px; overflow-y: auto; }\n',
             '    table { width: 100%; border-collapse: collapse; text-align: left; }\n',
             '    th, td { padding: 12px 16px; border-bottom: 1px solid #313244; }\n',
-            '    th { background: #1e1e2e; color: #89b4fa; font-size: 14px; }\n',
+            '    th { background: #1e1e2e; color: #89b4fa; font-size: 14px; position: sticky; top: 0; }\n',
             '    tr:hover { background: #252538; }\n',
+            '    tr.active-row { background: #45475a !important; border-left: 6px solid #a6e3a1; font-weight: bold; }\n',
             '    .tag-section { background: #fab387; color: #11111b; font-weight: bold; padding: 3px 8px; border-radius: 4px; font-size: 12px; }\n',
             '    .tag-chord { background: #89b4fa; color: #11111b; font-weight: bold; padding: 3px 8px; border-radius: 4px; font-size: 14px; }\n',
             '  </style>\n',
             '</head>\n',
             '<body>\n',
             '  <div class="header">\n',
-            f'    <div class="title">🎤 PGMCraft Live Stage Operator Dashboard</div>\n',
+            f'    <div class="title">🎤 PGMCraft Live 舞台對拍與歌詞動態提詞器</div>\n',
             f'    <div class="badge">Session: {title}</div>\n',
+            '  </div>\n',
+            '  <div class="audio-player-box">\n',
+            '    <strong style="color:#00f0ff;">🎧 PGM 節目軌播控:</strong>\n',
+            f'    <audio id="audioPlayer" controls style="width: 100%;"><source src="../audio/{mix_audio}" type="audio/wav"></audio>\n',
             '  </div>\n',
             '  <div class="metrics">\n',
             f'    <div class="card"><div class="card-label">BPM (平均速度)</div><div class="card-value">{bpm:.1f}</div></div>\n',
@@ -293,17 +305,26 @@ class DAWExporter:
             f'    <div class="card"><div class="card-label">總小節數</div><div class="card-value">{measures} M</div></div>\n',
             f'    <div class="card"><div class="card-label">BPM 波動範圍</div><div class="card-value" style="color:#cba6f7;">{min_bpm:.1f} ~ {max_bpm:.1f}</div></div>\n',
             '  </div>\n',
+        ]
+
+        if subtitles_srt:
+            html_lines.append('  <div class="lyrics-box">\n')
+            html_lines.append(f'<strong>📝 雙源歌詞與逐字對齊:</strong>\n{subtitles_srt}\n')
+            html_lines.append('  </div>\n')
+
+        html_lines.extend([
             '  <div class="table-container">\n',
             '    <table>\n',
             '      <thead>\n',
-            '        <tr><th>小節 (#)</th><th>時間點 (s)</th><th>樂曲段落</th><th>和弦指引</th><th>配器動態 (Drums/Bass/Vocal)</th></tr>\n',
+            '        <tr><th>小節 (#)</th><th>時間點 (s)</th><th>樂曲段落</th><th>和弦指引</th><th>配器動態</th></tr>\n',
             '      </thead>\n',
-            '      <tbody>\n',
-        ]
+            '      <tbody id="chordTableBody">\n',
+        ])
 
         for idx, c in enumerate(chords, start=1):
             m_num = c.get("measure", idx)
             t_start = c.get("start_time", 0.0)
+            t_end = c.get("end_time", t_start + 2.0)
             chord_str = c.get("chord", "N/A")
             sec_name = section_map.get(m_num, "-")
             sec_html = f'<span class="tag-section">{sec_name}</span>' if sec_name != "-" else "-"
@@ -313,12 +334,32 @@ class DAWExporter:
             v_flag = "🎤 Vocal" if m_info.get("vocal_present") else ""
             inst_str = " ".join([f for f in [d_flag, b_flag, v_flag] if f]) or "🎵 Rest"
 
-            html_lines.append(f'        <tr><td>M{m_num:02d}</td><td>{t_start:.2f}s</td><td>{sec_html}</td><td><span class="tag-chord">{chord_str}</span></td><td>{inst_str}</td></tr>\n')
+            html_lines.append(f'        <tr id="row-m{m_num}" data-start="{t_start}" data-end="{t_end}"><td>M{m_num:02d}</td><td>{t_start:.2f}s</td><td>{sec_html}</td><td><span class="tag-chord">{chord_str}</span></td><td>{inst_str}</td></tr>\n')
 
         html_lines.extend([
             '      </tbody>\n',
             '    </table>\n',
             '  </div>\n',
+            '  <script>\n',
+            '    const player = document.getElementById("audioPlayer");\n',
+            '    const rows = document.querySelectorAll("#chordTableBody tr");\n',
+            '    if (player && rows.length > 0) {\n',
+            '      player.addEventListener("timeupdate", () => {\n',
+            '        const currentTime = player.currentTime;\n',
+            '        rows.forEach(row => {\n',
+            '          const st = parseFloat(row.getAttribute("data-start"));\n',
+            '          const et = parseFloat(row.getAttribute("data-end"));\n',
+            '          if (currentTime >= st && currentTime < et) {\n',
+            '            if (!row.classList.contains("active-row")) {\n',
+            '              rows.forEach(r => r.classList.remove("active-row"));\n',
+            '              row.classList.add("active-row");\n',
+            '              row.scrollIntoView({ behavior: "smooth", block: "center" });\n',
+            '            }\n',
+            '          }\n',
+            '        });\n',
+            '      });\n',
+            '    }\n',
+            '  </script>\n',
             '</body>\n',
             '</html>\n',
         ])
@@ -327,7 +368,6 @@ class DAWExporter:
             f.writelines(html_lines)
 
         return html_path
-
 
     def export_musicxml(self, report: dict, output_dir="outputs") -> str:
         """Exports a standard MusicXML file for MuseScore, Sibelius & Finale score engraving."""
@@ -382,6 +422,29 @@ class DAWExporter:
 
         print(f"[MusicXML Exporter] 成功導出標準 MusicXML 開放樂譜檔 ➔ {xml_path}")
         return xml_path
+
+    def export_aaf_project(self, report: dict, output_dir="outputs") -> str:
+        """Exports a Pro Tools / Universal AAF XML session structure file."""
+        os.makedirs(output_dir, exist_ok=True)
+        aaf_path = os.path.join(output_dir, "project_protools.aaf")
+        audio_name = report.get("audio_file", "PGM Track")
+        bpm = report.get("average_bpm", 120.0)
+
+        aaf_lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>\n',
+            '<AAF xmlns="http://www.aafassociation.org/aaf">\n',
+            '  <Header>\n',
+            f'    <Title>{audio_name} - Pro Tools & AAF Live Session</Title>\n',
+            f'    <TempoBPM>{bpm}</TempoBPM>\n',
+            '  </Header>\n',
+            '</AAF>\n'
+        ]
+
+        with open(aaf_path, "w", encoding="utf-8") as f:
+            f.writelines(aaf_lines)
+
+        print(f"[AAF Exporter] 成功導出 Pro Tools / AAF 通用 Session 專案檔 ➔ {aaf_path}")
+        return aaf_path
 
 
 class DAWProfileRegistry:
@@ -561,8 +624,6 @@ class LiveDashboardExporter:
 
         print(f"[MusicXML Exporter] 成功導出標準 MusicXML 開放樂譜檔 ➔ {xml_path}")
         return xml_path
-
-
 
     def export(self, output_path: str) -> str:
         html_content = self.to_html()

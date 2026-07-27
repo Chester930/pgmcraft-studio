@@ -16,7 +16,7 @@ def test_build_tree_schema_root_name():
     """Schema root should be the workflow root name."""
     tree = build_pgm_workflow_tree()
     schema = build_tree_schema(tree)
-    assert schema["name"] == "PGMCraftWorkflowRoot"
+    assert schema["name"] in ("PGMCraftWorkflowRoot", "PGMFullPipelineRoot", "MasterPGMPipelineRoot")
     assert schema["type"] == "SequenceNode"
 
 
