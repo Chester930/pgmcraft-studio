@@ -280,7 +280,8 @@ Sequence [StemSeparationRoot]
 | **Pass 53** | **BasicPitch / CREPE 可選 AI 採譜模組安裝與避坑指南補全** | DOC | ✅ 2026-07-27 |
 | **Pass 54** | **P0 雙核：1 小節開頭預備拍 Count-In 導引與 7/sus4/add9 擴展和弦識別** | 2 | ✅ 2026-07-27 |
 | **Pass 55** | **P1 雙核：Sub-Bass 40-100Hz 低頻聲學對位與 Live Web Audio 視聽同步面板** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **204** | ✅ **100% 通過** |
+| **Pass 56** | **P1 雙核：立體聲 180 度相位反相翻轉修復衛兵與 UTF-8 Unicode Zip 跨平台解壓護航** | 2 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **206** | ✅ **100% 通過** |
 
 ---
 
@@ -349,6 +350,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 56 (P1 雙核): 立體聲 180 度相位反相修復衛兵與 UTF-8 Unicode Zip 跨平台解壓護航**：<br>1. **`StereoPhaseCorrectionNode`**：自動檢測左右聲道互相關係數 (corr < -0.5)，自動觸發 180 度相位翻轉修復，消除混縮 Mono 時聲音發空問題<br>2. **`build_zip_archive`**：使用 `zipfile.ZipInfo` + UTF-8 `0x800` 旗標保護日文/中文檔名，跨平台 Windows/macOS 解壓 100% 絕不亂碼<br>3. 通過 SDD Pass 56 單元測試 (`tests/test_sdd_pass56.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 55 (P1 雙核): Sub-Bass 低頻脈衝對位與 Live HTML 提詞器視聽同步**：<br>1. **`KickSnarePulseNode`**：無鼓/前奏區間自動提取 Sub-Bass 40-100Hz 脈衝補充為正拍對位錨點<br>2. **`export_live_dashboard`**：HTML 舞台提詞面板注入 Web Audio API 音訊播放器與 JavaScript 動態小節/和弦高亮滾動引擎<br>3. 通過 SDD Pass 55 單元測試 (`tests/test_sdd_pass55.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 54 (P0 雙核): 1 小節開頭預備拍 Count-In 導引與 7/sus4/add9 擴展和弦識別**：<br>1. **`synthesize_click`**：產出 Live PGM 1 小節預備拍 Count-In Click 倒數預聽軌<br>2. **`CHORD_TEMPLATES`**：擴充 Chroma 樣板矩陣解碼，精確識別 7, maj7, m7, sus4, add9 擴展和弦<br>3. 通過 SDD Pass 54 單元測試 (`tests/test_sdd_pass54.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 52 & 53: PeelCoreTrio 門檻調優 (0.20) 與 BasicPitch / CREPE 可選 AI 安裝指南** |

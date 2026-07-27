@@ -370,6 +370,32 @@ class QualityGateNode(BaseNode):
 # Enhancement Chain nodes
 # ---------------------------------------------------------------------------
 
+class StereoPhaseCorrectionNode(BaseNode):
+    """
+    P1-1: 雙聲道相位反相檢測與自動翻轉修復衛兵
+    若左右聲道相關係數 corr < -0.5（嚴重 180 度反相），自動翻轉右聲道 y[1] = -y[1]。
+    """
+    required_keys = ["y", "quality_report"]
+    output_keys = ["y", "phase_corrected"]
+
+    def __init__(self):
+        super().__init__("StereoPhaseCorrectionNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        report = blackboard.get_val("quality_report", {})
+        corr = report.get("stereo_correlation", 1.0)
+
+        if y is not None and y.ndim > 1 and y.shape[0] >= 2 and corr < -0.5:
+            y[1] = -y[1]
+            blackboard.set_val("y", y)
+            blackboard.set_val("phase_corrected", True)
+            print(f"[{self.name}] 🛡️ 檢測到嚴重立體聲反相 (corr={corr:.2f})，已成功自動執行 180 度相位翻轉修復！")
+        else:
+            blackboard.set_val("phase_corrected", False)
+        return NodeStatus.SUCCESS
+
+
 class DCOffsetRemovalNode(BaseNode):
     """
     去除 DC Offset。

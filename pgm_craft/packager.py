@@ -93,10 +93,13 @@ class PGMProjectPackager:
                     if any(f.endswith(ext) for ext in IGNORE_EXTENSIONS):
                         continue
                     full_p = os.path.join(root, f)
-                    rel_p = os.path.relpath(full_p, os.path.dirname(package_dir))
-                    z.write(full_p, rel_p)
+                    rel_p = os.path.relpath(full_p, os.path.dirname(package_dir)).replace("\\", "/")
+                    zinfo = zipfile.ZipInfo.from_file(full_p, rel_p)
+                    zinfo.flag_bits |= 0x800  # 800h: UTF-8 Filename Encoding Flag for cross-platform unzipping
+                    with open(full_p, "rb") as f_in:
+                        z.writestr(zinfo, f_in.read())
 
-        print(f"[ZIP Archiver] 成功將 DAW 工程包純淨壓縮打包 ➔ {os.path.basename(zip_path)}")
+        print(f"[ZIP Archiver] 成功將 DAW 工程包 (帶 UTF-8 Unicode 護航) 壓縮打包 ➔ {os.path.basename(zip_path)}")
         return zip_path
 
     def get_package_tree_markdown(self, package_dir: str) -> str:
