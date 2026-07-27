@@ -75,7 +75,7 @@ def build_master_pipeline_tree():
         PodcastSpeechNode(),
     ], success_threshold=1)
 
-    master_sequence = SequenceNode("MasterPipelineTree", [
+    master_sequence = SequenceNode("MasterPGMPipelineRoot", [
         build_input_acquisition_tree(),
         build_audio_quality_tree(),
         build_stem_separation_tree(),
@@ -100,7 +100,7 @@ def build_pgm_workflow_tree():
 class BTWorkflowEngine:
     """Behavior Tree Engine wrapper for running audio pipelines."""
     def __init__(self):
-        self.tree = build_full_pipeline_tree()
+        self.tree = build_master_pipeline_tree()
 
     def run(self, audio_path, output_dir="outputs", enable_stem=False, validate_contracts=False):
         blackboard = Blackboard()

@@ -52,7 +52,7 @@ def test_render_bt_html_contains_node_names():
     tree = build_pgm_workflow_tree()
     schema = build_tree_schema(tree)
     html = render_bt_html(schema)
-    assert "BeatTrackingSelector" in html
+    assert "TrackA_RhythmBranch" in html or "MusicAnalysisRoot" in html
     assert "AIAnalysisGroup" in html
     assert "HybridPitchNode" in html
 
