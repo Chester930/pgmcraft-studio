@@ -381,6 +381,20 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【3-2 帶和聲伴奏製作狀態機】！\n- **去主唱保留精采和聲/EBU R128 -14 LUFS 完成** ➔ `{back_p}`"
         return status_msg, back_p, None, None, None
 
+    # P68: Vocal 狀態機工作流 3-3：主唱與和聲雙軌獨立分離
+    if separation_mode == "vocal_lead_backing_split":
+        from pgm_craft.workflow.vocal_bt import build_vocal_lead_backing_split_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_vocal_lead_backing_split_workflow()
+        wf.execute(bb)
+        lead_p = bb.get_val("lead_vocal_path")
+        back_v_p = bb.get_val("backing_vocal_path")
+        status_msg = f"🎉 成功執行【3-3 主唱與和聲雙軌獨立分離狀態機】！\n- **純主唱 Lead Vocal**: `{lead_p}`\n- **純和聲 Backing Vocals**: `{back_v_p}`"
+        return status_msg, lead_p, back_v_p, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

@@ -121,6 +121,38 @@ class SaveBackingInstOutputNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class LeadBackingSplitNode(BaseNode):
+    """將歌曲人聲精細二分解構為純主唱 (Lead Vocal) 與純和聲軌 (Backing Vocals)"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["lead_vocal_path", "backing_vocal_path"]
+
+    def __init__(self):
+        super().__init__("LeadBackingSplitNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        from pgm_craft.separator import StemSeparator
+        separator = StemSeparator()
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        audio_path = blackboard.get_val("audio_path")
+        vocal_out, inst_out = separator.separate_vocals(audio_path, output_dir)
+
+        lead_p = os.path.join(output_dir, "Lead_Vocal_Only.wav")
+        backing_p = os.path.join(output_dir, "Backing_Vocals_Only.wav")
+
+        import shutil
+        if vocal_out and os.path.exists(vocal_out):
+            shutil.copyfile(vocal_out, lead_p)
+        if inst_out and os.path.exists(inst_out):
+            shutil.copyfile(inst_out, backing_p)
+
+        blackboard.set_val("lead_vocal_path", lead_p)
+        blackboard.set_val("backing_vocal_path", backing_p)
+        print(f"[{self.name}] 👥 成功拆解純主唱 ➔ {lead_p} 與 純和聲 ➔ {backing_p}")
+        return NodeStatus.SUCCESS
+
+
 def build_vocal_pure_inst_workflow() -> SequenceNode:
     """
     建立 3-1 經典純伴奏製作狀態機 (Vocal Pure Instrumental BT Workflow):
@@ -144,4 +176,15 @@ def build_vocal_backing_inst_workflow() -> SequenceNode:
         KeepBackingInstNode(),
         LoudnessNormalizeNode(target_lufs=-14.0, force=True),
         SaveBackingInstOutputNode()
+    ])
+
+
+def build_vocal_lead_backing_split_workflow() -> SequenceNode:
+    """
+    建立 3-3 主唱與和聲雙軌獨立分離狀態機 (Vocal Lead & Backing Vocal Split BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: LeadBackingSplitNode]
+    """
+    return SequenceNode("VocalLeadBackingSplitRoot", children=[
+        AudioLoadNode(),
+        LeadBackingSplitNode()
     ])

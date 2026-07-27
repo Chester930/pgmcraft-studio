@@ -292,7 +292,8 @@ Sequence [StemSeparationRoot]
 | **Pass 65** | **Vlog 工作流 2-3：展覽/街頭人聲高亮與人群雜音剝離狀態機 (SpeechCrowdSepNode ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
 | **Pass 66** | **Vocal 工作流 3-1：經典純伴奏製作狀態機 (PureInstrumentalNode ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
 | **Pass 67** | **Vocal 工作流 3-2：帶和聲伴奏製作狀態機 (KeepBackingInstNode ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **218** | ✅ **100% 通過** |
+| **Pass 68** | **Vocal 工作流 3-3：主唱與和聲雙軌獨立分離狀態機 (LeadBackingSplitNode)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **219** | ✅ **100% 通過** |
 
 ---
 
@@ -361,6 +362,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 68: Vocal 工作流 3-3：主唱與和聲雙軌獨立分離狀態機**：<br>1. **`build_vocal_lead_backing_split_workflow`**：建立由 AudioLoad ➔ LeadBackingSplit 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_lead_backing_split` 時一鍵觸發狀態機，輸出 `Lead_Vocal_Only.wav` 與 `Backing_Vocals_Only.wav`<br>3. 通過 SDD Pass 68 單元測試 (`tests/test_sdd_pass68.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 67: Vocal 工作流 3-2：帶和聲伴奏製作狀態機**：<br>1. **`build_vocal_backing_inst_workflow`**：建立由 AudioLoad ➔ KeepBackingInst ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_backing_inst` 時一鍵觸發狀態機，輸出帶和聲伴奏音檔 `Instrumental_With_Backing.wav`<br>3. 通過 SDD Pass 67 單元測試 (`tests/test_sdd_pass67.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 66: Vocal 工作流 3-1：經典純伴奏製作狀態機**：<br>1. **`build_vocal_pure_inst_workflow`**：建立由 AudioLoad ➔ PureInstrumental (BS-Roformer) ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_pure_inst` 時一鍵觸發狀態機，輸出純伴奏音檔 `Pure_Instrumental.wav`<br>3. 通過 SDD Pass 66 單元測試 (`tests/test_sdd_pass66.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 65: Vlog 工作流 2-3：展覽/街頭人聲高亮與人群雜音剝離狀態機**：<br>1. **`build_vlog_speech_enhance_workflow`**：建立由 AudioLoad ➔ SpeechCrowdSep ➔ Denoise ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vlog_speech_enhance` 時一鍵觸發狀態機，輸出語音高亮檔 `vlog_speech_enhanced.wav`<br>3. 通過 SDD Pass 65 單元測試 (`tests/test_sdd_pass65.py`, 1 passed) |

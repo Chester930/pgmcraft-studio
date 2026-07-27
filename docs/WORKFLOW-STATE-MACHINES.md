@@ -221,6 +221,30 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
 | `backing_inst_path` | `str` | `SaveBackingInstOutputNode` | Web UI | 帶和聲伴奏 WAV 落盤路徑 (`Instrumental_With_Backing.wav`) |
 
+---
+
+### 3-3. 主唱與和聲雙軌獨立分離工作流 (`vocal_lead_backing_split`)
+
+#### 🎯 目標與聲學指標
+- **目標**：將歌曲人聲精細二分解構為「純主唱 (Lead Vocal)」與「純和聲軌 (Backing Vocals)」。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: VocalLeadBackingSplitRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: LeadBackingSplitNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
+| `lead_vocal_path` | `str` | `LeadBackingSplitNode` | Web UI | 抽離出之純主唱檔 (`Lead_Vocal_Only.wav`) |
+| `backing_vocal_path` | `str` | `LeadBackingSplitNode` | Web UI | 抽離出之純和聲檔 (`Backing_Vocals_Only.wav`) |
+
+
 
 
 
