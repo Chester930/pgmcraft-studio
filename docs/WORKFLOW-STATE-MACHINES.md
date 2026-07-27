@@ -90,4 +90,34 @@ graph TD
 | `isolated_speech_path` | `str` | `TalkingHeadIsolationNode` | Web UI | 抽離出之純口播語音檔 (`Talking_Head_Speech.wav`) |
 | `isolated_bgm_path` | `str` | `TalkingHeadIsolationNode` | Web UI | 抽離出之純背景 BGM 檔 (`Talking_Head_BGM.wav`) |
 
+---
+
+## 📹 大場景 2：影音創作者與自媒體剪輯 (Vlog & Video Production)
+
+### 2-1. 戶外外景低頻風切聲與車流雜音降噪工作流 (`vlog_wind_env_clean`)
+
+#### 🎯 目標與聲學指標
+- **目標**：消除戶外手持 Vlog 或外景錄影之 < 80Hz 極低頻風切爆音 (Wind Popping & Rumble) 與背景車流頻譜。
+- **目標 LUFS**：`-14.0 LUFS` (YouTube / Vlog 影片標準音量)
+- **True Peak 上限**：`-1.0 dBFS`
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: VlogWindCleanRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: WindCutFilterNode (80Hz High-Pass)"]
+    N1 --> N2["State 2: SpectralDenoiseNode"]
+    N2 --> N3["State 3: LoudnessNormalizeNode (target_lufs=-14.0, force=True)"]
+    N3 --> N4["State 4: SaveVlogWindCleanOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
+| `vlog_clean_path` | `str` | `SaveVlogWindCleanOutputNode` | Web UI | 淨化完成之 Vlog WAV 音檔落盤路徑 (`vlog_wind_cleaned.wav`) |
+
+
 

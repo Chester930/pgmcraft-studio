@@ -315,6 +315,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【1-3 Talking Head 獨立語音抽出與背景音分離狀態機】！\n- **純口播說話聲**: `{sp_p}`\n- **純背景音樂 BGM**: `{bgm_p}`"
         return status_msg, sp_p, bgm_p, None, None
 
+    # P63: Vlog 狀態機工作流 2-1：戶外外景低頻風切聲與車流雜音降噪
+    if separation_mode == "vlog_wind_env_clean":
+        from pgm_craft.workflow.vlog_bt import build_vlog_wind_env_clean_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_vlog_wind_env_clean_workflow()
+        wf.execute(bb)
+        vlog_p = bb.get_val("vlog_clean_path")
+        status_msg = f"🎉 成功執行【2-1 戶外外景低頻風切聲與車流雜音降噪狀態機】！\n- **80Hz 風切高通/平滑降噪/EBU R128 -14 LUFS 響度標準化完成** ➔ `{vlog_p}`"
+        return status_msg, vlog_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

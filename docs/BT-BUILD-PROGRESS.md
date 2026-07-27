@@ -287,7 +287,8 @@ Sequence [StemSeparationRoot]
 | **Pass 60** | **Podcast 工作流 1-1：雙人/多人訪談聲音淨化狀態機 (DeHum ➔ Denoise ➔ DeReverb ➔ R128)** | 1 | ✅ 2026-07-27 |
 | **Pass 61** | **Podcast 工作流 1-2：播客音量 EBU R128 自動標準化與防剪峰狀態機 (LoudnessNormalize ➔ SaveMaster)** | 1 | ✅ 2026-07-27 |
 | **Pass 62** | **Podcast 工作流 1-3：Talking Head 獨立語音抽出與背景音分離狀態機 (TalkingHeadIsolationNode)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **213** | ✅ **100% 通過** |
+| **Pass 63** | **Vlog 工作流 2-1：戶外外景低頻風切聲與車流雜音降噪狀態機 (WindCutFilter ➔ Denoise ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **214** | ✅ **100% 通過** |
 
 ---
 
@@ -356,6 +357,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 63: Vlog 工作流 2-1：戶外外景低頻風切聲與車流雜音降噪狀態機**：<br>1. **`build_vlog_wind_env_clean_workflow`**：建立由 AudioLoad ➔ WindCutFilter (80Hz High-pass) ➔ Denoise ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vlog_wind_env_clean` 時一鍵觸發狀態機，輸出風切淨化檔 `vlog_wind_cleaned.wav`<br>3. 通過 SDD Pass 63 單元測試 (`tests/test_sdd_pass63.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 62: Podcast 工作流 1-3：Talking Head 獨立語音抽出與背景音分離狀態機**：<br>1. **`build_podcast_voice_isolation_workflow`**：建立由 AudioLoad ➔ TalkingHeadIsolation 構成之狀態機<br>2. **UI & 管道整合**：選取 `podcast_voice_isolation` 時一鍵觸發狀態機，輸出 `Talking_Head_Speech.wav` 與 `Talking_Head_BGM.wav`<br>3. 通過 SDD Pass 62 單元測試 (`tests/test_sdd_pass62.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 61: Podcast 工作流 1-2：播客音量 EBU R128 自動標準化與防剪峰狀態機**：<br>1. **`build_podcast_r128_normalize_workflow`**：建立由 AudioLoad ➔ LoudnessNormalize (-16 LUFS, True Peak <= -1.0 dBFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `podcast_r128_normalize` 時一鍵觸發狀態機，輸出 Mastered 音檔 `podcast_mastered_-16lufs.wav`<br>3. 通過 SDD Pass 61 單元測試 (`tests/test_sdd_pass61.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 60: Podcast 工作流 1-1：雙人/多人訪談聲音淨化狀態機**：<br>1. **`build_interview_clean_workflow`**：建立由 DeHum ➔ Denoise ➔ DeReverb ➔ LoudnessNormalize (-16 LUFS) 構成之 Behavior Tree 狀態機<br>2. **UI & 管道整合**：選取 `podcast_interview_clean` 時一鍵觸發狀態機，輸出廣播級淨化檔 `interview_clean_speech.wav`<br>3. 通過 SDD Pass 60 單元測試 (`tests/test_sdd_pass60.py`, 1 passed) |
