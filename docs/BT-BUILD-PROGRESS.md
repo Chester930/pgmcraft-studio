@@ -285,7 +285,8 @@ Sequence [StemSeparationRoot]
 | **Pass 58** | **獨立影音下載區塊 (STAGE 1) 升級：線上 Audio Previewer 預聽與 ID3 Tag 標籤寫入** | 1 | ✅ 2026-07-27 |
 | **Pass 59** | **兩階層應用場景與狀態機工作流註冊表 (6 大領域, 21 細分狀態機與 UI 雙選單動態聯動)** | 2 | ✅ 2026-07-27 |
 | **Pass 60** | **Podcast 工作流 1-1：雙人/多人訪談聲音淨化狀態機 (DeHum ➔ Denoise ➔ DeReverb ➔ R128)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **211** | ✅ **100% 通過** |
+| **Pass 61** | **Podcast 工作流 1-2：播客音量 EBU R128 自動標準化與防剪峰狀態機 (LoudnessNormalize ➔ SaveMaster)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **212** | ✅ **100% 通過** |
 
 ---
 
@@ -354,6 +355,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 61: Podcast 工作流 1-2：播客音量 EBU R128 自動標準化與防剪峰狀態機**：<br>1. **`build_podcast_r128_normalize_workflow`**：建立由 AudioLoad ➔ LoudnessNormalize (-16 LUFS, True Peak <= -1.0 dBFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `podcast_r128_normalize` 時一鍵觸發狀態機，輸出 Mastered 音檔 `podcast_mastered_-16lufs.wav`<br>3. 通過 SDD Pass 61 單元測試 (`tests/test_sdd_pass61.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 60: Podcast 工作流 1-1：雙人/多人訪談聲音淨化狀態機**：<br>1. **`build_interview_clean_workflow`**：建立由 DeHum ➔ Denoise ➔ DeReverb ➔ LoudnessNormalize (-16 LUFS) 構成之 Behavior Tree 狀態機<br>2. **UI & 管道整合**：選取 `podcast_interview_clean` 時一鍵觸發狀態機，輸出廣播級淨化檔 `interview_clean_speech.wav`<br>3. 通過 SDD Pass 60 單元測試 (`tests/test_sdd_pass60.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 59: 兩階層應用場景與狀態機工作流註冊表 (6 大領域, 21 細分狀態機與 UI 雙選單動態聯動)**：<br>1. **`ScenarioManager`**：建立 6 大領域 (Podcast, Vlog, Vocal, Transcribe, Live PGM, ASMR) 與 21 項細分狀態機工作流註冊表<br>2. **Gradio UI 二級動態聯動**：第一階選擇 Domain ➔ 第二階 `.change()` 即時更新對應之 Workflow 下拉選單<br>3. 通過 SDD Pass 59 單元測試 (`tests/test_sdd_pass59.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 58: 獨立影音無損下載區塊 (STAGE 1) 極致體驗優化**：<br>1. **Audio Previewer 預聽**：下載完成後自動於 UI 渲染 `<audio>` 播放器，提供線上即時聽感確認<br>2. **ID3 Tag 元資料護航**：`inject_id3_metadata` 自動將影片標題與歌手寫入下載音檔<br>3. 通過 SDD Pass 58 單元測試 (`tests/test_sdd_pass58.py`, 1 passed) |

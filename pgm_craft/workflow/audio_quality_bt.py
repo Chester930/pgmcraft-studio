@@ -654,16 +654,17 @@ class LoudnessNormalizeNode(BaseNode):
     optional_keys = []
     output_keys = ["y", "applied_lufs_gain_db"]
 
-    def __init__(self, target_lufs: float = TARGET_LUFS_ANALYSIS):
+    def __init__(self, target_lufs: float = TARGET_LUFS_ANALYSIS, force: bool = False):
         super().__init__("LoudnessNormalizeNode")
         self.target_lufs = target_lufs
+        self.force = force
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         flags = blackboard.get_val("quality_flags", {})
         grade = blackboard.get_val("quality_grade", "A")
 
-        # 只在需要時處理
-        if not flags.get("needs_amplify") and grade not in ("C",):
+        # 只在需要時處理 (若 force=True 則強制執行)
+        if not self.force and not flags.get("needs_amplify") and grade not in ("C",):
             blackboard.set_val("applied_lufs_gain_db", 0.0)
             return NodeStatus.SUCCESS
 

@@ -288,6 +288,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【1-1 雙人/多人訪談聲音淨化狀態機】！\n- **去電流聲/去降噪/去房間殘響/EBU R128 音量平衡完成** ➔ `{clean_p}`"
         return status_msg, clean_p, None, None, None
 
+    # P61: Podcast 狀態機工作流 1-2：播客音量 EBU R128 自動標準化
+    if separation_mode == "podcast_r128_normalize":
+        from pgm_craft.workflow.podcast_bt import build_podcast_r128_normalize_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_podcast_r128_normalize_workflow()
+        wf.execute(bb)
+        master_p = bb.get_val("mastered_speech_path")
+        status_msg = f"🎉 成功執行【1-2 播客音量 EBU R128 自動標準化與防剪峰狀態機】！\n- **EBU R128 -16 LUFS 響度標準化與 True Peak <= -1.0 dBFS 防爆音完成** ➔ `{master_p}`"
+        return status_msg, master_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

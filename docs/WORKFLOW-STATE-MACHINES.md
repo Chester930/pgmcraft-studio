@@ -40,3 +40,30 @@ graph TD
 #### 🛡️ 異常與衛兵保護 (Guards & Fallbacks)
 1. **直流偏置 (DC Offset Guard)**：`LoudnessNormalizeNode` 自動先清算 10Hz 低通濾波偏置，避免音圈偏移。
 2. **單/雙聲道自動適應 (Channel Auto-shape)**：`SaveInterviewCleanOutputNode` 自動探測波形維度 (1D / 2D)，防止音軌 shape 轉置錯位。
+
+---
+
+### 1-2. 播客音量 EBU R128 自動標準化與防剪峰工作流 (`podcast_r128_normalize`)
+
+#### 🎯 目標與聲學指標
+- **目標**：專注平滑音量調整，消除音量忽大忽小問題，嚴格達成 Spotify / Apple Podcast 規範。
+- **目標 LUFS**：`-16.0 LUFS`
+- **True Peak 上限**：`-1.0 dBFS` (Soft Knee Limiter 防剪峰)
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: PodcastR128NormalizeRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: LoudnessNormalizeNode (target_lufs=-16.0, force=True)"]
+    N1 --> N2["State 2: SaveMasteredOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
+| `y` | `np.ndarray` | `AudioLoadNode` | `LoudnessNormalizeNode` | 音訊時域浮點波形 |
+| `mastered_speech_path` | `str` | `SaveMasteredOutputNode` | Web UI | Master 完成之音量標準化檔 |
+
