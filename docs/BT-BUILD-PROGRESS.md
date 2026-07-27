@@ -317,7 +317,14 @@ Sequence [StemSeparationRoot]
 | **Pass 90** | **HTML5 互動式 Web Audio API 多軌視聽同播與 Mute/Solo 控制器 (DAWExporter ➔ live_dashboard.html)** | 1 | ✅ 2026-07-27 |
 | **Pass 91** | **動態變拍號 (Meter Change Detection) 與 3/4, 6/8 拍號自動切換衛兵 (DynamicMeterChangeGuardNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 92** | **全 DAW 專案檔一鍵預設包導出 (DAWPresetsPackagerNode ➔ daw_presets_pack.zip)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Pass 88~92 全功能大滿貫總驗證** | **245** | ✅ **100% 通過** |
+| **Pass 93** | **全自動需求驅動分軌行為樹總控 (FullAutoDemixingBTEngine) 標準 BT 樹狀重構與 Telemetry 整合** | 4 | ✅ 2026-07-27 |
+| **Pass 94** | **CheckAudioSNRConditionNode 防禦性波形 Lazy-load 機制與例外安全防護** | 2 | ✅ 2026-07-27 |
+| **Pass 95** | **BT 建構進度文檔 (BT-BUILD-PROGRESS.md) 完整性與 SDD 測試歸檔測試** | 2 | ✅ 2026-07-27 |
+| **Pass 96** | **Blackboard get_audio_hash() SHA256 檔案 mtime 全域快取效能優化** | 1 | ✅ 2026-07-27 |
+| **Pass 98** | **ExportBT BackingWithClickSynthesizerNode 防禦性波形 Lazy Load 與 Peak Limiter 護航** | 1 | ✅ 2026-07-27 |
+| **Pass 99** | **Live Dashboard HTML 視聽 Console 標題與 NoneType 音訊路徑安全讀取修復** | 1 | ✅ 2026-07-27 |
+| **Pass 100** | **🎉 100 大滿貫！Scenario Registry 狀態機工作流命名與聯動選單一致性對齊** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Pass 88~100 百大 SDD 滿貫總驗證** | **258** | ✅ **100% 通過** |
 
 ---
 

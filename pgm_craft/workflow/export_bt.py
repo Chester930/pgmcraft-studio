@@ -214,6 +214,21 @@ class BackingWithClickSynthesizerNode(BaseNode):
 
         y = blackboard.get_val("y")
         sr = blackboard.get_val("sr", 22050)
+        if y is None:
+            audio_path = blackboard.get_val("audio_path")
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    y, sr = sf.read(audio_path)
+                    if y.ndim > 1:
+                        y = y.mean(axis=1)
+                    blackboard.set_val("y", y)
+                    blackboard.set_val("sr", sr)
+                except Exception as e:
+                    print(f"[{self.name}] 載入音訊波形失敗: {e}")
+                    return NodeStatus.FAILURE
+            else:
+                return NodeStatus.FAILURE
+
         stems = blackboard.get_val("stems", {})
         click_audio = blackboard.get_val("click_audio")
 

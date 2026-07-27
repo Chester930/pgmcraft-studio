@@ -11,6 +11,9 @@ class NodeStatus(Enum):
     FAILURE = auto()
     RUNNING = auto()
 
+_AUDIO_HASH_CACHE = {}
+
+
 class Blackboard(dict):
     """Shared execution context / state passed across workflow nodes."""
     def get_val(self, key, default=None):
@@ -45,12 +48,24 @@ class Blackboard(dict):
         validations.append(entry)
 
     def get_audio_hash(self) -> str:
-        """Retrieves or calculates SHA256 hash (first 16 chars) for current audio_path."""
+        """Retrieves or calculates SHA256 hash (first 16 chars) for current audio_path with mtime caching."""
         if "audio_hash" in self:
             return self["audio_hash"]
         audio_path = self.get_val("audio_path")
         if not audio_path or not os.path.exists(audio_path):
             return "default_hash"
+
+        cache_key = None
+        try:
+            stat = os.stat(audio_path)
+            cache_key = (os.path.abspath(audio_path), stat.st_mtime, stat.st_size)
+            if cache_key in _AUDIO_HASH_CACHE:
+                h = _AUDIO_HASH_CACHE[cache_key]
+                self["audio_hash"] = h
+                return h
+        except Exception:
+            cache_key = None
+
         import hashlib
         hasher = hashlib.sha256()
         with open(audio_path, "rb") as f:
@@ -58,6 +73,8 @@ class Blackboard(dict):
                 hasher.update(chunk)
         h = hasher.hexdigest()[:16]
         self["audio_hash"] = h
+        if cache_key:
+            _AUDIO_HASH_CACHE[cache_key] = h
         return h
 
     def get_cached_artifact(self, cache_key: str):

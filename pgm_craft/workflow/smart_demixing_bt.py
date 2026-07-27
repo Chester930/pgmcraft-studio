@@ -7,6 +7,7 @@ Implements detection & auto-chaining protection for all models with input requir
 4. CREPE Pitch Guard: Detects polyphonic mix and routes to mono vocal stem.
 """
 
+import os
 import numpy as np
 from pgm_craft.workflow.nodes import BaseNode, NodeStatus, Blackboard
 from pgm_craft.enhancer import AudioEnhancerEngine
@@ -33,7 +34,7 @@ class InputPrerequisiteGuardEngine:
 
 
 class CheckAudioSNRConditionNode(BaseNode):
-    """條件節點：檢測音量與信噪比 (SNR)"""
+    """條件節點：檢測音量與信噪比 (SNR)，支援防禦性 Lazy Load"""
     def __init__(self, min_rms_threshold=0.01):
         super().__init__("CheckAudioSNRConditionNode")
         self.min_rms = min_rms_threshold
@@ -41,7 +42,20 @@ class CheckAudioSNRConditionNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         y = blackboard.get_val("y")
         if y is None:
-            return NodeStatus.FAILURE
+            audio_path = blackboard.get_val("audio_path")
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    import soundfile as sf
+                    y, sr = sf.read(audio_path)
+                    if y.ndim > 1:
+                        y = y.mean(axis=1)
+                    blackboard.set_val("y", y)
+                    blackboard.set_val("sr", sr)
+                except Exception as e:
+                    print(f"[{self.name}] 防禦性波形載入失敗: {e}")
+                    return NodeStatus.FAILURE
+            else:
+                return NodeStatus.FAILURE
 
         rms = np.sqrt(np.mean(y ** 2))
         blackboard.set_val("rms_level", rms)

@@ -740,6 +740,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
     backing_click_path = report.get("outputs", {}).get("backing_with_click", report["outputs"]["mix_with_click"])
     iem_click_path = report.get("outputs", {}).get("iem_split_mono_lr", report["outputs"]["mix_with_click"])
     countin_click_path = report.get("outputs", {}).get("click_with_countin", report["outputs"]["click_track"])
+    zip_path = project_package.get("daw_presets_pack_path") or report.get("outputs", {}).get("zip_path")
 
     return (
         full_text,
@@ -762,8 +763,17 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
     )
 
 
-def process_full_auto_pgm(url_input, audio_file, custom_output_dir):
-    """一鍵全自動模式：強制啟動多階層 AI Stem 分軌與全套 PGM 素材包打包流程。"""
+def process_full_auto_pgm(url_input, audio_file, custom_output_dir, enable_smart_demix=True):
+    """一鍵全自動模式：啟動需求驅動全自動 AI Stem 分軌與全套 PGM 素材包打包流程。"""
+    if enable_smart_demix and audio_file and os.path.exists(audio_file):
+        try:
+            from pgm_craft.workflow.full_auto_bt import FullAutoDemixingBTEngine
+            engine = FullAutoDemixingBTEngine()
+            stems_dir = os.path.join(custom_output_dir or "outputs", "stems")
+            engine.run_full_auto_demixing(audio_file, output_dir=stems_dir)
+        except Exception as e:
+            print(f"[Full Auto UI] 需求驅動分軌智慧跳過提示: {e}")
+
     return process_pgm(
         url_input=url_input,
         audio_file=audio_file,

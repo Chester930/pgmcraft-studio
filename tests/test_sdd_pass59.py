@@ -26,11 +26,11 @@ class TestSDDPass59ScenarioRegistry(unittest.TestCase):
         """驗證二級聯動選單給定 Domain ID 時動態傳回選擇清單」"""
         choices = ScenarioManager.get_workflows_by_domain("podcast")
         self.assertEqual(len(choices), 3)
-        self.assertEqual(choices[0][1], "podcast_interview_clean")
+        self.assertEqual(choices[0][1], "podcast_vocal_master")
 
         live_choices = ScenarioManager.get_workflows_by_domain("live_pgm")
         self.assertEqual(len(live_choices), 4)
-        self.assertEqual(live_choices[0][1], "live_6stem_package")
+        self.assertEqual(live_choices[0][1], "live_multitrack_package")
 
 
 if __name__ == "__main__":

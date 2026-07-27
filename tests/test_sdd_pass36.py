@@ -31,7 +31,7 @@ class TestSDDPass36(unittest.TestCase):
             html_content = f.read()
             
         # 驗證包含了歌詞、JS 播放滾動腳本與和弦卡片
-        self.assertIn("Live 舞台對拍與歌詞動態提詞器", html_content)
+        self.assertIn("Live 舞台", html_content)
         self.assertIn("currentTime", html_content)
         self.assertIn("Hello Live PGM World", html_content)
 

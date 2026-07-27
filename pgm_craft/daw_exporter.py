@@ -324,10 +324,10 @@ class DAWExporter:
         matrix = report.get("instrument_matrix", [])
         subtitles_srt = report.get("subtitles_srt", "")
         outputs = report.get("outputs", {})
-        mix_audio = os.path.basename(outputs.get("mix_with_click", "mix_with_click.wav"))
-        backing_audio = os.path.basename(outputs.get("backing_with_click", "backing_with_click.wav"))
-        iem_audio = os.path.basename(outputs.get("iem_split_mono_lr", "iem_split_mono_lr.wav"))
-        click_audio = os.path.basename(outputs.get("click_track", "click_track.wav"))
+        mix_audio = os.path.basename(outputs.get("mix_with_click") or "mix_with_click.wav")
+        backing_audio = os.path.basename(outputs.get("backing_with_click") or "backing_with_click.wav")
+        iem_audio = os.path.basename(outputs.get("iem_split_mono_lr") or "iem_split_mono_lr.wav")
+        click_audio = os.path.basename(outputs.get("click_track") or "click_track.wav")
 
         section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
         matrix_map = {m["measure"]: m for m in (matrix or [])}
