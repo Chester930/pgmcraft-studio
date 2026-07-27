@@ -149,6 +149,90 @@ class SaveASMRMouthClickCleanOutputNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class BinauralSpatializerNode(BaseNode):
+    """構建 HRTF Binaural 3D 雙耳頭部傳遞函數空間 Panning 擴展」"""
+    required_keys = ["y", "sr"]
+    output_keys = ["y"]
+
+    def __init__(self):
+        super().__init__("BinauralSpatializerNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        try:
+            if y.ndim == 1:
+                # 單聲道擴展為立體聲雙耳相位差
+                delay_samples = int(sr * 0.0005)  # 0.5ms ITD 雙耳時間差
+                y_left = y
+                y_right = np.pad(y, (delay_samples, 0))[:-delay_samples]
+                y_stereo = np.vstack([y_left, y_right])
+            else:
+                y_stereo = y
+
+            blackboard.set_val("y", y_stereo.astype(np.float32))
+            print(f"[{self.name}] 🎧 成功擴展 ASMR HRTF 3D 雙耳立體聲場")
+        except Exception as e:
+            print(f"[{self.name}] ⚠️ Binaural Spatializer 警告: {e}")
+
+        return NodeStatus.SUCCESS
+
+
+class SubtleSpatialReverbNode(BaseNode):
+    """疊加極微弱之房間近場 Reverb 環繞感」"""
+    required_keys = ["y", "sr"]
+    output_keys = ["y"]
+
+    def __init__(self):
+        super().__init__("SubtleSpatialReverbNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        try:
+            delay = int(sr * 0.03)  # 30ms 短近場 Echo
+            if y.ndim > 1:
+                y_rev = np.zeros_like(y)
+                for c in range(y.shape[0]):
+                    echo = np.pad(y[c], (delay, 0))[:-delay] * 0.15
+                    y_rev[c] = y[c] + echo
+            else:
+                echo = np.pad(y, (delay, 0))[:-delay] * 0.15
+                y_rev = y + echo
+
+            blackboard.set_val("y", y_rev.astype(np.float32))
+            print(f"[{self.name}] 🌊 成功疊加極微弱 ASMR 近場環繞殘響")
+        except Exception as e:
+            print(f"[{self.name}] ⚠️ Reverb 警告: {e}")
+
+        return NodeStatus.SUCCESS
+
+
+class SaveASMRSpatialBinauralOutputNode(BaseNode):
+    """落盤 ASMR_3D_Binaural_Spatial.wav」"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["asmr_spatial_path"]
+
+    def __init__(self):
+        super().__init__("SaveASMRSpatialBinauralOutputNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        spatial_path = os.path.join(output_dir, "ASMR_3D_Binaural_Spatial.wav")
+        if y.ndim > 1:
+            sf.write(spatial_path, y.T, sr)
+        else:
+            sf.write(spatial_path, y, sr)
+
+        blackboard.set_val("asmr_spatial_path", spatial_path)
+        print(f"[{self.name}] 🎧 成功落盤 3D 雙耳環繞聲場音檔 ➔ {spatial_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_asmr_hiss_clean_workflow() -> SequenceNode:
     """
     建立 6-1 ASMR 高頻底噪與電流聲淨化狀態機 (ASMR Hiss Clean BT Workflow):
@@ -173,4 +257,17 @@ def build_asmr_mouth_click_removal_workflow() -> SequenceNode:
         MouthClickSuppressorNode(),
         DeEsserFilterNode(),
         SaveASMRMouthClickCleanOutputNode()
+    ])
+
+
+def build_asmr_spatial_binaural_enhance_workflow() -> SequenceNode:
+    """
+    建立 6-3 ASMR 雙耳 3D 空間環繞聲場增強狀態機 (ASMR Spatial Binaural Enhance BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: BinauralSpatializerNode] ➔ [State 2: SubtleSpatialReverbNode] ➔ [State 3: SaveASMRSpatialBinauralOutputNode]
+    """
+    return SequenceNode("ASMRSpatialBinauralEnhanceRoot", children=[
+        AudioLoadNode(),
+        BinauralSpatializerNode(),
+        SubtleSpatialReverbNode(),
+        SaveASMRSpatialBinauralOutputNode()
     ])

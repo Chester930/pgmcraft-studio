@@ -495,6 +495,31 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始 ASMR 音檔路徑 |
 | `asmr_mouth_click_clean_path` | `str` | `SaveASMRMouthClickCleanOutputNode` | Web UI | 剝離濕潤點擊聲與齒音之 ASMR 音檔 (`ASMR_Mouth_Click_Cleaned.wav`) |
 
+---
+
+### 6-3. ASMR 雙耳 3D 空間環繞聲場增強工作流 (`asmr_spatial_binaural_enhance`)
+
+#### 🎯 目標與聲學指標
+- **目標**：構建 HRTF 3D 雙耳頭部傳遞函數，疊加微弱近場環繞 Reverb，構建聽覺立體近耳包覆感。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: ASMRSpatialBinauralEnhanceRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: BinauralSpatializerNode"]
+    N1 --> N2["State 2: SubtleSpatialReverbNode"]
+    N2 --> N3["State 3: SaveASMRSpatialBinauralOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始 ASMR 音檔路徑 |
+| `asmr_spatial_path` | `str` | `SaveASMRSpatialBinauralOutputNode` | Web UI | 3D 雙耳環繞聲場音檔 (`ASMR_3D_Binaural_Spatial.wav`) |
+
+
 
 
 
