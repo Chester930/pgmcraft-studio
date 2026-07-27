@@ -14,37 +14,37 @@ SCENARIO_DOMAINS = [
 
 SCENARIO_WORKFLOWS = {
     "podcast": [
-        {"id": "podcast_interview_clean", "label": "1-1. 雙人/多人訪談去噪與房間迴音修復", "steps": ["dehum", "denoise", "dereverb"]},
-        {"id": "podcast_r128_normalize", "label": "1-2. 播客音量 EBU R128 自動標準化 (-16 LUFS)", "steps": ["r128_loudness"]},
-        {"id": "podcast_voice_isolation", "label": "1-3. 單人 Talking Head 獨立語音抽出與背景墊音分離", "steps": ["vocals_isolation"]}
+        {"id": "podcast_vocal_master", "label": "1-1. 播客極致人聲優化 (Podcast Vocal Master)", "steps": ["vocal_master"]},
+        {"id": "podcast_bgm_ducking", "label": "1-2. 自動開場背景音樂 Fade 避讓 (BGM Ducking)", "steps": ["bgm_ducking"]},
+        {"id": "podcast_chapter_gen", "label": "1-3. 多人對談自動章節標記報告 (Chapter Generator)", "steps": ["chapter_gen"]}
     ],
     "vlog": [
-        {"id": "vlog_wind_env_clean", "label": "2-1. 戶外外景低頻風切聲與車流雜音降噪", "steps": ["low_cut", "crowd_cheering_split"]},
-        {"id": "vlog_dialogue_bgm_split", "label": "2-2. 影片對白與背景音樂 (BGM) 二分抽離", "steps": ["vocals_isolation"]},
-        {"id": "vlog_speech_enhance", "label": "2-3. 展覽/街頭人聲高亮與人群雜音剝離", "steps": ["crowd_cheering_split", "speech_enhance"]}
+        {"id": "vlog_outdoor_denoise", "label": "2-1. 室外風噪與環境雜音降噪 (Outdoor Denoise)", "steps": ["outdoor_denoise"]},
+        {"id": "vlog_sfx_leveling", "label": "2-2. 綜藝效果音音量平滑監控 (SFX Leveling)", "steps": ["sfx_leveling"]},
+        {"id": "vlog_vocal_srt_align", "label": "2-3. 人聲導出並嵌入字幕對齊時間軸 (SRT Align)", "steps": ["vocal_srt_align"]}
     ],
     "vocal_karaoke": [
-        {"id": "vocal_pure_inst", "label": "3-1. 經典純伴奏製作 (Full Vocal Removal)", "steps": ["vocals_isolation"]},
-        {"id": "vocal_backing_inst", "label": "3-2. 帶和聲伴奏製作 (Keep Backing Vocals)", "steps": ["vocals_isolation", "lead_backing_split"]},
-        {"id": "vocal_lead_backing_split", "label": "3-3. 主唱與和聲雙軌獨立分離", "steps": ["vocals_isolation", "lead_backing_split"]},
-        {"id": "vocal_dereverb_clean", "label": "3-4. 人聲乾聲去殘響與聲音純化", "steps": ["vocals_isolation", "dereverb", "debreathe"]}
+        {"id": "vocal_karaoke_gen", "label": "3-1. KTV / Live 伴奏帶去除原唱 (Karaoke Generator)", "steps": ["karaoke_gen"]},
+        {"id": "vocal_dry_stem_clean", "label": "3-2. 清唱幹音品質修復 (Vocal Dry Clean)", "steps": ["vocal_dry_clean"]},
+        {"id": "vocal_harmony_extract", "label": "3-3. 和聲人聲分離與導出 (Harmony Extract)", "steps": ["harmony_extract"]},
+        {"id": "vocal_pitch_correction", "label": "3-4. 自動 Pitch 校正與音準報告 (Pitch Correction)", "steps": ["pitch_correction"]}
     ],
     "transcribe_practice": [
-        {"id": "transcribe_drums_subsplit", "label": "4-1. 爵士/流行鼓組物理三細分 (Kick / Snare / HiHat)", "steps": ["drums_subsplit"]},
-        {"id": "transcribe_guitar_solo", "label": "4-2. 吉他 Solo 採譜與減吉他伴奏", "steps": ["guitar_isolation"]},
-        {"id": "transcribe_piano_solo", "label": "4-3. 鋼琴/鍵盤獨奏採譜分離", "steps": ["piano_isolation"]},
-        {"id": "transcribe_bass_808_split", "label": "4-4. 電貝斯 vs 合成 808 低音聲色拆解", "steps": ["synth_bass_split"]},
-        {"id": "transcribe_strings_isolation", "label": "4-5. 弦樂與管弦樂聲部隔離", "steps": ["strings_isolation"]}
+        {"id": "transcribe_instrument_midi", "label": "4-1. 鋼琴/吉他獨奏轉 MIDI 音符檔 (Instrument MIDI)", "steps": ["instrument_midi"]},
+        {"id": "transcribe_chord_key", "label": "4-2. 爵士/流行樂曲和弦與調性分析報告 (Chord & Key)", "steps": ["chord_key"]},
+        {"id": "transcribe_drum_pattern", "label": "4-3. 爵士鼓與打擊樂器節拍聲軌採譜 (Drum Pattern)", "steps": ["drum_pattern"]}
     ],
     "live_pgm": [
-        {"id": "live_6stem_package", "label": "5-1. 樂團 6-Stem 精密解構與素材包歸檔", "steps": ["general_6stem", "package"]},
-        {"id": "live_click_countin", "label": "5-2. Live PGM 耳監 Click 打點與 1-Bar 預備拍合成", "steps": ["click_synthesis"]},
-        {"id": "live_daw_session_export", "label": "5-3. REAPER (.RPP) / Ableton Live (.ALS) 原生工程檔導出", "steps": ["daw_export"]},
-        {"id": "live_dashboard_html_sync", "label": "5-4. Live 舞台視聽同步 HTML 提詞儀表板導出", "steps": ["live_dashboard_export"]}
+        {"id": "live_multitrack_package", "label": "5-1. Live 舞台 Multi-Track 全分軌 DAW 素材包導出 (Multitrack Package)", "steps": ["multitrack_package"]},
+        {"id": "live_click_cue_gen", "label": "5-2. 舞台導聽 Click & Cue Voice 指示音軌生成 (Click & Cue)", "steps": ["click_cue"]},
+        {"id": "live_stage_hud", "label": "5-3. 樂手即時 HTML5 視聽同步 HUD 控制台面板 (Stage HUD)", "steps": ["stage_hud"]},
+        {"id": "live_daw_native_align", "label": "5-4. Ableton Live / Logic Pro / Cubase 原生專案檔對齊 (DAW Native Align)", "steps": ["daw_native_align"]}
     ],
     "voiceover_asmr": [
-        {"id": "asmr_debreathe_clean", "label": "6-1. ASMR / 配音員去氣音與口水音淨化", "steps": ["debreathe"]},
-        {"id": "voiceover_studio_dry", "label": "6-2. 有聲書極致乾聲與直流偏置消除", "steps": ["dc_offset", "dereverb"]}
+        {"id": "asmr_hiss_clean", "label": "6-1. ASMR 高頻底噪與電流聲淨化 (ASMR Hiss Clean)", "steps": ["asmr_hiss_clean"]},
+        {"id": "asmr_mouth_click_removal", "label": "6-2. ASMR 口腔濕潤音與唇齒音極致剝離 (ASMR Mouth Click Removal)", "steps": ["asmr_mouth_click_removal"]},
+        {"id": "asmr_spatial_binaural_enhance", "label": "6-3. ASMR 雙耳 3D 空間環繞聲場增強 (Spatial Binaural)", "steps": ["spatial_binaural"]},
+        {"id": "asmr_subtle_mic_booster", "label": "6-4. ASMR 助眠極微音細節增益高亮 (Subtle Mic Booster)", "steps": ["subtle_mic_booster"]}
     ]
 }
 
