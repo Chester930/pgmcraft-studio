@@ -67,3 +67,27 @@ graph TD
 | `y` | `np.ndarray` | `AudioLoadNode` | `LoudnessNormalizeNode` | 音訊時域浮點波形 |
 | `mastered_speech_path` | `str` | `SaveMasteredOutputNode` | Web UI | Master 完成之音量標準化檔 |
 
+---
+
+### 1-3. Talking Head 獨立語音抽出與背景音分離工作流 (`podcast_voice_isolation`)
+
+#### 🎯 目標與聲學指標
+- **目標**：從口播或影片中抽離「純口播說話聲」與「純背景 BGM 音樂軌」。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: PodcastVoiceIsolationRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: TalkingHeadIsolationNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
+| `isolated_speech_path` | `str` | `TalkingHeadIsolationNode` | Web UI | 抽離出之純口播語音檔 (`Talking_Head_Speech.wav`) |
+| `isolated_bgm_path` | `str` | `TalkingHeadIsolationNode` | Web UI | 抽離出之純背景 BGM 檔 (`Talking_Head_BGM.wav`) |
+
+

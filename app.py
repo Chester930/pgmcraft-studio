@@ -301,6 +301,20 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【1-2 播客音量 EBU R128 自動標準化與防剪峰狀態機】！\n- **EBU R128 -16 LUFS 響度標準化與 True Peak <= -1.0 dBFS 防爆音完成** ➔ `{master_p}`"
         return status_msg, master_p, None, None, None
 
+    # P62: Podcast 狀態機工作流 1-3：Talking Head 獨立語音抽出與背景音分離
+    if separation_mode == "podcast_voice_isolation":
+        from pgm_craft.workflow.podcast_bt import build_podcast_voice_isolation_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_podcast_voice_isolation_workflow()
+        wf.execute(bb)
+        sp_p = bb.get_val("isolated_speech_path")
+        bgm_p = bb.get_val("isolated_bgm_path")
+        status_msg = f"🎉 成功執行【1-3 Talking Head 獨立語音抽出與背景音分離狀態機】！\n- **純口播說話聲**: `{sp_p}`\n- **純背景音樂 BGM**: `{bgm_p}`"
+        return status_msg, sp_p, bgm_p, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

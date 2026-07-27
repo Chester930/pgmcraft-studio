@@ -67,6 +67,40 @@ class SaveMasteredOutputNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class TalkingHeadIsolationNode(BaseNode):
+    """將口播 Talking Head 說話聲與背景 BGM 二分抽離並落盤"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["isolated_speech_path", "isolated_bgm_path"]
+
+    def __init__(self):
+        super().__init__("TalkingHeadIsolationNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        from pgm_craft.separator import StemSeparator
+        separator = StemSeparator()
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        audio_path = blackboard.get_val("audio_path")
+        vocal_out, inst_out = separator.separate_vocals(audio_path, output_dir)
+
+        speech_p = os.path.join(output_dir, "Talking_Head_Speech.wav")
+        bgm_p = os.path.join(output_dir, "Talking_Head_BGM.wav")
+
+        import shutil
+        if vocal_out and os.path.exists(vocal_out):
+            shutil.copyfile(vocal_out, speech_p)
+        if inst_out and os.path.exists(inst_out):
+            shutil.copyfile(inst_out, bgm_p)
+
+        blackboard.set_val("isolated_speech_path", speech_p)
+        blackboard.set_val("isolated_bgm_path", bgm_p)
+        print(f"[{self.name}] 🗣️ 成功抽取 Talking Head 純口播 ➔ {speech_p} 與 背景 BGM ➔ {bgm_p}")
+        return NodeStatus.SUCCESS
+
+
 def build_interview_clean_workflow() -> SequenceNode:
     """
     建立 1-1 雙人/多人訪談聲音淨化狀態機 (Interview Clean BT Workflow):
@@ -91,4 +125,15 @@ def build_podcast_r128_normalize_workflow() -> SequenceNode:
         AudioLoadNode(),
         LoudnessNormalizeNode(target_lufs=-16.0, force=True),
         SaveMasteredOutputNode()
+    ])
+
+
+def build_podcast_voice_isolation_workflow() -> SequenceNode:
+    """
+    建立 1-3 Talking Head 獨立語音抽出與背景音分離狀態機 (Talking Head Voice Isolation BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: TalkingHeadIsolationNode]
+    """
+    return SequenceNode("PodcastVoiceIsolationRoot", children=[
+        AudioLoadNode(),
+        TalkingHeadIsolationNode()
     ])
