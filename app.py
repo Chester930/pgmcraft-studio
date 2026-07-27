@@ -328,6 +328,20 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【2-1 戶外外景低頻風切聲與車流雜音降噪狀態機】！\n- **80Hz 風切高通/平滑降噪/EBU R128 -14 LUFS 響度標準化完成** ➔ `{vlog_p}`"
         return status_msg, vlog_p, None, None, None
 
+    # P64: Vlog 狀態機工作流 2-2：影片對白與背景音樂 (BGM) 二分抽離
+    if separation_mode == "vlog_dialogue_bgm_split":
+        from pgm_craft.workflow.vlog_bt import build_vlog_dialogue_bgm_split_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_vlog_dialogue_bgm_split_workflow()
+        wf.execute(bb)
+        dia_p = bb.get_val("isolated_dialogue_path")
+        bgm_p = bb.get_val("isolated_bgm_path")
+        status_msg = f"🎉 成功執行【2-2 影片對白與背景音樂 (BGM) 二分抽離狀態機】！\n- **人物講話對白**: `{dia_p}`\n- **純影片背景 BGM**: `{bgm_p}`"
+        return status_msg, dia_p, bgm_p, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

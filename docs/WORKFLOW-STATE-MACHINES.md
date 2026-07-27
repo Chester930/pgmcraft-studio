@@ -119,5 +119,29 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
 | `vlog_clean_path` | `str` | `SaveVlogWindCleanOutputNode` | Web UI | 淨化完成之 Vlog WAV 音檔落盤路徑 (`vlog_wind_cleaned.wav`) |
 
+---
+
+### 2-2. 影片對白與背景音樂 (BGM) 二分抽離工作流 (`vlog_dialogue_bgm_split`)
+
+#### 🎯 目標與聲學指標
+- **目標**：從 Vlog 或影片中抽離「人物講話對白」與「純影片背景 BGM 音樂軌」。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: VlogDialogueBGMSplitRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: DialogueBGMSplitNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
+| `isolated_dialogue_path` | `str` | `DialogueBGMSplitNode` | Web UI | 抽離出之純人物對白檔 (`Vlog_Dialogue_Only.wav`) |
+| `isolated_bgm_path` | `str` | `DialogueBGMSplitNode` | Web UI | 抽離出之純背景 BGM 檔 (`Vlog_Clean_BGM.wav`) |
+
+
 
 

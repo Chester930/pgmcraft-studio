@@ -70,6 +70,38 @@ class SaveVlogWindCleanOutputNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class DialogueBGMSplitNode(BaseNode):
+    """將影片人物對白 (Dialogue) 與背景音樂 (BGM) 二分抽離並落盤"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["isolated_dialogue_path", "isolated_bgm_path"]
+
+    def __init__(self):
+        super().__init__("DialogueBGMSplitNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        from pgm_craft.separator import StemSeparator
+        separator = StemSeparator()
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        audio_path = blackboard.get_val("audio_path")
+        vocal_out, inst_out = separator.separate_vocals(audio_path, output_dir)
+
+        dialogue_p = os.path.join(output_dir, "Vlog_Dialogue_Only.wav")
+        bgm_p = os.path.join(output_dir, "Vlog_Clean_BGM.wav")
+
+        import shutil
+        if vocal_out and os.path.exists(vocal_out):
+            shutil.copyfile(vocal_out, dialogue_p)
+        if inst_out and os.path.exists(inst_out):
+            shutil.copyfile(inst_out, bgm_p)
+
+        blackboard.set_val("isolated_dialogue_path", dialogue_p)
+        blackboard.set_val("isolated_bgm_path", bgm_p)
+        print(f"[{self.name}] 🎬 成功抽離 Vlog 對白 ➔ {dialogue_p} 與 背景 BGM ➔ {bgm_p}")
+        return NodeStatus.SUCCESS
+
+
 def build_vlog_wind_env_clean_workflow() -> SequenceNode:
     """
     建立 2-1 戶外外景低頻風切聲與車流雜音降噪狀態機 (Vlog Wind & Env Clean BT Workflow):
@@ -81,4 +113,15 @@ def build_vlog_wind_env_clean_workflow() -> SequenceNode:
         SpectralDenoiseNode(),
         LoudnessNormalizeNode(target_lufs=-14.0, force=True),
         SaveVlogWindCleanOutputNode()
+    ])
+
+
+def build_vlog_dialogue_bgm_split_workflow() -> SequenceNode:
+    """
+    建立 2-2 影片對白與背景音樂 (BGM) 二分抽離狀態機 (Vlog Dialogue & BGM Split BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: DialogueBGMSplitNode]
+    """
+    return SequenceNode("VlogDialogueBGMSplitRoot", children=[
+        AudioLoadNode(),
+        DialogueBGMSplitNode()
     ])
