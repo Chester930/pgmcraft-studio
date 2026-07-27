@@ -383,6 +383,62 @@ class MultiBandChromaKeyNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class DynamicMeterChangeGuardNode(BaseNode):
+    """
+    【動態變拍號 (Meter Change Detection) 自動切換衛兵】
+    - 採樣連續 Downbeat (強拍 1) 之間的 Beat 數量
+    - 檢測 4/4 拍、3/4 拍 (3 拍小節) 或 6/8 拍 (6 拍小節) 拍號突變點
+    - 寫入 meter_changes 清單至黑板，供 MIDI MetaMessage 動態對齊
+    """
+    required_keys = ["beats"]
+    output_keys = ["meter_changes"]
+
+    def __init__(self):
+        super().__init__("DynamicMeterChangeGuardNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats")
+        if beats is None or len(beats) < 8:
+            blackboard.set_val("meter_changes", [{"measure": 1, "time": 0.0, "time_signature": "4/4"}])
+            return NodeStatus.SUCCESS
+
+        try:
+            downbeat_indices = np.where(beats[:, 1] == 1)[0]
+            meter_changes = []
+            prev_num_beats = None
+
+            for i in range(len(downbeat_indices) - 1):
+                idx_curr = downbeat_indices[i]
+                idx_next = downbeat_indices[i + 1]
+                beats_count = idx_next - idx_curr
+                t_sec = float(beats[idx_curr, 0])
+
+                if beats_count in (3, 4, 6):
+                    time_sig = f"{beats_count}/4" if beats_count in (3, 4) else "6/8"
+                else:
+                    time_sig = "4/4"
+
+                if prev_num_beats is None or time_sig != prev_num_beats:
+                    meter_changes.append({
+                        "measure": i + 1,
+                        "time": t_sec,
+                        "beats_per_measure": beats_count,
+                        "time_signature": time_sig
+                    })
+                    prev_num_beats = time_sig
+
+            if not meter_changes:
+                meter_changes.append({"measure": 1, "time": 0.0, "time_signature": "4/4"})
+
+            blackboard.set_val("meter_changes", meter_changes)
+            print(f"[{self.name}] 📐 成功完成樂曲動態變拍號檢測！捕獲 {len(meter_changes)} 個拍號變更標籤。")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] 變拍號檢測異常: {e}")
+            blackboard.set_val("meter_changes", [{"measure": 1, "time": 0.0, "time_signature": "4/4"}])
+            return NodeStatus.SUCCESS
+
+
 def build_music_analysis_tree() -> SequenceNode:
     """
     建立 Stage 4 樂曲與和聲分析 Behavior Tree (已調整 correct execution order)
@@ -396,7 +452,8 @@ def build_music_analysis_tree() -> SequenceNode:
         HarmonicSilenceGateNode(),       # 👈 過濾留白靜音區間之 Ghost Chords
         SynthesizeStructureTrackNode(),
         SectionStructureNode(),          # 👈 讀取 measure_map 正確進行段落切分
-        DownbeatAlignedSectionNode()    # 👈 100% 強制將段落吸附對齊至小節第 1 拍 (Downbeat)
+        DownbeatAlignedSectionNode(),    # 👈 100% 強制將段落吸附對齊至小節第 1 拍 (Downbeat)
+        DynamicMeterChangeGuardNode()
     ])
 
 
