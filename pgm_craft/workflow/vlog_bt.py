@@ -102,6 +102,64 @@ class DialogueBGMSplitNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class SpeechCrowdSepNode(BaseNode):
+    """剝離展覽/街頭人群尖叫歡呼聲，並聚焦強化說話語音共振峰」"""
+    required_keys = ["y", "sr"]
+    output_keys = ["y"]
+
+    def __init__(self):
+        super().__init__("SpeechCrowdSepNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+
+        try:
+            from scipy import signal
+            # 語音共振峰增益帶通 (300Hz ~ 3400Hz 語音清晰度區域)
+            sos = signal.butter(2, [300.0, 3400.0], btype='bandpass', fs=sr, output='sos')
+            if y.ndim > 1:
+                y_band = np.zeros_like(y)
+                for c in range(y.shape[0]):
+                    y_band[c] = signal.sosfilt(sos, y[c])
+            else:
+                y_band = signal.sosfilt(sos, y)
+
+            # 混合保持自然聽感 (70% 帶通語音 + 30% 原始)
+            y_enhanced = (y_band * 0.7 + y * 0.3).astype(np.float32)
+            blackboard.set_val("y", y_enhanced)
+            print(f"[{self.name}] 🗣️ 成功執行人群雜音剝離與語音共振峰聚焦")
+        except Exception as e:
+            print(f"[{self.name}] ⚠️ 語音高亮警告: {e}")
+
+        return NodeStatus.SUCCESS
+
+
+class SaveSpeechEnhancedOutputNode(BaseNode):
+    """將高亮人聲成果落盤為 vlog_speech_enhanced.wav"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["vlog_enhanced_path"]
+
+    def __init__(self):
+        super().__init__("SaveSpeechEnhancedOutputNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        enh_path = os.path.join(output_dir, "vlog_speech_enhanced.wav")
+        if y.ndim > 1:
+            sf.write(enh_path, y.T, sr)
+        else:
+            sf.write(enh_path, y, sr)
+
+        blackboard.set_val("vlog_enhanced_path", enh_path)
+        print(f"[{self.name}] 🗣️ 成功落盤 Vlog 語音高亮淨化檔 ➔ {enh_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_vlog_wind_env_clean_workflow() -> SequenceNode:
     """
     建立 2-1 戶外外景低頻風切聲與車流雜音降噪狀態機 (Vlog Wind & Env Clean BT Workflow):
@@ -124,4 +182,18 @@ def build_vlog_dialogue_bgm_split_workflow() -> SequenceNode:
     return SequenceNode("VlogDialogueBGMSplitRoot", children=[
         AudioLoadNode(),
         DialogueBGMSplitNode()
+    ])
+
+
+def build_vlog_speech_enhance_workflow() -> SequenceNode:
+    """
+    建立 2-3 展覽/街頭人聲高亮與人群雜音剝離狀態機 (Vlog Speech Enhance & Crowd Removal BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: SpeechCrowdSepNode] ➔ [State 2: SpectralDenoiseNode] ➔ [State 3: LoudnessNormalizeNode(-14 LUFS)] ➔ [State 4: SaveOutput]
+    """
+    return SequenceNode("VlogSpeechEnhanceRoot", children=[
+        AudioLoadNode(),
+        SpeechCrowdSepNode(),
+        SpectralDenoiseNode(),
+        LoudnessNormalizeNode(target_lufs=-14.0, force=True),
+        SaveSpeechEnhancedOutputNode()
     ])

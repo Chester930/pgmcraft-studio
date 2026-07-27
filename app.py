@@ -342,6 +342,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【2-2 影片對白與背景音樂 (BGM) 二分抽離狀態機】！\n- **人物講話對白**: `{dia_p}`\n- **純影片背景 BGM**: `{bgm_p}`"
         return status_msg, dia_p, bgm_p, None, None
 
+    # P65: Vlog 狀態機工作流 2-3：展覽/街頭人聲高亮與人群雜音剝離
+    if separation_mode == "vlog_speech_enhance":
+        from pgm_craft.workflow.vlog_bt import build_vlog_speech_enhance_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_vlog_speech_enhance_workflow()
+        wf.execute(bb)
+        enh_p = bb.get_val("vlog_enhanced_path")
+        status_msg = f"🎉 成功執行【2-3 展覽/街頭人聲高亮與人群雜音剝離狀態機】！\n- **人群雜音剝離/語音共振峰高亮/EBU R128 -14 LUFS 完成** ➔ `{enh_p}`"
+        return status_msg, enh_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

@@ -142,6 +142,33 @@ graph TD
 | `isolated_dialogue_path` | `str` | `DialogueBGMSplitNode` | Web UI | 抽離出之純人物對白檔 (`Vlog_Dialogue_Only.wav`) |
 | `isolated_bgm_path` | `str` | `DialogueBGMSplitNode` | Web UI | 抽離出之純背景 BGM 檔 (`Vlog_Clean_BGM.wav`) |
 
+---
+
+### 2-3. 展覽/街頭人聲高亮與人群雜音剝離工作流 (`vlog_speech_enhance`)
+
+#### 🎯 目標與聲學指標
+- **目標**：剝離展覽、街訪、人群擁擠處之尖叫歡呼雜音，聚焦強化主講語音共振峰 (300Hz ~ 3400Hz)。
+- **目標 LUFS**：`-14.0 LUFS`
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: VlogSpeechEnhanceRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: SpeechCrowdSepNode"]
+    N1 --> N2["State 2: SpectralDenoiseNode"]
+    N2 --> N3["State 3: LoudnessNormalizeNode (target_lufs=-14.0, force=True)"]
+    N3 --> N4["State 4: SaveSpeechEnhancedOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
+| `vlog_enhanced_path` | `str` | `SaveSpeechEnhancedOutputNode` | Web UI | 語音高亮淨化完成檔 (`vlog_speech_enhanced.wav`) |
+
+
 
 
 
