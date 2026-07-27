@@ -345,6 +345,33 @@ graph TD
 | `drum_midi_path` | `str` | `SaveDrumMidiOutputNode` | Web UI | 爵士鼓 MIDI 軌路徑 (`Drum_Track.mid`) |
 | `drum_json_path` | `str` | `SaveDrumMidiOutputNode` | Web UI | 爵士鼓打擊點 JSON 報告路徑 (`drum_pattern_report.json`) |
 
+---
+
+## 🎸 大場景 5：現場 Live PGM 與舞台軌道編排 (Live PGM & Stage Production)
+
+### 5-1. Live 舞台 Multi-Track 全分軌 DAW 素材包導出工作流 (`live_multitrack_package`)
+
+#### 🎯 目標與聲學指標
+- **目標**：解構廣播級全分軌音軌，完成 Sub-Bass 40-100Hz 聲學低頻相位對位，封裝為一鍵導出 DAW 專案素材包 (`pgm_project_package.zip`)。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: LiveMultiTrackPackageRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: FullStemSeparationNode"]
+    N1 --> N2["State 2: SubBassAlignNode"]
+    N2 --> N3["State 3: PackageExportNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
+| `zip_package_path` | `str` | `PackageExportNode` | Web UI | 封裝落盤之廣播級 PGM DAW 素材包 Zip 檔 (`pgm_project_package.zip`) |
+
+
 
 
 

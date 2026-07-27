@@ -450,6 +450,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【4-3 爵士鼓節拍聲軌採譜狀態機】！\n- **爵士鼓 MIDI 軌**: `{d_midi_p}`\n- **鼓點 JSON 報告**: `{d_json_p}`"
         return status_msg, d_midi_p, d_json_p, None, None
 
+    # P73: Live PGM 狀態機工作流 5-1：Live 舞台 Multi-Track 全分軌 DAW 素材包導出
+    if separation_mode == "live_multitrack_package":
+        from pgm_craft.workflow.live_pgm_bt import build_live_multitrack_package_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_live_multitrack_package_workflow()
+        wf.execute(bb)
+        zip_p = bb.get_val("zip_package_path")
+        status_msg = f"🎉 成功執行【5-1 Live 舞台 Multi-Track 全分軌 DAW 素材包導出狀態機】！\n- **Sub-Bass 40-100Hz 淨化/DAW 素材包**: `{zip_p}`"
+        return status_msg, zip_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
