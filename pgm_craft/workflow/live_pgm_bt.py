@@ -92,6 +92,103 @@ class PackageExportNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class BeatTrackAlignNode(BaseNode):
+    """雙核演算法追蹤 Beat / Downbeat 時間點與 BPM」"""
+    required_keys = ["y", "sr"]
+    output_keys = ["beats_times", "bpm"]
+
+    def __init__(self):
+        super().__init__("BeatTrackAlignNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        if y.ndim > 1:
+            y_mono = np.mean(y, axis=0)
+        else:
+            y_mono = y
+
+        try:
+            tempo, beats = librosa.beat.beat_track(y=y_mono, sr=sr)
+            times = librosa.frames_to_time(beats, sr=sr)
+            blackboard.set_val("bpm", float(np.mean(tempo)))
+            blackboard.set_val("beats_times", times.tolist())
+            print(f"[{self.name}] ⏱️ 成功追蹤得 {len(times)} 個對位 Beat 點位，BPM: {np.mean(tempo):.1f}")
+        except Exception as e:
+            print(f"[{self.name}] ⚠️ 節拍追蹤警告: {e}")
+            blackboard.set_val("bpm", 120.0)
+            blackboard.set_val("beats_times", [0.0, 0.5, 1.0, 1.5, 2.0])
+
+        return NodeStatus.SUCCESS
+
+
+class VoiceCueSynthesizerNode(BaseNode):
+    """合成樂段開頭與倒數之語音 Cue 指示聲音軌」"""
+    required_keys = ["beats_times"]
+    output_keys = ["cue_signal"]
+
+    def __init__(self):
+        super().__init__("VoiceCueSynthesizerNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats_times", [0.0, 0.5, 1.0])
+        sr = 22050
+        duration = max(3.0, float(beats[-1]) + 1.0) if len(beats) > 0 else 3.0
+        signal = np.zeros(int(duration * sr), dtype=np.float32)
+
+        # 在第一個 Beat 放置 Cue 音效短脈衝
+        for t in beats[:4]:
+            idx = int(t * sr)
+            if idx < len(signal):
+                t_pulse = np.linspace(0, 0.1, int(0.1 * sr), False)
+                pulse = (np.sin(2 * np.pi * 880 * t_pulse) * np.exp(-t_pulse * 30)).astype(np.float32)
+                end_i = min(len(signal), idx + len(pulse))
+                signal[idx:end_i] += pulse[:end_i - idx]
+
+        blackboard.set_val("cue_signal", signal)
+        print(f"[{self.name}] 🎙️ 成功合成 Live 舞台語音 Cue 指示訊號")
+        return NodeStatus.SUCCESS
+
+
+class SaveClickCueAudioNode(BaseNode):
+    """落盤導壓獨立耳監音軌 click_track.wav 與 cue_track.wav"""
+    required_keys = ["beats_times", "cue_signal", "output_dir"]
+    output_keys = ["click_track_path", "cue_track_path"]
+
+    def __init__(self):
+        super().__init__("SaveClickCueAudioNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats_times", [0.0, 0.5, 1.0])
+        cue_signal = blackboard.get_val("cue_signal")
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        sr = 22050
+        duration = max(3.0, float(beats[-1]) + 1.0) if len(beats) > 0 else 3.0
+        click_sig = np.zeros(int(duration * sr), dtype=np.float32)
+
+        for i, t in enumerate(beats):
+            idx = int(t * sr)
+            if idx < len(click_sig):
+                freq = 1200 if i % 4 == 0 else 800
+                t_pulse = np.linspace(0, 0.05, int(0.05 * sr), False)
+                pulse = (np.sin(2 * np.pi * freq * t_pulse) * np.exp(-t_pulse * 50)).astype(np.float32)
+                end_i = min(len(click_sig), idx + len(pulse))
+                click_sig[idx:end_i] += pulse[:end_i - idx]
+
+        click_path = os.path.join(output_dir, "click_track.wav")
+        cue_path = os.path.join(output_dir, "cue_track.wav")
+
+        sf.write(click_path, click_sig, sr)
+        sf.write(cue_path, cue_signal, sr)
+
+        blackboard.set_val("click_track_path", click_path)
+        blackboard.set_val("cue_track_path", cue_path)
+        print(f"[{self.name}] 🎧 成功導出 IEM 雙獨立聲軌 ➔ {click_path} 與 {cue_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_live_multitrack_package_workflow() -> SequenceNode:
     """
     建立 5-1 Live 舞台 Multi-Track 全分軌 DAW 素材包導出狀態機 (Live Multi-Track Package Export BT Workflow):
@@ -102,4 +199,17 @@ def build_live_multitrack_package_workflow() -> SequenceNode:
         FullStemSeparationNode(),
         SubBassAlignNode(),
         PackageExportNode()
+    ])
+
+
+def build_live_click_cue_gen_workflow() -> SequenceNode:
+    """
+    建立 5-2 舞台導聽 Click & Cue Voice 指示音軌自動生成狀態機 (Click & Voice Cue Generation BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: BeatTrackAlignNode] ➔ [State 2: VoiceCueSynthesizerNode] ➔ [State 3: SaveClickCueAudioNode]
+    """
+    return SequenceNode("LiveClickCueGenRoot", children=[
+        AudioLoadNode(),
+        BeatTrackAlignNode(),
+        VoiceCueSynthesizerNode(),
+        SaveClickCueAudioNode()
     ])

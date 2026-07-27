@@ -371,6 +371,32 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
 | `zip_package_path` | `str` | `PackageExportNode` | Web UI | 封裝落盤之廣播級 PGM DAW 素材包 Zip 檔 (`pgm_project_package.zip`) |
 
+---
+
+### 5-2. 舞台導聽 Click & Cue Voice 指示音軌自動生成工作流 (`live_click_cue_gen`)
+
+#### 🎯 目標與聲學指標
+- **目標**：自動對位追蹤節拍與 Downbeats，合成樂段變更與倒數之語音 Cue 音軌與 Click 獨立對位軌。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: LiveClickCueGenRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: BeatTrackAlignNode"]
+    N1 --> N2["State 2: VoiceCueSynthesizerNode"]
+    N2 --> N3["State 3: SaveClickCueAudioNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
+| `click_track_path` | `str` | `SaveClickCueAudioNode` | Web UI | 精準 Click 節拍對位聲軌 (`click_track.wav`) |
+| `cue_track_path` | `str` | `SaveClickCueAudioNode` | Web UI | 樂段與倒數語音 Cue 聲軌 (`cue_track.wav`) |
+
+
 
 
 

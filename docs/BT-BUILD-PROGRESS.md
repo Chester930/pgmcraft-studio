@@ -298,7 +298,8 @@ Sequence [StemSeparationRoot]
 | **Pass 71** | **Transcribe 工作流 4-2：爵士/流行樂曲和弦與調性分析報告狀態機 (KeyDetectionNode ➔ ChordProgressionNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 72** | **Transcribe 工作流 4-3：爵士鼓與打擊樂器節拍聲軌採譜狀態機 (DrumStemIsolationNode ➔ DrumOnsetDetectionNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 73** | **Live PGM 工作流 5-1：Live 舞台 Multi-Track 全分軌 DAW 素材包導出狀態機 (FullStemSeparationNode ➔ SubBassAlignNode ➔ PackageExportNode)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **224** | ✅ **100% 通過** |
+| **Pass 74** | **Live PGM 工作流 5-2：舞台導聽 Click & Cue Voice 指示音軌自動生成狀態機 (BeatTrackAlignNode ➔ VoiceCueSynthesizerNode)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **225** | ✅ **100% 通過** |
 
 ---
 
@@ -367,6 +368,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 74: Live PGM 工作流 5-2：舞台導聽 Click & Cue Voice 指示音軌自動生成狀態機**：<br>1. **`build_live_click_cue_gen_workflow`**：建立由 AudioLoad ➔ BeatTrackAlign ➔ VoiceCueSynthesizer ➔ SaveClickCueAudio 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_click_cue_gen` 時一鍵觸發狀態機，輸出獨立 IEM 聲軌 `click_track.wav` 與 `cue_track.wav`<br>3. 通過 SDD Pass 74 單元測試 (`tests/test_sdd_pass74.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 73: Live PGM 工作流 5-1：Live 舞台 Multi-Track 全分軌 DAW 素材包導出狀態機**：<br>1. **`build_live_multitrack_package_workflow`**：建立由 AudioLoad ➔ FullStemSeparation ➔ SubBassAlign ➔ PackageExport 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_multitrack_package` 時一鍵觸發狀態機，輸出廣播級 Live PGM 素材包 `pgm_project_package.zip`<br>3. 通過 SDD Pass 73 單元測試 (`tests/test_sdd_pass73.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 72: Transcribe 工作流 4-3：爵士鼓與打擊樂器節拍聲軌採譜狀態機**：<br>1. **`build_transcribe_drum_pattern_workflow`**：建立由 AudioLoad ➔ DrumStemIsolation ➔ DrumOnsetDetection ➔ SaveDrumMidi 構成之狀態機<br>2. **UI & 管道整合**：選取 `transcribe_drum_pattern` 時一鍵觸發狀態機，輸出 `Drum_Track.mid` 與 `drum_pattern_report.json`<br>3. 通過 SDD Pass 72 單元測試 (`tests/test_sdd_pass72.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 71: Transcribe 工作流 4-2：爵士/流行樂曲和弦與調性分析報告狀態機**：<br>1. **`build_transcribe_chord_key_workflow`**：建立由 AudioLoad ➔ KeyDetection ➔ ChordProgression ➔ SaveChordKeyReport 構成之狀態機<br>2. **UI & 管道整合**：選取 `transcribe_chord_key` 時一鍵觸發狀態機，輸出和弦調性報告 `chord_key_analysis.json`<br>3. 通過 SDD Pass 71 單元測試 (`tests/test_sdd_pass71.py`, 1 passed) |
