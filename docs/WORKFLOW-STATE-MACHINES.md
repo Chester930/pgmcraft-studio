@@ -444,6 +444,34 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
 | `als_project_path` | `str` | `SaveDAWNativeProjectNode` | Web UI | Ableton Live 原生專案檔路徑 (`Ableton_Live_Project.als`) |
 
+---
+
+## 🌌 大場景 6：ASMR / 沉浸式音效與微雜音淨化 (ASMR & Immersive Audio)
+
+### 6-1. ASMR 高頻底噪與電流聲淨化工作流 (`asmr_hiss_clean`)
+
+#### 🎯 目標與聲學指標
+- **目標**：撫平 12kHz 以上高頻刺耳 Hiss 底噪與電流聲，保留耳語空氣感 (Airiness Detail)，標準化電平至 `-16.0 LUFS`。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: ASMRHissCleanRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: HighPassHissFilterNode"]
+    N1 --> N2["State 2: SpectralDenoiseNode"]
+    N2 --> N3["State 3: LoudnessNormalizeNode (-16 LUFS)"]
+    N3 --> N4["State 4: SaveASMRHissCleanOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始 ASMR 音檔路徑 |
+| `asmr_clean_path` | `str` | `SaveASMRHissCleanOutputNode` | Web UI | 淨化落盤之 ASMR 音檔 (`ASMR_Hiss_Cleaned.wav`) |
+
+
 
 
 

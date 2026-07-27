@@ -503,6 +503,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【5-4 DAW 原生專案檔對齊狀態機】！\n- **Ableton Live Project 檔**: `{als_p}`"
         return status_msg, als_p, None, None, None
 
+    # P77: ASMR 狀態機工作流 6-1：ASMR 高頻底噪與電流聲淨化
+    if separation_mode == "asmr_hiss_clean":
+        from pgm_craft.workflow.asmr_bt import build_asmr_hiss_clean_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_asmr_hiss_clean_workflow()
+        wf.execute(bb)
+        clean_p = bb.get_val("asmr_clean_path")
+        status_msg = f"🎉 成功執行【6-1 ASMR 高頻底噪與電流聲淨化狀態機】！\n- **Hiss/電流聲淨化音檔**: `{clean_p}`"
+        return status_msg, clean_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
