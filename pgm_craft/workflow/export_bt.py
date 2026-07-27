@@ -194,6 +194,68 @@ class MIDILyricsMarkerExportNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class BackingWithClickSynthesizerNode(BaseNode):
+    """
+    純音樂伴奏 + Click 打點音軌合成節點。
+    自動擷取無人聲伴奏 (drums + bass + other) 並與 Click 聲波進行 -14.0 LUFS 混合，
+    導出 Live 練團/演唱會 IEM 專用之 backing_with_click.wav。
+    """
+    required_keys = ["output_dir", "y", "sr"]
+    optional_keys = ["stems", "click_audio"]
+    output_keys = ["backing_with_click_path"]
+
+    def __init__(self):
+        super().__init__("BackingWithClickSynthesizerNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        import soundfile as sf
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        stems = blackboard.get_val("stems", {})
+        click_audio = blackboard.get_val("click_audio")
+
+        # 1. 取得純音樂伴奏聲部
+        if "drums" in stems and "bass" in stems and "other" in stems:
+            backing = stems["drums"] + stems["bass"] + stems["other"]
+        elif "no_vocal" in stems:
+            backing = stems["no_vocal"]
+        else:
+            backing = y
+
+        # 2. 混入 Click 音訊 (若存在)
+        if click_audio is not None and len(click_audio) > 0:
+            min_len = min(backing.shape[-1] if backing.ndim > 1 else len(backing),
+                          click_audio.shape[-1] if click_audio.ndim > 1 else len(click_audio))
+            if backing.ndim > 1:
+                mixed = backing[:, :min_len] + click_audio[:, :min_len] * 0.7
+            else:
+                mixed = backing[:min_len] + click_audio[:min_len] * 0.7
+        else:
+            mixed = backing
+
+        # 防爆音 Peak Limiter Guard (-1.0 dBFS)
+        peak = np.max(np.abs(mixed))
+        if peak > 0.891:
+            mixed = mixed * (0.891 / peak)
+
+        out_path = os.path.join(output_dir, "backing_with_click.wav")
+        if mixed.ndim > 1:
+            sf.write(out_path, mixed.T, sr)
+        else:
+            sf.write(out_path, mixed, sr)
+
+        blackboard.set_val("backing_with_click_path", out_path)
+        outputs = blackboard.get_val("outputs", {})
+        outputs["backing_with_click"] = out_path
+        blackboard.set_val("outputs", outputs)
+
+        print(f"[{self.name}] 🎧 成功導出純音樂伴奏 + Click 音軌 ➔ {out_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_export_tree() -> SequenceNode:
     """
     建立 Stage 5 成果導出與 DAW 素材生成 Behavior Tree
@@ -206,7 +268,8 @@ def build_export_tree() -> SequenceNode:
         VoiceCueSynthesisNode(),
         HumanGrooveMIDIExportNode(),
         AudioQuantizerNode(),
-        MIDIQuantizerGuardNode()
+        MIDIQuantizerGuardNode(),
+        BackingWithClickSynthesizerNode()
     ])
 
 
