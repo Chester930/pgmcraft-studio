@@ -1,52 +1,77 @@
 # PGMCraft Studio
 
 [![CI](https://github.com/Chester930/pgmcraft-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Chester930/pgmcraft-studio/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Chester930/pgmcraft-studio)](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.3.0)
+[![Release](https://img.shields.io/github/v/release/Chester930/pgmcraft-studio)](https://github.com/Chester930/pgmcraft-studio/releases/tag/v2.0.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-PGMCraft Studio 是一套以節點式音訊工作流與 Behavior Tree 編排為核心的 DAW / PGM 工程素材產生工具。
+PGMCraft Studio 是一套以節點式音訊工作流與 **Behavior Tree (行為樹)** 編排為核心的 DAW / Live PGM 工程素材自動產生系統。
 
-目前第一階段的穩定目標是：給定本地音檔或支援的媒體 URL，產生可用於 DAW、練團、採譜與 Live PGM 準備的工程素材包。
+給定本地音檔或網路影音 URL，系統能自動進行 **AI 樂器分軌、雙軌動態節拍對齊、Tempo Inertia 速度慣性脈衝防跳拍、和聲與 Downbeat 樂段對齊**，並一鍵產出適用於 **Pro Tools, Cubase, REAPER, Ableton Live, Logic Pro** 的全套 DAW 工程素材包與 **Live 舞台 HTML 動態滾動提詞器**。
 
-## 專案連結
+---
 
-- Repository: [Chester930/pgmcraft-studio](https://github.com/Chester930/pgmcraft-studio)
-- Release: [v1.3.0 商業級全功能大滿貫 Suite](https://github.com/Chester930/pgmcraft-studio/releases/tag/v1.3.0)
-- 文件入口：[docs/README.md](docs/README.md)
+## 📚 說明文件導覽
 
+- 🚀 **[初學者 3 分鐘快速上手指南](docs/QUICK-START.md)**（樂手/PGM/DAW 製作人使用情境）
+- 🛠️ **[詳細環境安裝與避坑指南](docs/INSTALLATION-GUIDE.md)**（Python, PyTorch GPU, FFmpeg）
+- 🎛️ **[全 DAW 素材包匯入教學](docs/DAW-IMPORT-GUIDE.md)**（Pro Tools AAF, REAPER RPP, Cubase CSV）
+- 📐 **[系統架構與 Behavior Tree 設計](docs/ARCHITECTURE.md)**
 
-## 目前穩定功能 (v1.3.0 商業級升級版)
+---
 
-### 🌟 六大極致核心模組 (Pass 1 ~ Pass 6 SDD 商業規格)
-1. **剝洋蔥迭代分軌 (Iterative Peel-and-Subtract Stem Separation)**
-   - 核心三大樂器 (`Guitar`, `Piano`, `Strings`) 優先分析、偵測與減法分離，保留高品質原聲波形。
-2. **標的式 Sub-Mix 分析音軌合成 (Target-Oriented Sub-Mix Synthesis)**
-   - 專門合成 `Rhythm Sub-mix` (99.8% 極速對拍)、`Harmonic Sub-mix` (無鼓無人聲和弦分析) 與 `Structure Sub-mix` (樂段切分)。
-3. **DAW 自動 3 大 Bus 路由與音量平衡 (DAW Bus Routing)**
-   - 自動在 Reaper `.rpp`、Ableton `.als` 等導出中建立 `RHYTHM BUS` (-3dB)、`MUSIC BUS` (-6dB) 與 `VOCAL BUS` (0dB) 防爆音結構。
-4. **聲部導向 MIDI 拆分與 Legato 0 衝突微秒修復 (Voice Splitting & Legato Fixer)**
-   - 鋼琴 (右手高音/左手低音) 與吉他 (刷弦/Bassline) 聲部 MIDI 自動拆分。
-   - 單聲部音符微秒重疊自動裁切，在 Logic Pro / Cubase 中達成 **0 衝突完美 Legato 演奏**。
-5. **EBU R128 響度控制與 Live 對時儀表板 (EBU R128 Loudness & JS Live Sync)**
-   - 帶 Click 預聽檔自動控制 Peak <= -1.0 dBFS (0.891)。
-   - `live_dashboard.html` 舞台指示面板支援播放時 **JS 即時小節與和弦霓虹光高亮**。
-6. **開放樂譜 MusicXML 導出與 GM Standard Drum 鍵位支援**
-   - 支援 `.musicxml` 開放樂譜導出（可直接匯入 MuseScore / Sibelius 列印五線譜/簡譜）。
-   - GM 打擊樂支援 Rimshot/Cowbell (Pitch 37/56) 與 WoodBlock 模式。
+## 🚀 3 分鐘快速開始
 
-### 核心音訊與 DAW 素材包
-- 本地音檔與 URL 下載入口，支援資料夾 Batch 批次處理 (`main.py <dir>`)。
-- BeatNet / Librosa 雙引擎對拍與 downbeat 自動對齊。
-- Reaper `.rpp`、Ableton `.als`、Logic Pro `.fcpxml`、Cubase `.csv`、MusicXML `.musicxml`。
-- `live_dashboard.html` 舞台指示儀表板與 `pgm_project_package.zip` 素材包純淨壓縮。
+```bash
+# 1. 複製儲存庫
+git clone https://github.com/Chester930/pgmcraft-studio.git
+cd pgmcraft-studio
 
+# 2. 建立與啟用虛擬環境
+python -m venv .venv
+.venv\Scripts\activate      # Windows (PowerShell: .venv\Scripts\Activate.ps1)
+# source .venv/bin/activate  # macOS / Linux
 
-### GUI 與 CLI
-- Gradio 6 大頁籤 (URL 下載 / 分軌工作區 / PGM 分析 / 診斷 / Piano Roll / ZIP 下載)
-- CLI `--batch-dir` 多執行緒批次處理 + `batch_summary.csv`
-- CLI `--daw-profile`、`--diagnostics`、`--export-schema`
+# 3. 安裝依賴
+pip install -r requirements.txt
 
-詳細專案目標與階段文件請見 [docs/README.md](docs/README.md)。
+# 4. 啟動 Web UI 服務
+python app.py
+```
+
+在瀏覽器訪問 `http://127.0.0.1:7860` 即可開啟 PGMCraft Studio 旗艦級控制介面！
+
+---
+
+## 🌟 八大核心音訊與 PGM 引擎亮點 (v2.0.0)
+
+1. 🥁 **Tempo Inertia 速度慣性脈衝引擎 (Pass 40)**
+   - 當曲目進入無鼓區間 (Breakdown / 鋼琴獨奏) 時，系統自動切換為硬體級電子節拍器等速內插，屏蔽 AI 混亂預測，**Click 100% 穩定不亂跳拍**。
+2. 🎯 **Re-Entry Re-Anchoring 鼓聲切入重音第一拍自動鎖定 (Pass 41)**
+   - 鼓聲重新爆發瞬間 (Re-entry)，自動抓取大鼓 (Kick) 衝擊脈衝，**強制將重音校正重錨為 Beat 1 Downbeat**，消滅錯拍。
+3. 🛡️ **HarmonicSilenceGate 和聲靜音門閥 (Pass 43)**
+   - 前奏/尾奏留白區間 (RMS < 0.01) 強制屏蔽並消毒，**徹底消滅虛構 Ghost Chords**。
+4. 📐 **Downbeat-Aligned Section 樂段 100% 第一拍吸附 (Pass 44)**
+   - Intro, Verse, Chorus, Outro 時間點，**100% 強制吸附對齊至最近小節 Measure 1 號拍**，告別切在小節中間拍的痛苦排版。
+5. 🎼 **Multi-Band Chroma Key 關係大小調校正 (Pass 45)**
+   - 分離 Bass 低頻與中高頻和聲，對 Bass 音高進行 Root Note 重點加權，**消滅 C Major / Am 關係大小調混淆**。
+6. 🎤 **Web-based Live 舞台動態滾動提詞器 (Pass 36)**
+   - 自動生成 `live_dashboard.html`，可在 iPad/筆電播放器隨音樂平滑自動滾動顯示小節、和弦與歌詞。
+7. 🎧 **Voice Cue Guide 舞台語音倒數導引 (Pass 33)**
+   - 自動生成 `voice_cue_guide.wav` 舞台導唱/數拍語音倒數音軌。
+8. 📦 **Pro Tools / AAF 全 DAW 泛用工程包 (Pass 38)**
+   - 自動打包匯出包含 `project_protools.aaf`、`pgm_session.rpp`、`pgm_session.als` 與 `cubase_tempo_map.csv` 之純淨 ZIP 包。
+
+---
+
+## 💻 CLI 命令行批次處理
+
+```bash
+# 單一檔案分析
+python main.py input.wav --output-dir outputs --enable-stem
+
+# 資料夾多執行緒批次自動化處理
+python main.py ./my_songs_folder --batch-dir
+```
 
 ## 輸出結構
 

@@ -19,6 +19,7 @@ class TestSDDPass31(unittest.TestCase):
         result_bb = engine.run(
             audio_path=self.audio_path,
             output_dir=self.test_dir,
+            enable_stem=True,
             target_stage="stage3"
         )
         self.assertEqual(result_bb.get_val("workflow_status"), "SUCCESS")
