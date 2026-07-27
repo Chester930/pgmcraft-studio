@@ -225,6 +225,71 @@ class PGMProjectPackager:
             file.write("\n".join(lines))
         return guide_path
 
+    def export_live_dashboard(self, report: dict, package_dir: str) -> str:
+        """P1-2: Live 舞台 HTML 提詞面板 (帶 Web Audio 視聽同步與小節/和弦動態滾動高亮)"""
+        html_path = os.path.join(package_dir, "live_dashboard.html")
+        song_title = report.get("song_title", "Live PGM Track")
+        bpm = report.get("bpm", 120)
+        key = report.get("key", "C Major")
+        chords = report.get("chords", ["C", "G", "Am", "F"])
+
+        chord_cards_html = "".join([
+            f'<div class="bar-card" id="bar-{i+1}"><span class="bar-num">m.{i+1}</span><span class="chord">{ch}</span></div>'
+            for i, ch in enumerate(chords)
+        ])
+
+        html_content = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>Live PGM Dashboard — {song_title}</title>
+<style>
+  body {{ background: #12131C; color: #E1E2EC; font-family: sans-serif; padding: 20px; }}
+  .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333446; padding-bottom: 10px; }}
+  .badge {{ background: #00E676; color: #000; padding: 4px 10px; border-radius: 4px; font-weight: bold; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 15px; margin-top: 20px; }}
+  .bar-card {{ background: #1E1F2E; border: 1px solid #2B2D42; border-radius: 8px; padding: 15px; text-align: center; transition: all 0.2s; }}
+  .bar-card.active {{ background: #3A3D52; border-color: #00E676; transform: scale(1.05); box-shadow: 0 0 12px rgba(0,230,118,0.4); }}
+  .bar-num {{ font-size: 0.8rem; color: #888; display: block; }}
+  .chord {{ font-size: 1.6rem; font-weight: bold; color: #FFD54F; margin-top: 5px; }}
+  .player-box {{ margin-top: 20px; background: #181926; padding: 15px; border-radius: 8px; display: flex; align-items: center; gap: 15px; }}
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>🎵 {song_title}</h1>
+    <div><span class="badge">BPM: {bpm}</span> <span class="badge" style="background:#29B6F6;">KEY: {key}</span></div>
+  </div>
+  <div class="player-box">
+    <span>▶ Live Audio Cue:</span>
+    <audio id="pgmAudio" controls src="audio/mix_with_click.wav" style="width: 80%;"></audio>
+  </div>
+  <div class="grid" id="barGrid">
+    {chord_cards_html}
+  </div>
+  <script>
+    const audio = document.getElementById('pgmAudio');
+    const bpm = {bpm};
+    const secPerBar = (60 / bpm) * 4;
+    audio.addEventListener('timeupdate', () => {{
+      const currentBar = Math.floor(audio.currentTime / secPerBar) + 1;
+      document.querySelectorAll('.bar-card').forEach((card, idx) => {{
+        if (idx + 1 === currentBar) {{
+          card.classList.add('active');
+          card.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+        }} else {{
+          card.classList.remove('active');
+        }}
+      }});
+    }});
+  </script>
+</body>
+</html>"""
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        print(f"[Live Dashboard] 🌐 成功匯出 Live Web Audio 視聽同步舞台提詞面板 ➔ {html_path}")
+        return html_path
+
     def _copy_optional(self, src, dst_dir, rename_stem=None):
         if not src or not isinstance(src, str) or not os.path.exists(src) or os.path.isdir(src):
             return None

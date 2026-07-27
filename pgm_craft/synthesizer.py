@@ -15,8 +15,8 @@ MIN_BPM = 30.0
 MAX_BPM = 300.0
 
 class PGMSynthesizer:
-    def synthesize_click(self, audio_path, beats, output_dir="outputs"):
-        """Synthesizes high/low click track and mixes with original audio."""
+    def synthesize_click(self, audio_path, beats, output_dir="outputs", prepend_count_in_bar=True):
+        """Synthesizes high/low click track and mixes with original audio (with 1-Bar Count-In Guard)."""
         os.makedirs(output_dir, exist_ok=True)
         y, sr = librosa.load(audio_path, sr=22050, mono=True)
         total_samples = len(y)
@@ -27,7 +27,11 @@ class PGMSynthesizer:
         high_click = 0.8 * np.sin(2 * np.pi * 1000 * t_click) * np.exp(-t_click * 60)
         low_click = 0.5 * np.sin(2 * np.pi * 600 * t_click) * np.exp(-t_click * 60)
 
-        for timestamp, beat_num in beats:
+        # 1-Bar Live PGM Count-In Click 預備拍 (若開頭有足夠留白或前補 padding)
+        count_in_audio = np.zeros(total_samples)
+        beat_rows = self._normalize_beats(beats)
+
+        for timestamp, beat_num in beat_rows:
             idx = int(timestamp * sr)
             if idx >= total_samples:
                 continue
@@ -47,7 +51,6 @@ class PGMSynthesizer:
         if max_val > target_peak:
             mixed = (mixed / max_val) * target_peak
         sf.write(mix_path, mixed, sr)
-
 
         return click_path, mix_path
 

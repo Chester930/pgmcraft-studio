@@ -278,7 +278,9 @@ Sequence [StemSeparationRoot]
 | **Pass 51** | **變拍子動態感應器 (3/4 & 4/4) 與 REAPER `.RPP` 原生工程導出器** | 2 | ✅ 2026-07-27 |
 | **Pass 52** | **PeelCoreTrio 同層顯著度門檻調優 (0.20) 與殘軌污染消除** | 1 | ✅ 2026-07-27 |
 | **Pass 53** | **BasicPitch / CREPE 可選 AI 採譜模組安裝與避坑指南補全** | DOC | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **201** | ✅ **100% 通過** |
+| **Pass 54** | **P0 雙核：1 小節開頭預備拍 Count-In 導引與 7/sus4/add9 擴展和弦識別** | 2 | ✅ 2026-07-27 |
+| **Pass 55** | **P1 雙核：Sub-Bass 40-100Hz 低頻聲學對位與 Live Web Audio 視聽同步面板** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **204** | ✅ **100% 通過** |
 
 ---
 
@@ -347,6 +349,9 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 55 (P1 雙核): Sub-Bass 低頻脈衝對位與 Live HTML 提詞器視聽同步**：<br>1. **`KickSnarePulseNode`**：無鼓/前奏區間自動提取 Sub-Bass 40-100Hz 脈衝補充為正拍對位錨點<br>2. **`export_live_dashboard`**：HTML 舞台提詞面板注入 Web Audio API 音訊播放器與 JavaScript 動態小節/和弦高亮滾動引擎<br>3. 通過 SDD Pass 55 單元測試 (`tests/test_sdd_pass55.py`, 1 passed) |
+| 2026-07-27 | 完成 **Pass 54 (P0 雙核): 1 小節開頭預備拍 Count-In 導引與 7/sus4/add9 擴展和弦識別**：<br>1. **`synthesize_click`**：產出 Live PGM 1 小節預備拍 Count-In Click 倒數預聽軌<br>2. **`CHORD_TEMPLATES`**：擴充 Chroma 樣板矩陣解碼，精確識別 7, maj7, m7, sus4, add9 擴展和弦<br>3. 通過 SDD Pass 54 單元測試 (`tests/test_sdd_pass54.py`, 2 passed) |
+| 2026-07-27 | 完成 **Pass 52 & 53: PeelCoreTrio 門檻調優 (0.20) 與 BasicPitch / CREPE 可選 AI 安裝指南** |
 | 2026-07-27 | 完成 **Pass 51: 變拍子動態感應與 REAPER `.RPP` 原生工程導出器**：<br>1. **變拍子識別**：`DownbeatRefineNode` 動態感知 3/4 華爾滋與 4/4 標準拍號<br>2. **REAPER `.RPP` 導出**：`DAWExporter` 匯出包含音軌分色、Stems 載入、Marker 時間軸與 Tempo Map 之專案檔<br>3. 通過 SDD Pass 51 單元測試 (`tests/test_sdd_pass51.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 50: 二階音色細分的動態顯著度早停 (Presence Early Exit Guard)**：<br>1. **RMS -40dB 門閥**：鼓組/貝斯二階細分前自動檢測能量，低於門檻時早停 Skip，防止無效空檔落盤<br>2. 通過 SDD Pass 50 單元測試 (`tests/test_sdd_pass50.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 49: CREPE / BasicPitch 採譜專項護航與 Ghost Note 碎音濾波**：<br>1. **`CREPEPitchNode`**：強制選用去氣音純人聲軌 + 3.5kHz 巴特沃斯低通濾波預處理，消滅顫音震盪<br>2. **`BasicPitchNode`**：適配 `-1.0 dBFS` Peak Guard 並對導出 MIDI 進行 `> 80ms` 碎音過濾<br>3. 通過 SDD Pass 49 單元測試 (`tests/test_sdd_pass49.py`, 2 passed) |

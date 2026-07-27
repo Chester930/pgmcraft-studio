@@ -60,9 +60,31 @@ class KickSnarePulseNode(BaseNode):
             except Exception as e:
                 print(f"[{self.name} Warning] 提取 Kick 脈衝失敗: {e}")
 
+        # 無鼓區間 Sub-Bass 40-100Hz 低頻脈衝補充對位護航
+        bass_path = stems.get("sub_bass_808") or stems.get("electric_bass") or stems.get("bass")
+        if not bass_path and stems_dir:
+            bp = os.path.join(stems_dir, "bass", "synth_bass_808.wav") or os.path.join(stems_dir, "bass", "bass.wav")
+            if os.path.exists(bp): bass_path = bp
+
+        if (not kick_anchors or len(kick_anchors) < 5) and bass_path and os.path.exists(bass_path):
+            try:
+                yb, srb = sf.read(bass_path)
+                yb = _to_mono(yb)
+                win_b = int(srb * 0.1)
+                env_b = np.array([np.max(np.abs(yb[i:i+win_b])) for i in range(0, len(yb) - win_b, win_b // 2)])
+                th_b = np.max(env_b) * 0.35 if len(env_b) > 0 and np.max(env_b) > 0 else 0.01
+                sub_peaks = [i * (win_b // 2) / srb for i, val in enumerate(env_b) if val >= th_b]
+                for sp_t in sub_peaks:
+                    if not kick_anchors or min(abs(sp_t - ka) for ka in kick_anchors) >= 0.25:
+                        kick_anchors.append(sp_t)
+                kick_anchors.sort()
+                print(f"[{self.name} Sub-Bass Guard] 🛡️ 無鼓區間已成功補齊 {len(sub_peaks)} 個 Sub-Bass 低頻正拍脈衝錨點！")
+            except Exception as eb:
+                print(f"[{self.name} Warning] 提取 Sub-Bass 脈衝失敗: {eb}")
+
         blackboard.set_val("kick_anchors", np.array(kick_anchors))
         blackboard.set_val("snare_anchors", np.array(snare_anchors))
-        print(f"[{self.name}] ✅ 成功提取 {len(kick_anchors)} 個大鼓重音脈衝點 (Kick Anchors)。")
+        print(f"[{self.name}] ✅ 成功提取 {len(kick_anchors)} 個重音脈衝點 (Kick + Sub-Bass Anchors)。")
         return NodeStatus.SUCCESS
 
 

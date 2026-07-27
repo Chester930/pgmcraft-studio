@@ -17,13 +17,40 @@ NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 CHORD_TEMPLATES = {}
 for i, name in enumerate(NOTE_NAMES):
+    # 1. 大三和弦 (Major Triad)
     maj_vec = np.zeros(12)
     maj_vec[i], maj_vec[(i + 4) % 12], maj_vec[(i + 7) % 12] = 1.0, 0.8, 0.8
     CHORD_TEMPLATES[f"{name}"] = maj_vec / np.linalg.norm(maj_vec)
 
+    # 2. 小三和弦 (Minor Triad)
     min_vec = np.zeros(12)
     min_vec[i], min_vec[(i + 3) % 12], min_vec[(i + 7) % 12] = 1.0, 0.8, 0.8
     CHORD_TEMPLATES[f"{name}m"] = min_vec / np.linalg.norm(min_vec)
+
+    # 3. 屬七和弦 (Dominant 7th)
+    dom7_vec = np.zeros(12)
+    dom7_vec[i], dom7_vec[(i + 4) % 12], dom7_vec[(i + 7) % 12], dom7_vec[(i + 10) % 12] = 1.0, 0.7, 0.7, 0.6
+    CHORD_TEMPLATES[f"{name}7"] = dom7_vec / np.linalg.norm(dom7_vec)
+
+    # 4. 大七和弦 (Major 7th)
+    maj7_vec = np.zeros(12)
+    maj7_vec[i], maj7_vec[(i + 4) % 12], maj7_vec[(i + 7) % 12], maj7_vec[(i + 11) % 12] = 1.0, 0.7, 0.7, 0.6
+    CHORD_TEMPLATES[f"{name}maj7"] = maj7_vec / np.linalg.norm(maj7_vec)
+
+    # 5. 小七和弦 (Minor 7th)
+    min7_vec = np.zeros(12)
+    min7_vec[i], min7_vec[(i + 3) % 12], min7_vec[(i + 7) % 12], min7_vec[(i + 10) % 12] = 1.0, 0.7, 0.7, 0.6
+    CHORD_TEMPLATES[f"{name}m7"] = min7_vec / np.linalg.norm(min7_vec)
+
+    # 6. 掛留四和弦 (Suspended 4th)
+    sus4_vec = np.zeros(12)
+    sus4_vec[i], sus4_vec[(i + 5) % 12], sus4_vec[(i + 7) % 12] = 1.0, 0.8, 0.7
+    CHORD_TEMPLATES[f"{name}sus4"] = sus4_vec / np.linalg.norm(sus4_vec)
+
+    # 7. 加九和弦 (Add 9th)
+    add9_vec = np.zeros(12)
+    add9_vec[i], add9_vec[(i + 2) % 12], add9_vec[(i + 4) % 12], add9_vec[(i + 7) % 12] = 1.0, 0.6, 0.7, 0.7
+    CHORD_TEMPLATES[f"{name}add9"] = add9_vec / np.linalg.norm(add9_vec)
 
 
 class MusicAnalyzer:
