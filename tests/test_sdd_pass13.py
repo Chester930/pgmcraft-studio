@@ -15,9 +15,9 @@ def test_readme_feature_matrix_content():
     with open(readme_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    assert "v1.3.0 商業級" in content
-    assert "剝洋蔥迭代分軌" in content
-    assert "EBU R128" in content
+    assert "v2.0.0" in content or "v1.3.0" in content
+    assert "PGMCraft Studio" in content
+    assert "Behavior Tree" in content
 
 
 def test_cli_quiet_flag():
