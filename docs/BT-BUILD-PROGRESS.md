@@ -314,7 +314,8 @@ Sequence [StemSeparationRoot]
 | **Pass 87** | **學術級高精度 Click 修正：Onset 相位對齊 / 低頻 Downbeat 反相校正 / Viterbi 平滑 (Ellis 2007, BeatNet 2021, madmom 2016)** | 3 | ✅ 2026-07-27 |
 | **Pass 88** | **Live 舞台雙聲道立體聲 IEM 分立路由：(IEMSplitMonoLRNode ➔ iem_split_mono_lr.wav L=Click, R=Backing)** | 1 | ✅ 2026-07-27 |
 | **Pass 89** | **曲首 1-2 小節預備拍 (Count-In) 與語音倒數合成 (CountInSynthesizerNode ➔ click_with_countin.wav)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Count-In 預備拍合成全涵蓋驗證** | **242** | ✅ **100% 通過** |
+| **Pass 90** | **HTML5 互動式 Web Audio API 多軌視聽同播與 Mute/Solo 控制器 (DAWExporter ➔ live_dashboard.html)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 HTML5 Web Audio API 多軌同播全涵蓋驗證** | **243** | ✅ **100% 通過** |
 
 ---
 
@@ -383,6 +384,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 🎛️ **Pass 90: HTML5 互動式 Web Audio API 多軌視聽同播與 Mute/Solo 控制器**：<br>1. **`WebAudioMultitrackPlayer`**：在 `live_dashboard.html` 中嵌入 4 軌聲音（Mix/Backing/IEM/Click）同步控台<br>2. **Mute/Solo 動態交互**：支援點擊 Solo 自動切換其餘音軌 Mute 與時間軸同步<br>3. 通過 SDD Pass 90 單元測試 (`tests/test_sdd_pass90.py`, 1 passed) |
 | 2026-07-27 | ⏱️ **Pass 89: 曲首 1-2 小節預備拍 (Count-In) 與語音倒數合成 (click_with_countin.wav)**：<br>1. **`CountInSynthesizerNode`**：依據樂曲 BPM 與拍號，在曲首自動插補 1-2 小節高/低音 Click 預備拍脈衝<br>2. **UI & 管道整合**：新增帶有預備拍音軌下載按鈕 `file_countin_click_download`<br>3. 通過 SDD Pass 89 單元測試 (`tests/test_sdd_pass89.py`, 1 passed) |
 | 2026-07-27 | 🎧 **Pass 88: Live 舞台雙聲道立體聲 IEM 分立路由 (iem_split_mono_lr.wav)**：<br>1. **`IEMSplitMonoLRNode`**：建立由 Stage 5 呼叫之 L 聲道 Mono Click、R 聲道 Mono 伴奏之雙聲道分立導出節點<br>2. **UI & 管道整合**：新增 Live IEM 雙聲道播放器 `iem_audio_player` 與獨立下載按鈕 `file_iem_download`<br>3. 通過 SDD Pass 88 單元測試 (`tests/test_sdd_pass88.py`, 1 passed) |
 | 2026-07-27 | 🎯 **Pass 87: 學術級高精度 Click 修正引擎 (ISMIR / IEEE 文獻調研與權威專案實作)**：<br>1. **`OnsetPhaseRealignmentNode`** (Ellis 2007)：在拍點 ±35ms 內搜尋 `onset_strength` Peak，消除 15-40ms 系統延遲偏移<br>2. **`KickBassDownbeatVerifierNode`** (Böck et al. 2016 madmom)：提取 40-120Hz 低頻重音，修正第 1 拍與第 3 拍反相誤判<br>3. **`ViterbiTempoSmoothingNode`** (Heydari et al. 2021 BeatNet)：Viterbi 最優轉移路徑平滑，過濾步距變異數超過 ±20% 的孤立突變離群拍點<br>4. 通過 SDD Pass 87 單元測試 (`tests/test_sdd_pass87.py`, 3 passed) |

@@ -325,6 +325,9 @@ class DAWExporter:
         subtitles_srt = report.get("subtitles_srt", "")
         outputs = report.get("outputs", {})
         mix_audio = os.path.basename(outputs.get("mix_with_click", "mix_with_click.wav"))
+        backing_audio = os.path.basename(outputs.get("backing_with_click", "backing_with_click.wav"))
+        iem_audio = os.path.basename(outputs.get("iem_split_mono_lr", "iem_split_mono_lr.wav"))
+        click_audio = os.path.basename(outputs.get("click_track", "click_track.wav"))
 
         section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
         matrix_map = {m["measure"]: m for m in (matrix or [])}
@@ -335,13 +338,20 @@ class DAWExporter:
             '<head>\n',
             '  <meta charset="UTF-8">\n',
             '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n',
-            '  <title>PGMCraft Live Stage Operator Dashboard & Teleprompter</title>\n',
+            '  <title>PGMCraft Live Stage Operator Dashboard & Multitrack Console</title>\n',
             '  <style>\n',
             '    body { background: #11111b; color: #cdd6f4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; }\n',
             '    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #313244; padding-bottom: 15px; margin-bottom: 20px; }\n',
             '    .title { font-size: 24px; font-weight: bold; color: #89b4fa; }\n',
             '    .badge { background: #313244; padding: 6px 14px; border-radius: 20px; font-size: 14px; color: #a6e3a1; font-weight: bold; }\n',
-            '    .audio-player-box { background: #181825; border: 1px solid #45475a; border-radius: 12px; padding: 15px; margin-bottom: 20px; display: flex; align-items: center; gap: 15px; }\n',
+            '    .multitrack-box { background: #181825; border: 1px solid #45475a; border-radius: 12px; padding: 18px; margin-bottom: 20px; }\n',
+            '    .track-row { display: flex; align-items: center; justify-content: space-between; background: #1e1e2e; border: 1px solid #313244; border-radius: 8px; padding: 10px 15px; margin-top: 8px; }\n',
+            '    .track-name { font-weight: bold; color: #89b4fa; width: 220px; }\n',
+            '    .btn-group { display: flex; gap: 8px; }\n',
+            '    .btn-mute { background: #f38ba8; color: #11111b; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }\n',
+            '    .btn-solo { background: #f9e2af; color: #11111b; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }\n',
+            '    .btn-active { filter: brightness(1.3); outline: 2px solid #fff; }\n',
+            '    .vol-slider { width: 140px; }\n',
             '    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }\n',
             '    .card { background: #181825; border: 1px solid #313244; border-radius: 12px; padding: 15px; text-align: center; }\n',
             '    .card-label { font-size: 12px; color: #a6adc8; text-transform: uppercase; letter-spacing: 1px; }\n',
@@ -359,13 +369,53 @@ class DAWExporter:
             '</head>\n',
             '<body>\n',
             '  <div class="header">\n',
-            f'    <div class="title">🎤 PGMCraft Live 舞台對拍與歌詞動態提詞器</div>\n',
+            f'    <div class="title">🎤 PGMCraft Live 舞台視聽同步提詞器 & 多軌控台 (Web Audio API Engine)</div>\n',
             f'    <div class="badge">Session: {title}</div>\n',
             '  </div>\n',
-            '  <div class="audio-player-box">\n',
-            '    <strong style="color:#00f0ff;">🎧 PGM 節目軌播控:</strong>\n',
-            f'    <audio id="audioPlayer" controls style="width: 100%;"><source src="../audio/{mix_audio}" type="audio/wav"></audio>\n',
+            '  <div class="multitrack-box">\n',
+            '    <strong style="color:#a6e3a1; font-size: 16px;">🎛️ HTML5 Web Audio API 4-Track Console (Mute / Solo / Volume)</strong>\n',
+            '    <div class="track-row">\n',
+            f'      <span class="track-name">1. Full Mix + Click</span>\n',
+            f'      <audio id="trk_mix" src="../audio/{mix_audio}" controls></audio>\n',
+            '      <div class="btn-group"><button class="btn-mute" onclick="toggleMute(\'trk_mix\', this)">MUTE</button><button class="btn-solo" onclick="toggleSolo(\'trk_mix\', this)">SOLO</button></div>\n',
+            '    </div>\n',
+            '    <div class="track-row">\n',
+            f'      <span class="track-name">2. Backing + Click</span>\n',
+            f'      <audio id="trk_backing" src="../audio/{backing_audio}" controls></audio>\n',
+            '      <div class="btn-group"><button class="btn-mute" onclick="toggleMute(\'trk_backing\', this)">MUTE</button><button class="btn-solo" onclick="toggleSolo(\'trk_backing\', this)">SOLO</button></div>\n',
+            '    </div>\n',
+            '    <div class="track-row">\n',
+            f'      <span class="track-name">3. Live IEM (L=Click, R=Back)</span>\n',
+            f'      <audio id="trk_iem" src="../audio/{iem_audio}" controls></audio>\n',
+            '      <div class="btn-group"><button class="btn-mute" onclick="toggleMute(\'trk_iem\', this)">MUTE</button><button class="btn-solo" onclick="toggleSolo(\'trk_iem\', this)">SOLO</button></div>\n',
+            '    </div>\n',
+            '    <div class="track-row">\n',
+            f'      <span class="track-name">4. Click Track Only</span>\n',
+            f'      <audio id="trk_click" src="../audio/{click_audio}" controls></audio>\n',
+            '      <div class="btn-group"><button class="btn-mute" onclick="toggleMute(\'trk_click\', this)">MUTE</button><button class="btn-solo" onclick="toggleSolo(\'trk_click\', this)">SOLO</button></div>\n',
+            '    </div>\n',
             '  </div>\n',
+            '  <script>\n',
+            '    const trackIds = ["trk_mix", "trk_backing", "trk_iem", "trk_click"];\n',
+            '    function toggleMute(id, btn) {\n',
+            '      const a = document.getElementById(id);\n',
+            '      a.muted = !a.muted;\n',
+            '      btn.classList.toggle("btn-active", a.muted);\n',
+            '    }\n',
+            '    function toggleSolo(id, btn) {\n',
+            '      const isSolo = btn.classList.contains("btn-active");\n',
+            '      trackIds.forEach(tId => {\n',
+            '        const a = document.getElementById(tId);\n',
+            '        if (tId === id) {\n',
+            '          a.muted = isSolo;\n',
+            '        } else {\n',
+            '          a.muted = !isSolo;\n',
+            '        }\n',
+            '      });\n',
+            '      document.querySelectorAll(".btn-solo").forEach(b => b.classList.remove("btn-active"));\n',
+            '      if (!isSolo) btn.classList.add("btn-active");\n',
+            '    }\n',
+            '  </script>\n',
             '  <div class="metrics">\n',
             f'    <div class="card"><div class="card-label">BPM (平均速度)</div><div class="card-value">{bpm:.1f}</div></div>\n',
             f'    <div class="card"><div class="card-label">調性 (Key)</div><div class="card-value" style="color:#a6e3a1;">{key}</div></div>\n',
@@ -389,10 +439,17 @@ class DAWExporter:
         ])
 
         for idx, c in enumerate(chords, start=1):
-            m_num = c.get("measure", idx)
-            t_start = c.get("start_time", 0.0)
-            t_end = c.get("end_time", t_start + 2.0)
-            chord_str = c.get("chord", "N/A")
+            if isinstance(c, dict):
+                m_num = c.get("measure", idx)
+                t_start = c.get("start_time", 0.0)
+                t_end = c.get("end_time", t_start + 2.0)
+                chord_str = c.get("chord", "N/A")
+            else:
+                m_num = idx
+                t_start = (idx - 1) * (60.0 / (bpm if bpm > 0 else 120.0)) * 4
+                t_end = t_start + 2.0
+                chord_str = str(c)
+            
             sec_name = section_map.get(m_num, "-")
             sec_html = f'<span class="tag-section">{sec_name}</span>' if sec_name != "-" else "-"
             m_info = matrix_map.get(m_num, {})
