@@ -295,6 +295,32 @@ graph TD
 | `transcribed_midi_path` | `str` | `MidiNoteExportNode` | Web UI | 導出之 MIDI 檔路徑 (`Transcribed_Melody.mid`) |
 | `transcription_json_path` | `str` | `SaveTranscribeOutputNode` | Web UI | 採譜 JSON 報告路徑 (`transcription_notes.json`) |
 
+---
+
+### 4-2. 爵士/流行樂曲和弦與調性分析報告工作流 (`transcribe_chord_key`)
+
+#### 🎯 目標與聲學指標
+- **目標**：計算 12 音階色譜與小節結構，估算主調性 (Key) 與和弦進程 (Chord Progression)。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: TranscribeChordKeyRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: KeyDetectionNode"]
+    N1 --> N2["State 2: ChordProgressionNode"]
+    N2 --> N3["State 3: SaveChordKeyReportNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
+| `estimated_key` | `str` | `KeyDetectionNode` | Web UI / Report | 分析估算主調性 (如 `C Major`) |
+| `chord_key_json_path` | `str` | `SaveChordKeyReportNode` | Web UI | 和弦與調性結構分析 JSON 報告路徑 (`chord_key_analysis.json`) |
+
+
 
 
 

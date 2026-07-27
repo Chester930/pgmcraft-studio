@@ -422,6 +422,20 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【4-1 獨奏與多音音符轉 MIDI 狀態機】！\n- **導出 MIDI 檔**: `{midi_p}`\n- **採譜 JSON 報告**: `{json_p}`"
         return status_msg, midi_p, json_p, None, None
 
+    # P71: Transcribe 狀態機工作流 4-2：爵士/流行樂曲和弦與調性分析報告
+    if separation_mode == "transcribe_chord_key":
+        from pgm_craft.workflow.transcribe_bt import build_transcribe_chord_key_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_transcribe_chord_key_workflow()
+        wf.execute(bb)
+        key_name = bb.get_val("estimated_key")
+        report_p = bb.get_val("chord_key_json_path")
+        status_msg = f"🎉 成功執行【4-2 和弦與調性分析報告狀態機】！\n- **主調性**: `{key_name}`\n- **和弦調性報告**: `{report_p}`"
+        return status_msg, report_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
