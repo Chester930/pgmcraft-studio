@@ -251,7 +251,7 @@ class CascadedStemSeparator:
         }
 
     def separate_drums_substem(self, audio_path, output_dir, is_already_drums=False):
-        """鼓組細分：大鼓 (Kick) vs 小鼓 (Snare) vs 踩鈸 (Hi-Hat) 聲學帶通濾波抽取"""
+        """鼓組細分：大鼓 (Kick) vs 小鼓 (Snare) vs 踩鈸 (Hi-Hat) 聲學帶通濾波抽取 (帶 RMS -40dB 早停護航)"""
         os.makedirs(output_dir, exist_ok=True)
         target_input = audio_path
         if not is_already_drums:
@@ -269,6 +269,15 @@ class CascadedStemSeparator:
             from scipy.signal import butter, filtfilt
 
             y, sr = librosa.load(target_input, sr=22050, mono=True)
+            # Presence Early Exit Guard: RMS 能量 < 0.001 (-60dB / -40dB 接近靜音)
+            rms = float(np.sqrt(np.mean(y ** 2))) if len(y) > 0 else 0.0
+            if rms < 0.001:
+                print(f"[Presence Early Exit Guard] 🛡️ 鼓軌能量低於門檻 (RMS={rms:.6f} < 0.001)，早停跳過鼓細分。")
+                shutil.copyfile(target_input, kick_path)
+                shutil.copyfile(target_input, snare_path)
+                shutil.copyfile(target_input, hihat_path)
+                return kick_path, snare_path, hihat_path
+
             nyq = sr / 2.0
 
             # 1. Kick (40Hz - 140Hz 極低頻大鼓帶，正拍絕對指標)
@@ -296,7 +305,7 @@ class CascadedStemSeparator:
         return kick_path, snare_path, hihat_path
 
     def separate_synth_and_electric_bass(self, audio_path, output_dir, is_already_bass=False):
-        """貝斯細分：電貝斯 (Electric Bass) vs 合成低音 (Synth Bass 808)"""
+        """貝斯細分：電貝斯 (Electric Bass) vs 合成低音 (Synth Bass 808) (帶 Presence 早停護航)"""
         os.makedirs(output_dir, exist_ok=True)
         target_input = audio_path
         if not is_already_bass:
@@ -305,6 +314,20 @@ class CascadedStemSeparator:
 
         ebass_path = os.path.join(output_dir, "electric_bass.wav")
         sbass_path = os.path.join(output_dir, "synth_bass_808.wav")
+
+        try:
+            import librosa
+            import numpy as np
+            y, sr = librosa.load(target_input, sr=22050, mono=True)
+            rms = float(np.sqrt(np.mean(y ** 2))) if len(y) > 0 else 0.0
+            if rms < 0.001:
+                print(f"[Presence Early Exit Guard] 🛡️ 貝斯軌能量低於門檻 (RMS={rms:.6f} < 0.001)，早停跳過 Bass 細分。")
+                shutil.copyfile(target_input, ebass_path)
+                shutil.copyfile(target_input, sbass_path)
+                return ebass_path, sbass_path
+        except Exception:
+            pass
+
         shutil.copyfile(target_input, ebass_path)
         shutil.copyfile(target_input, sbass_path)
         return ebass_path, sbass_path

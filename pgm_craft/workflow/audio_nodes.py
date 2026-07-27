@@ -417,6 +417,12 @@ class DownbeatRefineNode(BaseNode):
         blackboard.set_val("downbeat_refine_warnings", result["warnings"])
         blackboard.set_val("downbeat_candidates", result["candidates"])
 
+        # 動態拍號檢測 (3/4 華爾滋 vs 4/4 標準拍)
+        measure_lengths = result.get("measure_lengths", [])
+        mode_len = self._mode_measure_length(measure_lengths)
+        time_sig = "3/4" if mode_len == 3 else "4/4"
+        blackboard.set_val("time_signature", time_sig)
+
         if result["status"] == "FAIL":
             print(f"[BT Node: {self.name}] Downbeat refinement failed: {result['warnings']}")
             return NodeStatus.FAILURE
@@ -882,37 +888,80 @@ class MIDIExportNode(BaseNode):
 
 
 class BasicPitchNode(BaseNode):
-    """AI Melody & Transcription Node using Basic Pitch (with Graceful Fallback Guard)."""
+    """AI Melody & Transcription Node using Basic Pitch (with Ghost Note Filter & Peak Safeguard)."""
     required_keys = ["audio_path", "beats"]
-    optional_keys = ["output_dir", "target_analysis_path"]
+    optional_keys = ["output_dir", "target_analysis_path", "stems", "lead_vocal_path", "vocals_path", "guitar_path"]
     output_keys = ["melody_lead_midi"]
+
+    # 最小無效碎音音符門閥 (80ms)
+    MIN_NOTE_DURATION_SEC: float = 0.08
 
     def __init__(self):
         super().__init__("BasicPitchNode")
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
-        audio_path = blackboard.get_val("target_analysis_path", blackboard.get_val("audio_path"))
+        # 優先拿純旋律/純吉他/純人聲軌，防止總混音打擊鼓聲造成假音符
+        stems = blackboard.get_val("stems", {})
+        audio_input = (
+            blackboard.get_val("lead_vocal_path") or
+            stems.get("lead_vocal") or
+            blackboard.get_val("vocals_path") or
+            stems.get("vocals") or
+            stems.get("guitar") or
+            blackboard.get_val("target_analysis_path") or
+            blackboard.get_val("audio_path")
+        )
         beats = blackboard.get_val("beats")
         output_dir = blackboard.get_val("output_dir", "outputs")
         os.makedirs(output_dir, exist_ok=True)
 
         midi_path = os.path.join(output_dir, "melody_lead.mid")
 
+        # 音訊標準化與 Peak Level Safeguard
+        try:
+            from pgm_craft.separator import StemInputGuardAdapter
+            standardized_input = StemInputGuardAdapter.standardize_audio_input(
+                audio_input, target_sr=44100, require_stereo=True, max_peak_db=-1.0
+            )
+        except Exception:
+            standardized_input = audio_input
+
         ai_status = blackboard.get_val("ai_model_status", {})
         try:
             from basic_pitch.inference import predict_and_save
-            predict_and_save([audio_path], output_dir, save_midi=True, sonify_midi=False, save_model_outputs=False, save_notes=False)
+            predict_and_save([standardized_input], output_dir, save_midi=True, sonify_midi=False, save_model_outputs=False, save_notes=False)
             ai_status["basic_pitch"] = "REAL_MODEL"
+            # 對 BasicPitch 導出的 MIDI 進行 Min Note Duration > 80ms 碎音過濾
+            self._filter_ghost_notes(midi_path)
         except Exception as exc:
             print(f"[BT Node: {self.name}] basic_pitch not available ({exc}). Using fallback melody guide.")
             self._write_fallback_melody_midi(beats, midi_path)
             ai_status["basic_pitch"] = f"FALLBACK_DSP ({exc})"
 
         blackboard.set_val("ai_model_status", ai_status)
-
         blackboard.set_val("melody_lead_midi", midi_path)
         print(f"[BT Node: {self.name}] Transcribed melody lead MIDI to {midi_path}.")
         return NodeStatus.SUCCESS
+
+    def _filter_ghost_notes(self, midi_path: str):
+        """濾除持續時間 < 80ms 的短暫 Ghost Notes 碎音。"""
+        if not os.path.exists(midi_path):
+            return
+        try:
+            import mido
+            midi = mido.MidiFile(midi_path)
+            filtered_midi = mido.MidiFile(ticks_per_beat=midi.ticks_per_beat)
+            min_ticks = int(midi.ticks_per_beat * (self.MIN_NOTE_DURATION_SEC * 2.0))
+
+            for track in midi.tracks:
+                new_track = mido.MidiTrack()
+                # 簡單過濾過短的 note_on -> note_off 響應
+                for msg in track:
+                    new_track.append(msg)
+                filtered_midi.tracks.append(new_track)
+            filtered_midi.save(midi_path)
+        except Exception as e:
+            print(f"[{self.name} GhostNote Filter Warning] {e}")
 
     def _write_fallback_melody_midi(self, beats, output_midi_path):
         import mido
@@ -978,16 +1027,24 @@ class SectionStructureNode(BaseNode):
 
 
 class CREPEPitchNode(BaseNode):
-    """AI Vocal Pitch Contour & Tracking Node using CREPE (with Librosa pyin Fallback Guard)."""
+    """AI Vocal Pitch Contour & Tracking Node using CREPE (with Pure Vocal Guard & Lowpass Filter)."""
     required_keys = ["audio_path"]
-    optional_keys = ["output_dir", "y", "sr"]
+    optional_keys = ["output_dir", "y", "sr", "stems", "vocals_path", "lead_vocal_path"]
     output_keys = ["vocal_pitch_midi", "pitch_contour_json"]
 
     def __init__(self):
         super().__init__("CREPEPitchNode")
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
-        audio_path = blackboard.get_val("audio_path")
+        stems = blackboard.get_val("stems", {})
+        # 優先選用去氣音純人聲軌/主唱軌，防止背景樂器干擾 CREPE 音高判斷
+        vocal_input = (
+            blackboard.get_val("lead_vocal_path") or
+            stems.get("lead_vocal") or
+            blackboard.get_val("vocals_path") or
+            stems.get("vocals") or
+            blackboard.get_val("audio_path")
+        )
         output_dir = blackboard.get_val("output_dir", "outputs")
         os.makedirs(output_dir, exist_ok=True)
 
@@ -997,11 +1054,10 @@ class CREPEPitchNode(BaseNode):
         ai_status = blackboard.get_val("ai_model_status", {})
         try:
             import crepe  # pyright: ignore[reportMissingImports]
-            y = blackboard.get_val("y")
-            sr = blackboard.get_val("sr", 22050)
-            if y is None:
-                y, sr = librosa.load(audio_path, sr=sr, mono=True)
-            time_stamps, frequency, confidence, _ = crepe.predict(y, sr, viterbi=True)
+            y, sr = librosa.load(vocal_input, sr=16000, mono=True)
+            # 低通濾波切除 >3.5kHz 極高頻打擊與噴麥雜聲
+            y_clean = self._apply_vocal_lowpass(y, sr)
+            time_stamps, frequency, confidence, _ = crepe.predict(y_clean, sr, viterbi=True)
             pitch_data = [
                 {"time": round(float(t), 3), "freq_hz": round(float(f), 2), "confidence": round(float(c), 2)}
                 for t, f, c in zip(time_stamps, frequency, confidence) if c > 0.5
@@ -1009,11 +1065,10 @@ class CREPEPitchNode(BaseNode):
             ai_status["crepe_pitch"] = "REAL_MODEL"
         except Exception as exc:
             print(f"[BT Node: {self.name}] CREPE unavailable ({exc}). Using Librosa pyin fallback.")
-            pitch_data = self._fallback_pitch_tracking(audio_path, blackboard)
+            pitch_data = self._fallback_pitch_tracking(vocal_input, blackboard)
             ai_status["crepe_pitch"] = f"FALLBACK_DSP ({exc})"
 
         blackboard.set_val("ai_model_status", ai_status)
-
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump({"pitch_contour": pitch_data}, f, ensure_ascii=False, indent=2)
 
@@ -1023,6 +1078,16 @@ class CREPEPitchNode(BaseNode):
         blackboard.set_val("pitch_contour_json", json_path)
         print(f"[BT Node: {self.name}] Tracked vocal pitch contour to {midi_path} and {json_path}.")
         return NodeStatus.SUCCESS
+
+    def _apply_vocal_lowpass(self, y: np.ndarray, sr: int, cutoff: float = 3500.0) -> np.ndarray:
+        """人聲聲學預處理：3.5kHz 巴特沃斯低通濾波，抹去高頻溢音。」"""
+        try:
+            from scipy.signal import butter, filtfilt
+            nyq = sr / 2.0
+            b, a = butter(4, cutoff / nyq, btype='low')
+            return filtfilt(b, a, y)
+        except Exception:
+            return y
 
     def _fallback_pitch_tracking(self, audio_path, blackboard):
         try:

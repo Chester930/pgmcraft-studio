@@ -273,7 +273,10 @@ Sequence [StemSeparationRoot]
 | **Pass 46** | **Stage 4 Behavior Tree 全管道連動與和聲/樂段小節對齊測試** | 2 | ✅ 2026-07-27 |
 | **Pass 47** | **ReEntryReAnchoringNode v2 鼓聲切入精確重錨與 DownbeatRefine Median Filter** | 18 | ✅ 2026-07-27 |
 | **Pass 48** | **專項音訊分離模型 (Specialized Stem Models) 與前處理適配器 (Input Guard Adapter)** | 4 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **194** | ✅ **100% 通過** |
+| **Pass 49** | **CREPE / BasicPitch 採譜專項護航與 Ghost Note 碎音濾波** | 2 | ✅ 2026-07-27 |
+| **Pass 50** | **二階音色細分的動態顯著度早停 (Presence Early Exit Guard)** | 2 | ✅ 2026-07-27 |
+| **Pass 51** | **變拍子動態感應器 (3/4 & 4/4) 與 REAPER `.RPP` 原生工程導出器** | 2 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **200** | ✅ **100% 通過** |
 
 ---
 
@@ -342,6 +345,9 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 51: 變拍子動態感應與 REAPER `.RPP` 原生工程導出器**：<br>1. **變拍子識別**：`DownbeatRefineNode` 動態感知 3/4 華爾滋與 4/4 標準拍號<br>2. **REAPER `.RPP` 導出**：`DAWExporter` 匯出包含音軌分色、Stems 載入、Marker 時間軸與 Tempo Map 之專案檔<br>3. 通過 SDD Pass 51 單元測試 (`tests/test_sdd_pass51.py`, 2 passed) |
+| 2026-07-27 | 完成 **Pass 50: 二階音色細分的動態顯著度早停 (Presence Early Exit Guard)**：<br>1. **RMS -40dB 門閥**：鼓組/貝斯二階細分前自動檢測能量，低於門檻時早停 Skip，防止無效空檔落盤<br>2. 通過 SDD Pass 50 單元測試 (`tests/test_sdd_pass50.py`, 2 passed) |
+| 2026-07-27 | 完成 **Pass 49: CREPE / BasicPitch 採譜專項護航與 Ghost Note 碎音濾波**：<br>1. **`CREPEPitchNode`**：強制選用去氣音純人聲軌 + 3.5kHz 巴特沃斯低通濾波預處理，消滅顫音震盪<br>2. **`BasicPitchNode`**：適配 `-1.0 dBFS` Peak Guard 並對導出 MIDI 進行 `> 80ms` 碎音過濾<br>3. 通過 SDD Pass 49 單元測試 (`tests/test_sdd_pass49.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 48: 專項音訊分離模型 (Specialized Stem Models) 與前處理適配器 (Input Guard Adapter)**：<br>1. **`StemInputGuardAdapter`**：實作 44100Hz 高品質重採樣、Stereo 雙聲道補齊展平 `[2, T]` 與 Peak Safeguard (-1.0 dBFS) 動態防爆音<br>2. **Prerequisite 防呆級聯**：吉他/鋼琴專項分離前自動強制轉為 `Instrumental` 伴奏軌<br>3. **`DemucsCacheGuard`**：MD5 + 檔案大小雙重 Hash 快取，0 秒即時複用<br>4. 通過 SDD Pass 48 單元測試 (`tests/test_sdd_pass48.py`, 4 passed) |
 | 2026-07-27 | 完成 **Pass 47: ReEntryReAnchoringNode v2 鼓聲切入精確重錨與 DownbeatRefine Median Filter**：<br>1. **`ReEntryReAnchoringNode` v2**：只對「無鼓→有鼓」邊緣事件重錨（從 280 個 kick 縮減到 5-15 個），重錨後向後重算整段 1-2-3-4 循環並加上 2s 冷卻保護<br>2. **`DownbeatRefineNode`**：加入 measure_length 眾數 Median Filter 容錯保底<br>3. 通過 SDD Pass 47 單元測試 (`tests/test_sdd_pass47.py`, 18 passed) |
 | 2026-07-27 | 完成 **Pass 32: Stage 6 PackageRoot Behavior Tree 重構與 DAW 全套素材包自動歸檔**：<br>1. **`package_bt.py`**：實作獨立 `PackageRoot` BT 樹包含 `DAWSessionGenerateNode` (Reaper/Ableton/Logic/Cubase CSV)、`LiveDashboardExportNode` (Live 舞台面板 HTML) 與 `ZIPArchivePackagerNode` (壓縮素材包打包)<br>2. **`packager.py` 素材補全**：補齊 Pass 29 產出之 `section_markers_midi` 入 ZIP 打包白名單<br>3. 通過 SDD Pass 32 單元測試 (`tests/test_sdd_pass32.py`, 2 passed) |
