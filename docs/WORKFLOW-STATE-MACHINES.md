@@ -420,6 +420,31 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
 | `hud_html_path` | `str` | `SaveStageHUDHtmlNode` | Web UI | Live Stage HUD 視覺化面板檔 (`live_stage_hud.html`) |
 
+---
+
+### 5-4. Ableton Live / Logic Pro / Cubase 原生專案檔對齊工作流 (`live_daw_native_align`)
+
+#### 🎯 目標與聲學指標
+- **目標**：擬合 Tempo Map 速度曲線，導出可供 Ableton Live 等 DAW 直接開啟之原生專案檔 (`Ableton_Live_Project.als`)。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: LiveDAWNativeAlignRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: TempoMapFittingNode"]
+    N1 --> N2["State 2: NativeALSGeneratorNode"]
+    N2 --> N3["State 3: SaveDAWNativeProjectNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
+| `als_project_path` | `str` | `SaveDAWNativeProjectNode` | Web UI | Ableton Live 原生專案檔路徑 (`Ableton_Live_Project.als`) |
+
+
 
 
 

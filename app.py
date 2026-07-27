@@ -490,6 +490,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【5-3 樂手即時 HTML5 視聽同步 HUD 控制台面板狀態機】！\n- **Live Stage HUD 面板**: `{hud_p}`"
         return status_msg, hud_p, None, None, None
 
+    # P76: Live PGM 狀態機工作流 5-4：Ableton Live / Logic Pro / Cubase 原生專案檔對齊
+    if separation_mode == "live_daw_native_align":
+        from pgm_craft.workflow.live_pgm_bt import build_live_daw_native_align_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_live_daw_native_align_workflow()
+        wf.execute(bb)
+        als_p = bb.get_val("als_project_path")
+        status_msg = f"🎉 成功執行【5-4 DAW 原生專案檔對齊狀態機】！\n- **Ableton Live Project 檔**: `{als_p}`"
+        return status_msg, als_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

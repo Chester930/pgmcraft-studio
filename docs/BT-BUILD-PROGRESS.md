@@ -300,7 +300,8 @@ Sequence [StemSeparationRoot]
 | **Pass 73** | **Live PGM 工作流 5-1：Live 舞台 Multi-Track 全分軌 DAW 素材包導出狀態機 (FullStemSeparationNode ➔ SubBassAlignNode ➔ PackageExportNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 74** | **Live PGM 工作流 5-2：舞台導聽 Click & Cue Voice 指示音軌自動生成狀態機 (BeatTrackAlignNode ➔ VoiceCueSynthesizerNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 75** | **Live PGM 工作流 5-3：樂手即時 HTML5 視聽同步 HUD 控制台面板狀態機 (StageStructureAnalysisNode ➔ StageHUDGeneratorNode)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **226** | ✅ **100% 通過** |
+| **Pass 76** | **Live PGM 工作流 5-4：Ableton Live / Logic Pro / Cubase 原生專案檔對齊狀態機 (TempoMapFittingNode ➔ NativeALSGeneratorNode)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **227** | ✅ **100% 通過** |
 
 ---
 
@@ -369,6 +370,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 76: Live PGM 工作流 5-4：Ableton Live / Logic Pro / Cubase 原生專案檔對齊狀態機**：<br>1. **`build_live_daw_native_align_workflow`**：建立由 AudioLoad ➔ TempoMapFitting ➔ NativeALSGenerator ➔ SaveDAWNativeProject 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_daw_native_align` 時一鍵觸發狀態機，輸出原生 DAW 專案檔 `Ableton_Live_Project.als`<br>3. 通過 SDD Pass 76 單元測試 (`tests/test_sdd_pass76.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 75: Live PGM 工作流 5-3：樂手即時 HTML5 視聽同步 HUD 控制台面板狀態機**：<br>1. **`build_live_stage_hud_workflow`**：建立由 AudioLoad ➔ StageStructureAnalysis ➔ StageHUDGenerator ➔ SaveStageHUDHtml 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_stage_hud` 時一鍵觸發狀態機，輸出 Live HUD 面板網頁檔 `live_stage_hud.html`<br>3. 通過 SDD Pass 75 單元測試 (`tests/test_sdd_pass75.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 74: Live PGM 工作流 5-2：舞台導聽 Click & Cue Voice 指示音軌自動生成狀態機**：<br>1. **`build_live_click_cue_gen_workflow`**：建立由 AudioLoad ➔ BeatTrackAlign ➔ VoiceCueSynthesizer ➔ SaveClickCueAudio 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_click_cue_gen` 時一鍵觸發狀態機，輸出獨立 IEM 聲軌 `click_track.wav` 與 `cue_track.wav`<br>3. 通過 SDD Pass 74 單元測試 (`tests/test_sdd_pass74.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 73: Live PGM 工作流 5-1：Live 舞台 Multi-Track 全分軌 DAW 素材包導出狀態機**：<br>1. **`build_live_multitrack_package_workflow`**：建立由 AudioLoad ➔ FullStemSeparation ➔ SubBassAlign ➔ PackageExport 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_multitrack_package` 時一鍵觸發狀態機，輸出廣播級 Live PGM 素材包 `pgm_project_package.zip`<br>3. 通過 SDD Pass 73 單元測試 (`tests/test_sdd_pass73.py`, 1 passed) |
