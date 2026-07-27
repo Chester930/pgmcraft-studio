@@ -1064,3 +1064,36 @@ class DCOffsetFixNode(BaseNode):
             print(f"[{self.name}] ⚠️ DC Offset Fix 警告: {e}")
 
         return NodeStatus.SUCCESS
+
+
+class NoiseFloorAnalyzerNode(BaseNode):
+    """
+    靜音段 Noise Floor 聲學分析節點。
+    自動檢測頭尾靜音段，計算背景雜訊能量 (Noise Floor RMS) 與 Dynamic Threshold。
+    """
+    required_keys = ["y", "sr"]
+    output_keys = ["noise_floor_db", "adaptive_denoise_threshold"]
+
+    def __init__(self):
+        super().__init__("NoiseFloorAnalyzerNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        try:
+            # 取頭部 0.5 秒或前 2000 個點作為背景 Sampling
+            sample_len = min(len(y) if y.ndim == 1 else y.shape[1], int(sr * 0.5))
+            sample_seg = y[:sample_len] if y.ndim == 1 else y[0, :sample_len]
+            noise_floor_rms = float(np.std(sample_seg))
+            noise_floor_db = float(20 * np.log10(max(noise_floor_rms, 1e-7)))
+
+            # 動態計算 adaptive_denoise_threshold (區間 0.001 ~ 0.08)
+            adaptive_thresh = float(np.clip(noise_floor_rms * 3.5, 0.001, 0.08))
+
+            blackboard.set_val("noise_floor_db", noise_floor_db)
+            blackboard.set_val("adaptive_denoise_threshold", adaptive_thresh)
+            print(f"[{self.name}] 🎛️ 自動偵測 Noise Floor: {noise_floor_db:.1f} dB, 傳遞自適應門限: {adaptive_thresh:.4f}")
+        except Exception as e:
+            print(f"[{self.name}] ⚠️ Noise Floor Analyzer 警告: {e}")
+
+        return NodeStatus.SUCCESS
