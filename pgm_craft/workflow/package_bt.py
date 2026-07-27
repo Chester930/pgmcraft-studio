@@ -23,6 +23,7 @@ class DAWSessionGenerateNode(BaseNode):
         daw_files = registry.export_profile("all", report, output_dir=package_dir)
         
         daw_exporter = DAWExporter()
+        als_path = daw_exporter.generate_ableton_als(report, output_dir=package_dir)
         csv_path = daw_exporter.export_marker_csv(
             report.get("chord_progression", []),
             sections=report.get("sections", []),
@@ -32,6 +33,7 @@ class DAWSessionGenerateNode(BaseNode):
         
         outputs = blackboard.get_val("outputs", {})
         outputs.update(daw_files)
+        outputs["ableton_project"] = als_path
         outputs["markers_csv"] = csv_path
         outputs["aaf_project"] = aaf_path
         blackboard.set_val("outputs", outputs)

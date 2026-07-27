@@ -34,6 +34,73 @@ class DAWExporter:
 
         return csv_path
 
+    def generate_ableton_als(self, report: dict, output_dir="outputs") -> str:
+        """P57: Ableton Live .als 原生專案檔導出器 (Gzip 壓縮 XML，帶 Tempo Map, Tracks 與 Locators)"""
+        import gzip
+        import xml.etree.ElementTree as ET
+
+        os.makedirs(output_dir, exist_ok=True)
+        als_path = os.path.join(output_dir, "ableton_project.als")
+
+        bpm = report.get("average_bpm") or report.get("bpm", 120.0)
+        song_title = report.get("song_title", "PGMCraft Track")
+        chords = report.get("chord_progression", [])
+        sections = report.get("sections", [])
+
+        # 建立 Ableton XML Root Element
+        root = ET.Element("Ableton", {
+            "MajorVersion": "5",
+            "MinorVersion": "11.0_11100",
+            "SchemaChangeCount": "3",
+            "Creator": "PGMCraft Studio v2.1.0"
+        })
+
+        live_set = ET.SubElement(root, "LiveSet")
+
+        # 1. 主速度設定 Master Tempo
+        master_track = ET.SubElement(live_set, "MasterTrack")
+        automations = ET.SubElement(master_track, "AutomationEnvelopes")
+        envelopes = ET.SubElement(automations, "Envelopes")
+        tempo_env = ET.SubElement(envelopes, "AutomationEnvelope", {"Id": "1"})
+        events = ET.SubElement(tempo_env, "Events")
+        ET.SubElement(events, "FloatEvent", {"Time": "0", "Value": str(bpm)})
+
+        # 2. Locators / Markers
+        locators = ET.SubElement(live_set, "Locators")
+        loc_list = ET.SubElement(locators, "Locators")
+        section_map = {sec["measure"]: sec["name"] for sec in (sections or [])}
+
+        for idx, item in enumerate(chords, start=1):
+            m_num = item.get("measure", idx)
+            t_start = item.get("start_time", 0.0)
+            chord_str = item.get("chord", "N/A")
+            sec_prefix = f"[{section_map[m_num]}] " if m_num in section_map else ""
+            
+            loc = ET.SubElement(loc_list, "Locator", {"Id": str(idx)})
+            ET.SubElement(loc, "Time").text = str(t_start)
+            ET.SubElement(loc, "Name").text = f"{sec_prefix}M{m_num:02d}: {chord_str}"
+
+        # 3. Tracks (Click, Drums, Bass, Vocal, Music)
+        tracks = ET.SubElement(live_set, "Tracks")
+        track_names = ["Click Guide", "Rhythm Bus", "Vocal Bus", "Music Bus"]
+        colors = ["16711680", "65280", "255", "16776960"]
+
+        for idx, t_name in enumerate(track_names):
+            audio_track = ET.SubElement(tracks, "AudioTrack", {"Id": str(idx + 1)})
+            ET.SubElement(audio_track, "Name").text = t_name
+            ET.SubElement(audio_track, "Color").text = colors[idx % len(colors)]
+
+        # 寫出 Gzip 檔
+        xml_bytes = ET.tostring(root, encoding="utf-8", method="xml")
+        xml_header = b'<?xml version="1.0" encoding="UTF-8"?>\n'
+        compressed_data = gzip.compress(xml_header + xml_bytes)
+
+        with open(als_path, "wb") as f:
+            f.write(compressed_data)
+
+        print(f"[Ableton ALS Exporter] 🎛️ 成功產出 Ableton Live 原生專案檔 ➔ {als_path}")
+        return als_path
+
     def export_reaper_project(self, report: dict, output_dir="outputs") -> str:
         """Exports a lightweight Reaper .rpp project file aligned to analyzed audio & MIDI."""
         os.makedirs(output_dir, exist_ok=True)
@@ -625,11 +692,14 @@ class LiveDashboardExporter:
         print(f"[MusicXML Exporter] 成功導出標準 MusicXML 開放樂譜檔 ➔ {xml_path}")
         return xml_path
 
-    def export(self, output_path: str) -> str:
-        html_content = self.to_html()
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-        return output_path
+    def export_all_daw_sessions(self, report: dict, output_dir="outputs") -> dict:
+        """一鍵全自動產出所有專業 DAW 工程檔 (Reaper .rpp, Ableton Live .als, MusicXML, Marker CSV)"""
+        results = {}
+        results["reaper_project"] = self.export_reaper_project(report, output_dir=output_dir)
+        results["ableton_project"] = self.generate_ableton_als(report, output_dir=output_dir)
+        results["musicxml"] = self.export_musicxml(report, output_dir=output_dir)
+        results["marker_csv"] = self.export_marker_csv(report.get("chord_progression", []), report.get("sections", []), output_dir=output_dir)
+        return results
 
 
 
