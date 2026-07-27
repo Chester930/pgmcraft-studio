@@ -268,6 +268,34 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始人聲音檔路徑 |
 | `studio_vocal_path` | `str` | `SaveStudioDryVocalOutputNode` | Web UI | 極致純化去殘響之錄音室乾聲檔 (`Studio_Dry_Vocal.wav`) |
 
+---
+
+## 🎼 大場景 4：音樂採譜與樂器樂理分析 (Transcribe & Analysis)
+
+### 4-1. 鋼琴/吉他獨奏與多音音符自動轉 MIDI 工作流 (`transcribe_instrument_midi`)
+
+#### 🎯 目標與聲學指標
+- **目標**：將獨奏演奏錄音分析為音高、起音與力度，導出標準 MIDI 音符軌與 JSON 文字報告。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: TranscribeInstrumentMidiRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: PitchTranscribeNode"]
+    N1 --> N2["State 2: MidiNoteExportNode"]
+    N2 --> N3["State 3: SaveTranscribeOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始獨奏/演奏音檔路徑 |
+| `transcribed_midi_path` | `str` | `MidiNoteExportNode` | Web UI | 導出之 MIDI 檔路徑 (`Transcribed_Melody.mid`) |
+| `transcription_json_path` | `str` | `SaveTranscribeOutputNode` | Web UI | 採譜 JSON 報告路徑 (`transcription_notes.json`) |
+
+
 
 
 

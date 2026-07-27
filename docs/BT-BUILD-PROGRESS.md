@@ -294,7 +294,8 @@ Sequence [StemSeparationRoot]
 | **Pass 67** | **Vocal 工作流 3-2：帶和聲伴奏製作狀態機 (KeepBackingInstNode ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
 | **Pass 68** | **Vocal 工作流 3-3：主唱與和聲雙軌獨立分離狀態機 (LeadBackingSplitNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 69** | **Vocal 工作流 3-4：人聲乾聲去殘響與聲音純化狀態機 (DeReverb ➔ Denoise)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **220** | ✅ **100% 通過** |
+| **Pass 70** | **Transcribe 工作流 4-1：鋼琴/吉他獨奏與多音音符自動轉 MIDI 狀態機 (PitchTranscribeNode ➔ MidiNoteExportNode)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **221** | ✅ **100% 通過** |
 
 ---
 
@@ -363,6 +364,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 70: Transcribe 工作流 4-1：鋼琴/吉他獨奏與多音音符自動轉 MIDI 狀態機**：<br>1. **`build_transcribe_instrument_midi_workflow`**：建立由 AudioLoad ➔ PitchTranscribe ➔ MidiNoteExport ➔ SaveTranscribe 構成之狀態機<br>2. **UI & 管道整合**：選取 `transcribe_instrument_midi` 時一鍵觸發狀態機，輸出 `Transcribed_Melody.mid` 與 `transcription_notes.json`<br>3. 通過 SDD Pass 70 單元測試 (`tests/test_sdd_pass70.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 69: Vocal 工作流 3-4：人聲乾聲去殘響與聲音純化狀態機**：<br>1. **`build_vocal_dereverb_clean_workflow`**：建立由 AudioLoad ➔ DeReverbFilter ➔ SpectralDenoise 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_dereverb_clean` 時一鍵觸發狀態機，輸出錄音室乾聲檔 `Studio_Dry_Vocal.wav`<br>3. 通過 SDD Pass 69 單元測試 (`tests/test_sdd_pass69.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 68: Vocal 工作流 3-3：主唱與和聲雙軌獨立分離狀態機**：<br>1. **`build_vocal_lead_backing_split_workflow`**：建立由 AudioLoad ➔ LeadBackingSplit 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_lead_backing_split` 時一鍵觸發狀態機，輸出 `Lead_Vocal_Only.wav` 與 `Backing_Vocals_Only.wav`<br>3. 通過 SDD Pass 68 單元測試 (`tests/test_sdd_pass68.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 67: Vocal 工作流 3-2：帶和聲伴奏製作狀態機**：<br>1. **`build_vocal_backing_inst_workflow`**：建立由 AudioLoad ➔ KeepBackingInst ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_backing_inst` 時一鍵觸發狀態機，輸出帶和聲伴奏音檔 `Instrumental_With_Backing.wav`<br>3. 通過 SDD Pass 67 單元測試 (`tests/test_sdd_pass67.py`, 1 passed) |

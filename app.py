@@ -408,6 +408,20 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【3-4 人聲乾聲去殘響與聲音純化狀態機】！\n- **UVR DeReverb 房間 Echo 剝離/雜音淨化完成** ➔ `{dry_p}`"
         return status_msg, dry_p, None, None, None
 
+    # P70: Transcribe 狀態機工作流 4-1：鋼琴/吉他獨奏與多音音符自動轉 MIDI
+    if separation_mode == "transcribe_instrument_midi":
+        from pgm_craft.workflow.transcribe_bt import build_transcribe_instrument_midi_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_transcribe_instrument_midi_workflow()
+        wf.execute(bb)
+        midi_p = bb.get_val("transcribed_midi_path")
+        json_p = bb.get_val("transcription_json_path")
+        status_msg = f"🎉 成功執行【4-1 獨奏與多音音符轉 MIDI 狀態機】！\n- **導出 MIDI 檔**: `{midi_p}`\n- **採譜 JSON 報告**: `{json_p}`"
+        return status_msg, midi_p, json_p, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
