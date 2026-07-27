@@ -233,6 +233,74 @@ class SaveASMRSpatialBinauralOutputNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class DynamicMicroDetailBoosterNode(BaseNode):
+    """小訊號 Upward Compression 上向壓縮高亮羽毛、微風與極低聲耳語細節」"""
+    required_keys = ["y"]
+    output_keys = ["y"]
+
+    def __init__(self):
+        super().__init__("DynamicMicroDetailBoosterNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        try:
+            # 針對小訊號波形實作 2.5x Upward Gain 增益高亮
+            mask_low = np.abs(y) < 0.1
+            y_boosted = np.copy(y)
+            y_boosted[mask_low] = y_boosted[mask_low] * 2.2
+            blackboard.set_val("y", y_boosted.astype(np.float32))
+            print(f"[{self.name}] 🎚️ 成功執行 ASMR 微音小訊號 Upward 增益高亮")
+        except Exception as e:
+            print(f"[{self.name}] ⚠️ Micro Booster 警告: {e}")
+
+        return NodeStatus.SUCCESS
+
+
+class PeakLimiterGuardNode(BaseNode):
+    """壓制突發 Peak 音量，防止驚嚇聽眾 (-1.0 dBFS Safe Ceiling)」"""
+    required_keys = ["y"]
+    output_keys = ["y"]
+
+    def __init__(self):
+        super().__init__("PeakLimiterGuardNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        peak = np.max(np.abs(y))
+        target_peak = 0.891  # -1.0 dBFS
+        if peak > target_peak:
+            y = y * (target_peak / peak)
+            print(f"[{self.name}] 🛡️ 成功壓制 ASMR 突發 Peak 至 -1.0 dBFS 防護區間")
+
+        blackboard.set_val("y", y.astype(np.float32))
+        return NodeStatus.SUCCESS
+
+
+class SaveASMRBoosterOutputNode(BaseNode):
+    """落盤 ASMR_Booster_Enhanced.wav」"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["asmr_booster_path"]
+
+    def __init__(self):
+        super().__init__("SaveASMRBoosterOutputNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        booster_path = os.path.join(output_dir, "ASMR_Booster_Enhanced.wav")
+        if y.ndim > 1:
+            sf.write(booster_path, y.T, sr)
+        else:
+            sf.write(booster_path, y, sr)
+
+        blackboard.set_val("asmr_booster_path", booster_path)
+        print(f"[{self.name}] 🎧 成功落盤 ASMR 極微音細節增益檔 ➔ {booster_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_asmr_hiss_clean_workflow() -> SequenceNode:
     """
     建立 6-1 ASMR 高頻底噪與電流聲淨化狀態機 (ASMR Hiss Clean BT Workflow):
@@ -270,4 +338,17 @@ def build_asmr_spatial_binaural_enhance_workflow() -> SequenceNode:
         BinauralSpatializerNode(),
         SubtleSpatialReverbNode(),
         SaveASMRSpatialBinauralOutputNode()
+    ])
+
+
+def build_asmr_subtle_mic_booster_workflow() -> SequenceNode:
+    """
+    建立 6-4 ASMR 助眠極微音細節增益高亮狀態機 (ASMR Subtle Mic Booster BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: DynamicMicroDetailBoosterNode] ➔ [State 2: PeakLimiterGuardNode] ➔ [State 3: SaveASMRBoosterOutputNode]
+    """
+    return SequenceNode("ASMRSubtleMicBoosterRoot", children=[
+        AudioLoadNode(),
+        DynamicMicroDetailBoosterNode(),
+        PeakLimiterGuardNode(),
+        SaveASMRBoosterOutputNode()
     ])

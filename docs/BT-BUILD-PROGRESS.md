@@ -304,7 +304,8 @@ Sequence [StemSeparationRoot]
 | **Pass 77** | **ASMR 工作流 6-1：ASMR 高頻底噪與電流聲淨化狀態機 (HighPassHissFilterNode ➔ SpectralDenoiseNode ➔ R128 -16 LUFS)** | 1 | ✅ 2026-07-27 |
 | **Pass 78** | **ASMR 工作流 6-2：ASMR 口腔濕潤音與唇齒音極致剝離狀態機 (MouthClickSuppressorNode ➔ DeEsserFilterNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 79** | **ASMR 工作流 6-3：ASMR 雙耳 3D 空間環繞聲場增強狀態機 (BinauralSpatializerNode ➔ SubtleSpatialReverbNode)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **230** | ✅ **100% 通過** |
+| **Pass 80** | **ASMR 工作流 6-4：ASMR 助眠極微音細節增益高亮狀態機 (DynamicMicroDetailBoosterNode ➔ PeakLimiterGuardNode)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機全鏈路大滿貫驗證** | **231** | ✅ **100% 通過** |
 
 ---
 
@@ -373,6 +374,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 🎉 **大滿貫里程碑 Pass 80: ASMR 工作流 6-4：ASMR 助眠極微音細節增益高亮狀態機**：<br>1. **`build_asmr_subtle_mic_booster_workflow`**：建立由 AudioLoad ➔ DynamicMicroDetailBooster ➔ PeakLimiterGuard ➔ SaveASMRBoosterOutput 構成之狀態機<br>2. **UI & 管道整合**：選取 `asmr_subtle_mic_booster` 時一鍵觸發狀態機，輸出微音細節高亮音檔 `ASMR_Booster_Enhanced.wav`<br>3. 通過 SDD Pass 80 單元測試 (`tests/test_sdd_pass80.py`, 1 passed)<br>4. 達成全系統 6 大領域 21 大細分 Behavior Tree 狀態機工作流 **100% 完整竣工**！ |
 | 2026-07-27 | 完成 **Pass 79: ASMR 工作流 6-3：ASMR 雙耳 3D 空間環繞聲場增強狀態機**：<br>1. **`build_asmr_spatial_binaural_enhance_workflow`**：建立由 AudioLoad ➔ BinauralSpatializer ➔ SubtleSpatialReverb ➔ SaveASMRSpatialBinauralOutput 構成之狀態機<br>2. **UI & 管道整合**：選取 `asmr_spatial_binaural_enhance` 時一鍵觸發狀態機，輸出 3D 雙耳環繞聲場音檔 `ASMR_3D_Binaural_Spatial.wav`<br>3. 通過 SDD Pass 79 單元測試 (`tests/test_sdd_pass79.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 78: ASMR 工作流 6-2：ASMR 口腔濕潤音與唇齒音極致剝離狀態機**：<br>1. **`build_asmr_mouth_click_removal_workflow`**：建立由 AudioLoad ➔ MouthClickSuppressor ➔ DeEsserFilter ➔ SaveASMRMouthClickClean 構成之狀態機<br>2. **UI & 管道整合**：選取 `asmr_mouth_click_removal` 時一鍵觸發狀態機，輸出口腔點擊音淨化音檔 `ASMR_Mouth_Click_Cleaned.wav`<br>3. 通過 SDD Pass 78 單元測試 (`tests/test_sdd_pass78.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 77: ASMR 工作流 6-1：ASMR 高頻底噪與電流聲淨化狀態機**：<br>1. **`build_asmr_hiss_clean_workflow`**：建立由 AudioLoad ➔ HighPassHissFilter ➔ SpectralDenoise ➔ LoudnessNormalize (-16 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `asmr_hiss_clean` 時一鍵觸發狀態機，輸出極致 ASMR 淨化音檔 `ASMR_Hiss_Cleaned.wav`<br>3. 通過 SDD Pass 77 單元測試 (`tests/test_sdd_pass77.py`, 1 passed) |

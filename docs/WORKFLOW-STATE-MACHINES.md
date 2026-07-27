@@ -519,6 +519,31 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始 ASMR 音檔路徑 |
 | `asmr_spatial_path` | `str` | `SaveASMRSpatialBinauralOutputNode` | Web UI | 3D 雙耳環繞聲場音檔 (`ASMR_3D_Binaural_Spatial.wav`) |
 
+---
+
+### 6-4. ASMR 助眠極微音細節增益高亮工作流 (`asmr_subtle_mic_booster`)
+
+#### 🎯 目標與聲學指標
+- **目標**：Upward Compression 上向壓縮高亮羽毛、微風與極低聲耳語細節，壓制 Peak 突發音量以防驚嚇。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: ASMRSubtleMicBoosterRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: DynamicMicroDetailBoosterNode"]
+    N1 --> N2["State 2: PeakLimiterGuardNode"]
+    N2 --> N3["State 3: SaveASMRBoosterOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始 ASMR 音檔路徑 |
+| `asmr_booster_path` | `str` | `SaveASMRBoosterOutputNode` | Web UI | 微音細節高亮音檔 (`ASMR_Booster_Enhanced.wav`) |
+
+
 
 
 
