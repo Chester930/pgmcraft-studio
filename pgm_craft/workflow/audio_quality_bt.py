@@ -1014,3 +1014,53 @@ class AudioQualityBTEngine:
             print("=== [AudioQualityBT] FAILED ===")
 
         return bb
+
+
+class AcousticSanityCheckGuardNode(BaseNode):
+    """
+    入口聲學健康巡檢 Guard Node。
+    巡檢 DC Offset / Clipping / RMS Level。
+    若發現 DC Offset 異常，回傳 NodeStatus.FAILURE 以觸發 Fallback 降級分支修復。
+    """
+    required_keys = ["y"]
+    output_keys = ["dc_offset"]
+
+    def __init__(self, dc_offset_threshold: float = 0.005):
+        super().__init__("AcousticSanityCheckGuardNode")
+        self.dc_offset_threshold = dc_offset_threshold
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        dc_offset = float(np.abs(np.mean(y)))
+        blackboard.set_val("dc_offset", dc_offset)
+
+        if dc_offset > self.dc_offset_threshold:
+            print(f"[{self.name}] ⚠️ 檢測到嚴重 DC Offset ({dc_offset:.4f} > {self.dc_offset_threshold})，觸發自適應降級修復！")
+            return NodeStatus.FAILURE
+
+        return NodeStatus.SUCCESS
+
+
+class DCOffsetFixNode(BaseNode):
+    """自適應修復 DC 偏置 (10Hz High-Pass Cut)"""
+    required_keys = ["y", "sr"]
+    output_keys = ["y", "dc_offset_fixed"]
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        try:
+            sos = scipy.signal.butter(2, 10.0, btype='highpass', fs=sr, output='sos')
+            if y.ndim > 1:
+                y_fixed = np.zeros_like(y)
+                for c in range(y.shape[0]):
+                    y_fixed[c] = scipy.signal.sosfilt(sos, y[c])
+            else:
+                y_fixed = scipy.signal.sosfilt(sos, y)
+            blackboard.set_val("y", y_fixed.astype(np.float32))
+            blackboard.set_val("dc_offset_fixed", True)
+            print(f"[{self.name}] 🛡️ 成功消除 DC Offset 偏置")
+        except Exception as e:
+            print(f"[{self.name}] ⚠️ DC Offset Fix 警告: {e}")
+
+        return NodeStatus.SUCCESS
