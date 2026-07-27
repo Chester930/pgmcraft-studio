@@ -87,6 +87,24 @@ class Blackboard(dict):
         except Exception as e:
             print(f"[Blackboard Cache] ⚠️ Write cache failed: {e}")
 
+    def get_telemetry_report(self) -> dict:
+        """Generates performance telemetry and profiler report for executed nodes."""
+        trace = self.get("workflow_trace", [])
+        total_ms = sum(entry.get("duration_ms", 0.0) for entry in trace)
+        return {
+            "total_execution_time_ms": round(total_ms, 3),
+            "total_nodes_executed": len(trace),
+            "node_metrics": [
+                {
+                    "node": entry.get("node"),
+                    "node_type": entry.get("node_type"),
+                    "duration_ms": entry.get("duration_ms"),
+                    "status": entry.get("status")
+                }
+                for entry in trace
+            ]
+        }
+
 
 
 class BaseNode:
