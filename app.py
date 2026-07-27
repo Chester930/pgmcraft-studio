@@ -642,15 +642,11 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[dl_status_markdown, dl_audio_player, file_mp4_dl, file_wav_dl, file_mp3_dl]
             )
 
-        # 頁籤 2: 獨立音色分軌區塊 (顏色標記前置等級 🟢 通用 / 🟡 伴奏 / 🔴 特化)
-        with gr.TabItem("🎛️ 獨立音色分軌工作區"):
+        # 頁籤 2: 獨立音色分軌與應用場景工作區 (兩階層狀態機選單)
+        with gr.TabItem("🎛️ 音色分軌與應用場景工作區"):
             gr.Markdown("""
-            ### 🎚️ 實驗性分軌工作區
-            此區塊目前仍屬 experimental，公開穩定功能以 PGM 節目軌與採譜分析為主。
-
-            - 🟢 **通用模式**: 可直接傳入原始混音檔 (Full Mix)。
-            - 🟡 **伴奏模式**: 建議傳入純伴奏/純鼓組。(若傳原曲，系統**自動防呆先行抽軌**)
-            - 🔴 **特化模式**: 需純人聲/純貝斯/單一分軌。(若傳原曲，系統**自動啟動人聲/貝斯防呆保護**)
+            ### 🎚️ 兩階層目標驅動應用場景與狀態機工作流 (STAGE 1 + STAGE 2)
+            依據你的實際聲音工程情境（Podcast 訪談、Vlog 剪輯、KTV 伴奏、樂手採譜、Live PGM、ASMR 配音），選擇目標後系統將自動觸發精密的 Behavior Tree 狀態機！
             """)
             with gr.Row():
                 with gr.Column(scale=1):
@@ -659,10 +655,16 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         type="filepath",
                         file_types=[".mp3", ".wav", ".flac", ".m4a"]
                     )
-                    stem_mode_select = gr.Dropdown(
-                        choices=[(mode["label"], mode["id"]) for mode in SEPARATION_MODES],
-                        value="general_4stem",
-                        label="🎯 選擇分軌模式 (標有色塊說明前置要求等級)"
+                    from pgm_craft.scenarios import ScenarioManager
+                    scenario_domain_select = gr.Dropdown(
+                        choices=ScenarioManager.get_domain_choices(),
+                        value="podcast",
+                        label="🎯 第一階：選擇應用大場景 (Target Domain)"
+                    )
+                    scenario_workflow_select = gr.Dropdown(
+                        choices=ScenarioManager.get_workflows_by_domain("podcast"),
+                        value="podcast_interview_clean",
+                        label="⚡ 第二階：選擇狀態機工作流 (State Machine Workflow)"
                     )
                     with gr.Row():
                         stem_output_dir = gr.Textbox(
@@ -672,14 +674,25 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         )
                         stem_browse_btn = gr.Button("📂 選擇資料夾", variant="secondary", scale=1)
 
-                    stem_start_btn = gr.Button("🚀 執行獨立音色分軌", variant="primary")
+                    stem_start_btn = gr.Button("🚀 啟動狀態機工作流", variant="primary")
 
                 with gr.Column(scale=1):
-                    stem_status_markdown = gr.Markdown("### 待分軌...")
-                    file_stem_vocal = gr.File(label="人聲 / 主唱 / 大鼓 / 電貝斯 (Vocals.wav)")
-                    file_stem_drums = gr.File(label="鼓組 / 吉他 / 鋼琴 / 小鼓 (Drums.wav)")
-                    file_stem_bass = gr.File(label="貝斯 / 弦樂 / 風琴 / 鈸聲 (Bass.wav)")
-                    file_stem_extra = gr.File(label="伴奏 / Other / 和聲 / 808 / 換氣 / 乾聲 (Other.wav)")
+                    stem_status_markdown = gr.Markdown("### 待啟動狀態機...")
+                    file_stem_vocal = gr.File(label="主要聲部 A / 人聲 / 對白 / 鼓組 (Track_A.wav)")
+                    file_stem_drums = gr.File(label="主要聲部 B / 伴奏 / 樂器 / 808 (Track_B.wav)")
+                    file_stem_bass = gr.File(label="細分聲部 C / 和聲 / 去氣音 (Track_C.wav)")
+                    file_stem_extra = gr.File(label="細分聲部 D / 乾聲 / 觀眾聲 (Track_D.wav)")
+
+            def _on_domain_change(domain_id):
+                new_choices = ScenarioManager.get_workflows_by_domain(domain_id)
+                default_val = ScenarioManager.get_default_workflow_id(domain_id)
+                return gr.update(choices=new_choices, value=default_val)
+
+            scenario_domain_select.change(
+                fn=_on_domain_change,
+                inputs=[scenario_domain_select],
+                outputs=[scenario_workflow_select]
+            )
 
             stem_browse_btn.click(
                 fn=open_folder_picker,
