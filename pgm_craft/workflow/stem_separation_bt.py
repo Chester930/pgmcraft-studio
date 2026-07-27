@@ -520,7 +520,7 @@ class PeelCoreTrioNode(BaseNode):
             return NodeStatus.FAILURE
 
         try:
-            results = self.trio_separator.run_peel_trio_loop(target_input, stems_dir, min_threshold=0.10)
+            results = self.trio_separator.run_peel_trio_loop(target_input, stems_dir, min_threshold=0.20)
             blackboard.set_val("trio_stems", results)
 
             stems = blackboard.get_val("stems", {})

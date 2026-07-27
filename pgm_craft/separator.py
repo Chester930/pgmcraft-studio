@@ -833,7 +833,7 @@ class PeelCoreTrioStemSeparator(CascadedStemSeparator):
 
         return scores
 
-    def run_peel_trio_loop(self, input_residual_path, output_dir="stems", min_threshold=0.10):
+    def run_peel_trio_loop(self, input_residual_path, output_dir="stems", min_threshold=0.20):
         """
         執行動態剝洋蔥減算循環：
         1. 在同層 (吉他/鋼琴/弦樂) 中找出最顯著樂器。

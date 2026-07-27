@@ -83,6 +83,26 @@ sudo apt update && sudo apt install -y ffmpeg
 
 ---
 
+### Step 5: (選填) 安裝進階 AI 採譜與音高追蹤套件 (`basic-pitch` & `crepe`)
+
+PGMCraft Studio 本身內建高精度 DSP 降級備援機制（即使未安裝任何第三方 AI 採譜模型，系統仍能 100% 順暢運行並導出 MIDI 導引軌）。
+
+如果你希望發揮 **Spotify 神經網路高精度 MIDI 採譜** 與 **CREPE 深度學習人聲音高追蹤** 的最佳效果，可手動安裝以下選填套件：
+
+```bash
+# 安裝 Spotify Basic Pitch (高精度多音音高採譜)
+pip install basic-pitch
+
+# 安裝 CREPE (單音人聲音高追蹤)
+pip install crepe tensorflow
+```
+
+> 💡 **避坑提示 (Windows 用戶)**：
+> - 安裝 `crepe` 或 `basic-pitch` 時若遇到 `numba` 或 `resampy` 編譯錯誤，請先確保系統已安裝 [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)。
+> - 未安裝上述套件時，系統會自動優雅降級為 **Librosa pyin & DSP 和聲/旋律採譜引擎**，不影響 DAW 素材包之匯出。
+
+---
+
 ## 🧪 3. 安裝驗證
 
 執行以下命令驗證系統與單元測試是否運作正常：

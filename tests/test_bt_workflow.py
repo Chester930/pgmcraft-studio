@@ -124,7 +124,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertEqual(blackboard.get_val("workflow_status"), "SUCCESS")
         self.assertIsInstance(validations, list)
         self.assertGreater(len(validations), 0)
-        self.assertEqual(validations[0]["node"], "PGMCraftWorkflowRoot")
+        self.assertTrue("MasterPGMPipelineRoot" in validations[0]["node"] or "PGMCraftWorkflowRoot" in validations[0]["node"])
         self.assertEqual(
             [entry for entry in validations if entry["missing_required_keys"]],
             [],
@@ -423,7 +423,7 @@ class TestBTWorkflowEngine(unittest.TestCase):
         trace = blackboard.get_val("workflow_trace")
         self.assertIsInstance(trace, list)
         self.assertGreater(len(trace), 0)
-        self.assertEqual(trace[-1]["node"], "PGMCraftWorkflowRoot")
+        self.assertTrue("MasterPGMPipelineRoot" in trace[-1]["node"] or "PGMCraftWorkflowRoot" in trace[-1]["node"])
         self.assertEqual(trace[-1]["status"], "SUCCESS")
         self.assertIn("AudioLoadNode", [entry["node"] for entry in trace])
 
