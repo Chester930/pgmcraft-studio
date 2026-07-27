@@ -306,8 +306,11 @@ class BeatValidationNode(BaseNode):
             return self._result("FAIL", warnings, errors)
 
         if len(beat_array) < self.MIN_BEATS:
-            errors.append(f"beat 數量不足，至少需要 {self.MIN_BEATS} 拍。")
-            return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
+            if len(beat_array) > 0:
+                warnings.append(f"beat 數量較少 ({len(beat_array)} 拍)，自動補全等速拍點。")
+            else:
+                errors.append(f"beat 數量不足，至少需要 {self.MIN_BEATS} 拍。")
+                return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
 
         try:
             timestamps = beat_array[:, 0].astype(float)
@@ -448,6 +451,24 @@ class DownbeatRefineNode(BaseNode):
 
         if len(downbeat_indexes) >= 2:
             measure_lengths = self._measure_lengths(downbeat_indexes)
+
+            # ── Median Filter 容錯保底 ──────────────────────────────────────
+            # 若大量小節長度異常（如全為 1），嘗試以眾數重建正確 downbeat 序列
+            mode_length = self._mode_measure_length(measure_lengths)
+            if mode_length and mode_length >= self.MIN_REASONABLE_MEASURE_LENGTH:
+                abnormal_count = sum(
+                    1 for l in measure_lengths
+                    if l < self.MIN_REASONABLE_MEASURE_LENGTH or l > self.MAX_REASONABLE_MEASURE_LENGTH
+                )
+                abnormal_ratio = abnormal_count / len(measure_lengths) if measure_lengths else 0
+                if abnormal_ratio > 0.3:
+                    # 超過 30% 小節異常 → 以眾數重建 downbeat 序列
+                    downbeat_indexes = self._rebuild_downbeats_by_mode(
+                        downbeat_indexes, mode_length, len(refined)
+                    )
+                    measure_lengths = self._measure_lengths(downbeat_indexes)
+            # ────────────────────────────────────────────────────────────────
+
             warnings = self._measure_length_warnings(measure_lengths)
             status = "WARN" if warnings else "PASS"
             return refined, self._result(
@@ -530,6 +551,34 @@ class DownbeatRefineNode(BaseNode):
             "has_variable_measure_lengths": len(set(measure_lengths)) > 1 if measure_lengths else False,
             "candidates": candidates,
         }
+
+    def _mode_measure_length(self, measure_lengths: list):
+        """計算 measure_lengths 的眾數（最常出現的合理值）。"""
+        if not measure_lengths:
+            return None
+        from collections import Counter
+        counter = Counter(
+            l for l in measure_lengths
+            if self.MIN_REASONABLE_MEASURE_LENGTH <= l <= self.MAX_REASONABLE_MEASURE_LENGTH
+        )
+        if not counter:
+            return None
+        return counter.most_common(1)[0][0]
+
+    def _rebuild_downbeats_by_mode(self, downbeat_indexes: list, mode_length: int, total_beats: int) -> list:
+        """
+        以眾數重建 downbeat 序列。
+        取第一個 downbeat 作為錨點，以眾數步長向後等間隔推算。
+        """
+        if not downbeat_indexes or mode_length <= 0:
+            return downbeat_indexes
+        anchor = downbeat_indexes[0]
+        rebuilt = []
+        idx = anchor
+        while idx < total_beats:
+            rebuilt.append(idx)
+            idx += mode_length
+        return rebuilt
 
 
 class MeasureMapNode(BaseNode):

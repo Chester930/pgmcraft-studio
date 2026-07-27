@@ -386,12 +386,30 @@ class BeatFusionArbitratorNode(BaseNode):
 
 class ReEntryReAnchoringNode(BaseNode):
     """
-    【鼓聲重返重音第一拍自動鎖定衛兵】
-    - 讀取 `kick_anchors` (大鼓重音脈衝) 與 `beats` (當前拍點陣列)
-    - 檢測無鼓切回有鼓（或大鼓切入撞擊點），強制重錨校正拍號標記為 1 號拍 (Beat 1 Downbeat)
+    【鼓聲重返重音第一拍自動鎖定衛兵 — v2 精確重錨】
+
+    設計原則：
+    - 僅對「無鼓→有鼓」邊緣事件（Re-Entry）重錨，而非對所有 kick_anchors 全部重錨
+    - 利用 kick_anchors 前後 300ms RMS 能量差判斷是否為真正的切入邊緣
+    - 重錨後從該 beat 索引向後重新推算整段 1-2-3-4 循環
+    - 加入冷卻期保護：同一次重錨後 2 秒內不再重複重錨
+
+    修復前的 Bug：
+    - 對 280 個 kick_anchors 全部執行重錨 → beat_number 幾乎全被覆蓋為 1
+    - DownbeatRefineNode 計算出 measure_length = [1, 1, 1, ...] 全部異常
     """
-    optional_keys = ["beats", "kick_anchors"]
+    optional_keys = ["beats", "kick_anchors", "y_rhythm", "sr_rhythm"]
     output_keys = ["beats"]
+
+    # 無鼓段能量閾值（低於此視為靜音段）
+    SILENCE_RMS_THRESHOLD: float = 0.015
+    # 判定視窗大小（秒）
+    PRE_WINDOW_SEC: float = 0.25
+    POST_WINDOW_SEC: float = 0.15
+    # 重錨冷卻期（秒），同一冷卻期內只取第一個邊緣
+    COOLDOWN_SEC: float = 2.0
+    # kick 命中拍點的最大容差（秒）
+    SNAP_TOLERANCE_SEC: float = 0.12
 
     def __init__(self):
         super().__init__("ReEntryReAnchoringNode")
@@ -405,22 +423,132 @@ class ReEntryReAnchoringNode(BaseNode):
         if kick_anchors is None or len(kick_anchors) == 0:
             return NodeStatus.SUCCESS
 
+        # 嘗試讀取 A 軌能量用於邊緣篩選
+        y_rhythm = blackboard.get_val("y_rhythm")
+        sr = blackboard.get_val("sr_rhythm")
+
+        # 篩選出真正的「無鼓→有鼓」Re-Entry 邊緣事件
+        reentry_anchors = self._filter_reentry_edges(kick_anchors, y_rhythm, sr)
+
+        if not reentry_anchors:
+            # 無邊緣事件，保持原 beats 不動
+            print(f"[{self.name}] ℹ️ 未偵測到鼓聲切入邊緣，保持原 beat_number 標記。")
+            return NodeStatus.SUCCESS
+
         reanchored_beats = beats.copy()
-        for k_t in kick_anchors:
+        timestamps = reanchored_beats[:, 0].astype(float)
+
+        anchored_count = 0
+        for anchor_t in reentry_anchors:
             # 找到最近的拍點
-            diffs = np.abs(reanchored_beats[:, 0].astype(float) - k_t)
-            min_idx = np.argmin(diffs)
-            if diffs[min_idx] < 0.12:
-                # 重新鎖定此拍為 Beat 1 Downbeat
-                reanchored_beats[min_idx, 1] = 1
-                # 重新修正後續拍子的倒數 1-2-3-4
-                for step in range(1, 4):
-                    if min_idx + step < len(reanchored_beats):
-                        reanchored_beats[min_idx + step, 1] = step + 1
+            diffs = np.abs(timestamps - anchor_t)
+            min_idx = int(np.argmin(diffs))
+            if diffs[min_idx] > self.SNAP_TOLERANCE_SEC:
+                continue  # 無對應拍點，跳過
+
+            # 從錨點向後重新推算整段 beat_number 循環
+            # 先偵測錨點前的拍號以確定接續循環相位
+            anchor_phase = int(reanchored_beats[min_idx, 1]) if min_idx > 0 else 1
+            # 強制此點為 Beat 1
+            reanchored_beats[min_idx, 1] = 1
+            # 從錨點往後重算，直到下一個 re-entry anchor 或結尾
+            next_anchor_t = reentry_anchors[reentry_anchors.index(anchor_t) + 1] if anchor_t != reentry_anchors[-1] else float("inf")
+            for step in range(1, len(reanchored_beats) - min_idx):
+                idx = min_idx + step
+                if timestamps[idx] >= next_anchor_t:
+                    break
+                reanchored_beats[idx, 1] = (step % 4) + 1
+
+            anchored_count += 1
 
         blackboard.set_val("beats", reanchored_beats)
-        print(f"[{self.name}] 🎯 強制重錨衛兵對齊完畢，已校正鼓聲切入第一拍 (Beat 1)。")
+        print(f"[{self.name}] 🎯 強制重錨衛兵對齊完畢，已校正 {anchored_count} 個鼓聲切入第一拍 (Beat 1)。")
         return NodeStatus.SUCCESS
+
+    def _filter_reentry_edges(self, kick_anchors: np.ndarray, y_rhythm, sr) -> list:
+        """
+        從所有 kick_anchors 中篩選出「無鼓→有鼓」邊緣事件。
+
+        策略：
+        - 若無 y_rhythm：使用相鄰 kick 間距分析，kick 間距突然縮短代表鼓聲重返
+        - 若有 y_rhythm：比較每個 kick 前後 RMS 能量，前低後高視為邊緣
+
+        加入冷卻期：同一 COOLDOWN_SEC 內只保留第一個邊緣。
+        """
+        if kick_anchors is None or len(kick_anchors) == 0:
+            return []
+
+        kick_times = sorted(float(t) for t in kick_anchors)
+
+        if y_rhythm is not None and sr:
+            edges = self._energy_based_edges(kick_times, y_rhythm, sr)
+        else:
+            edges = self._interval_based_edges(kick_times)
+
+        # 套用冷卻期：合併過近的邊緣事件
+        return self._apply_cooldown(edges)
+
+    def _energy_based_edges(self, kick_times: list, y_rhythm, sr: int) -> list:
+        """以前後 RMS 能量差判斷切入邊緣。"""
+        edges = []
+        pre_win = int(self.PRE_WINDOW_SEC * sr)
+        post_win = int(self.POST_WINDOW_SEC * sr)
+        n = len(y_rhythm)
+
+        for t in kick_times:
+            sample = int(t * sr)
+            pre_start = max(0, sample - pre_win)
+            pre_end = max(0, sample - int(0.02 * sr))  # 切入點前 20ms
+            post_start = sample
+            post_end = min(n, sample + post_win)
+
+            if pre_end <= pre_start or post_end <= post_start:
+                continue
+
+            pre_rms = float(np.sqrt(np.mean(y_rhythm[pre_start:pre_end] ** 2)))
+            post_rms = float(np.sqrt(np.mean(y_rhythm[post_start:post_end] ** 2)))
+
+            # 前段靜音 + 後段有能量 → 判定為切入邊緣
+            if pre_rms < self.SILENCE_RMS_THRESHOLD and post_rms >= self.SILENCE_RMS_THRESHOLD * 2:
+                edges.append(t)
+
+        return edges
+
+    def _interval_based_edges(self, kick_times: list) -> list:
+        """
+        無 y_rhythm 時的降級策略：
+        利用 kick 間距突然縮短（從長間距到短間距）判斷鼓聲重返。
+        長間距 = 無鼓靜音期（kick 稀疏），短間距 = 鼓聲密集段。
+        """
+        if len(kick_times) < 3:
+            return [kick_times[0]] if kick_times else []
+
+        intervals = np.diff(kick_times)
+        med_interval = float(np.median(intervals))
+        edges = []
+
+        for i in range(1, len(intervals)):
+            prev_interval = intervals[i - 1]
+            curr_interval = intervals[i]
+            # 前一個間距 > 2x 中位數（靜音期），當前間距 ≤ 1.5x 中位數（鼓聲恢復）
+            if prev_interval > 2.0 * med_interval and curr_interval <= 1.5 * med_interval:
+                edges.append(kick_times[i])
+
+        # 若開頭第一個 kick 前有很長的靜音（無法比較），也視為邊緣
+        if intervals[0] > 2.0 * med_interval:
+            edges.insert(0, kick_times[0])
+
+        return edges
+
+    def _apply_cooldown(self, edges: list) -> list:
+        """合併距離過近的邊緣事件，同一冷卻期內只保留第一個。"""
+        if not edges:
+            return []
+        result = [edges[0]]
+        for t in edges[1:]:
+            if t - result[-1] >= self.COOLDOWN_SEC:
+                result.append(t)
+        return result
 
 
 def build_beat_tracking_tree() -> SequenceNode:

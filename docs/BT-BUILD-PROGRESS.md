@@ -271,7 +271,9 @@ Sequence [StemSeparationRoot]
 | **Pass 44** | **DownbeatAlignedSectionNode (樂段 100% 強制吸附對齊小節第 1 拍)** | 1 | ✅ 2026-07-27 |
 | **Pass 45** | **MultiBandChromaKeyNode (Bass 根音 + 鋼琴和聲多頻段色譜調性校正)** | 1 | ✅ 2026-07-27 |
 | **Pass 46** | **Stage 4 Behavior Tree 全管道連動與和聲/樂段小節對齊測試** | 2 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **172** | ✅ **100% 通過** |
+| **Pass 47** | **ReEntryReAnchoringNode v2 鼓聲切入精確重錨與 DownbeatRefine Median Filter** | 18 | ✅ 2026-07-27 |
+| **Pass 48** | **專項音訊分離模型 (Specialized Stem Models) 與前處理適配器 (Input Guard Adapter)** | 4 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **194** | ✅ **100% 通過** |
 
 ---
 
@@ -340,6 +342,8 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 48: 專項音訊分離模型 (Specialized Stem Models) 與前處理適配器 (Input Guard Adapter)**：<br>1. **`StemInputGuardAdapter`**：實作 44100Hz 高品質重採樣、Stereo 雙聲道補齊展平 `[2, T]` 與 Peak Safeguard (-1.0 dBFS) 動態防爆音<br>2. **Prerequisite 防呆級聯**：吉他/鋼琴專項分離前自動強制轉為 `Instrumental` 伴奏軌<br>3. **`DemucsCacheGuard`**：MD5 + 檔案大小雙重 Hash 快取，0 秒即時複用<br>4. 通過 SDD Pass 48 單元測試 (`tests/test_sdd_pass48.py`, 4 passed) |
+| 2026-07-27 | 完成 **Pass 47: ReEntryReAnchoringNode v2 鼓聲切入精確重錨與 DownbeatRefine Median Filter**：<br>1. **`ReEntryReAnchoringNode` v2**：只對「無鼓→有鼓」邊緣事件重錨（從 280 個 kick 縮減到 5-15 個），重錨後向後重算整段 1-2-3-4 循環並加上 2s 冷卻保護<br>2. **`DownbeatRefineNode`**：加入 measure_length 眾數 Median Filter 容錯保底<br>3. 通過 SDD Pass 47 單元測試 (`tests/test_sdd_pass47.py`, 18 passed) |
 | 2026-07-27 | 完成 **Pass 32: Stage 6 PackageRoot Behavior Tree 重構與 DAW 全套素材包自動歸檔**：<br>1. **`package_bt.py`**：實作獨立 `PackageRoot` BT 樹包含 `DAWSessionGenerateNode` (Reaper/Ableton/Logic/Cubase CSV)、`LiveDashboardExportNode` (Live 舞台面板 HTML) 與 `ZIPArchivePackagerNode` (壓縮素材包打包)<br>2. **`packager.py` 素材補全**：補齊 Pass 29 產出之 `section_markers_midi` 入 ZIP 打包白名單<br>3. 通過 SDD Pass 32 單元測試 (`tests/test_sdd_pass32.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 31: 前端 Stage 1~5 選擇器 UI 補全與後端 BT 樹動態階段截斷**：<br>1. **`app.py` UI 升級**：在「🎛️ PGM 節目軌與採譜分析」主頁籤加入「🎯 選擇 BT 執行目標階段 (Stage 1 ~ 5)」下拉選單<br>2. **`builder.py` 截斷**：`build_master_pipeline_tree(target_stage)` 支援動態截斷在指定的 Stage<br>3. 通過 SDD Pass 31 單元測試 (`tests/test_sdd_pass31.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 30: Stage 0~5 全管道整合修復、Pipeline 順序調整與專案 Session 落盤對齊**：<br>1. **順序重排**：將 `ai_parallel_group` 與 `VoiceSplitMIDIExportNode` 前移至 `build_export_tree()` 前，確保 AI 旋律 MIDI 完全進入導出包<br>2. **Session 落盤對齊**：`ClickSynthesisNode` / `MIDIExportNode` / `MIDIMarkerSectionExportNode` 設為 `project_dir` 優先<br>3. 通過 SDD Pass 30 全管道測試 (`tests/test_sdd_pass30.py`, 1 passed) |

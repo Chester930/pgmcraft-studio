@@ -29,16 +29,103 @@ SOTA_MODEL_REGISTRY = {
 }
 
 
+class StemInputGuardAdapter:
+    """
+    【專項模型輸入前處理適配器】
+    - 統一採樣率 (Target Sampling Rate: 44100Hz)
+    - 補齊展平 Stereo 雙聲道 `[2, T]` 矩陣
+    - Peak Level Safeguard 動態縮放 (-1.0 dBFS Peak 防爆音)
+    - Stem Prerequisite 前置條件防呆級聯 (Instrumental vs Pure Vocals vs Full Mix)
+    """
+
+    @staticmethod
+    def standardize_audio_input(audio_path: str, output_path: str = None, target_sr: int = 44100,
+                                require_stereo: bool = True, max_peak_db: float = -1.0) -> str:
+        """標準化專項模型輸入音訊，回傳處理後 Wav 路徑」"""
+        import librosa
+        import soundfile as sf
+        import numpy as np
+
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"音訊檔案不存在: {audio_path}")
+
+        # 讀取 Raw 音訊
+        y, sr = librosa.load(audio_path, sr=None, mono=False)
+
+        # 1. 採樣率適配 (Resampling)
+        if sr != target_sr:
+            y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
+            sr = target_sr
+
+        # 2. 雙聲道 Channel 補齊 (Stereo Expansion)
+        if require_stereo and y.ndim == 1:
+            y = np.stack([y, y])
+
+        # 3. Peak Level Safeguard (-1.0 dBFS Peak 縮放)
+        max_peak = np.max(np.abs(y))
+        target_linear_peak = 10.0 ** (max_peak_db / 20.0)
+        if max_peak > target_linear_peak:
+            scale = target_linear_peak / max_peak
+            y = y * scale
+
+        if output_path is None:
+            base_dir = os.path.dirname(audio_path) or "."
+            file_name = os.path.basename(audio_path)
+            output_path = os.path.join(base_dir, f"standardized_{file_name}")
+
+        sf.write(output_path, y.T if y.ndim > 1 else y, target_sr)
+        return output_path
+
+    @staticmethod
+    def prepare_prerequisite_audio(audio_path: str, required_prerequisite: str,
+                                   output_dir: str, separator_instance=None) -> str:
+        """
+        前置條件防呆級聯護航：
+        - `instrumental_only`: 專項吉他/鋼琴/弦樂模型必備（自動先剝離人聲）
+        - `pure_vocals_only`: 專項和聲/換氣模型必備（自動先剝離純伴奏）
+        """
+        if required_prerequisite == "general_audio":
+            return audio_path
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        if required_prerequisite == "instrumental_only":
+            inst_path = os.path.join(output_dir, "instrumental.wav")
+            if os.path.exists(inst_path):
+                return inst_path
+            if separator_instance:
+                print(f"[Prerequisite Guard] 🛡️ 檢測到專項模型需要 pure instrumental，自動先剝離人聲...")
+                v_dict = separator_instance.separate_vocals(audio_path, output_dir)
+                return v_dict.get("instrumental", inst_path)
+            return audio_path
+
+        if required_prerequisite == "pure_vocals_only":
+            vocal_path = os.path.join(output_dir, "vocals.wav")
+            if os.path.exists(vocal_path):
+                return vocal_path
+            if separator_instance:
+                print(f"[Prerequisite Guard] 🛡️ 檢測到專項模型需要 pure vocals，自動先剝離伴奏...")
+                v_dict = separator_instance.separate_vocals(audio_path, output_dir)
+                return v_dict.get("vocals", vocal_path)
+            return audio_path
+
+        return audio_path
+
+
 class CascadedStemSeparator:
     """防呆 Guard 護航與多階層層疊分軌引擎"""
 
     def __init__(self):
         self.enhancer = AudioEnhancerEngine()
+        self.input_guard = StemInputGuardAdapter()
         self._demucs_cache = {}
 
     def _demucs_separate(self, audio_path, output_dir, model_name, target_names):
-        """通用 Demucs 推理核心，回傳 {stem_name: wav_path} dict (帶全域記憶體與檔名快取)"""
-        cache_key = (os.path.abspath(audio_path), model_name, output_dir)
+        """通用 Demucs 推理核心，回傳 {stem_name: wav_path} dict (帶全域記憶體與檔名/檔案大小 MD5 雙重快取)"""
+        abs_path = os.path.abspath(audio_path)
+        file_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
+        cache_key = (abs_path, file_size, model_name, output_dir)
+
         if cache_key in self._demucs_cache:
             cached_paths = self._demucs_cache[cache_key]
             # 檢查快取檔案是否皆存在
@@ -330,15 +417,22 @@ class CascadedStemSeparator:
         return bass_path, other_path
 
     def separate_guitar(self, audio_path, output_dir, is_already_instrumental=False):
-        """吉他分離: 使用 HTDemucs 6s (guitar stem)；無法推論時複製伴奏降級"""
+        """吉他分離: 結合 StemInputGuardAdapter 防呆級聯 (instrumental_only) 與標準化 Peak Guard"""
         os.makedirs(output_dir, exist_ok=True)
-        target_input = audio_path
-        if not is_already_instrumental:
-            _, target_input = self.separate_vocals(audio_path, output_dir)
+        req_type = "general_audio" if is_already_instrumental else "instrumental_only"
+        prepared_input = self.input_guard.prepare_prerequisite_audio(
+            audio_path, req_type, output_dir, separator_instance=self
+        )
+
+        # 專項模型輸入音訊標準化護航 (44100Hz + Stereo + Peak < -1.0dBFS)
+        standardized_input = self.input_guard.standardize_audio_input(
+            prepared_input, target_sr=44100, require_stereo=True, max_peak_db=-1.0
+        )
+
         guitar_path    = os.path.join(output_dir, "guitar.wav")
         no_guitar_path = os.path.join(output_dir, "no_guitar.wav")
         try:
-            paths = self._demucs_separate(target_input, output_dir, "htdemucs_6s",
+            paths = self._demucs_separate(standardized_input, output_dir, "htdemucs_6s",
                                           {"guitar", "bass", "drums", "other", "vocals", "piano"})
             guitar_path = paths.get("guitar", guitar_path)
             # no_guitar = 其餘所有 stem 合成
@@ -349,7 +443,7 @@ class CascadedStemSeparator:
                 mix = sum(arrays)
                 sr_val = sf.read(paths[residual_keys[0]])[1]
                 sf.write(no_guitar_path, mix.astype(np.float32), sr_val)
-                print(f"[Demucs Guitar] ✅ 吉他分離完成 (HTDemucs 6s)")
+                print(f"[Demucs Guitar Specialized] ✅ 吉他專項分離完成 (HTDemucs 6s + Guard Adapter)")
             else:
                 shutil.copyfile(target_input, no_guitar_path)
         except Exception as e:
