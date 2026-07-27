@@ -95,8 +95,12 @@ class StemInputGuardAdapter:
                 return inst_path
             if separator_instance:
                 print(f"[Prerequisite Guard] 🛡️ 檢測到專項模型需要 pure instrumental，自動先剝離人聲...")
-                v_dict = separator_instance.separate_vocals(audio_path, output_dir)
-                return v_dict.get("instrumental", inst_path)
+                res_vocals = separator_instance.separate_vocals(audio_path, output_dir)
+                if isinstance(res_vocals, tuple):
+                    return res_vocals[1]
+                elif isinstance(res_vocals, dict):
+                    return res_vocals.get("instrumental", inst_path)
+                return inst_path
             return audio_path
 
         if required_prerequisite == "pure_vocals_only":
@@ -105,8 +109,12 @@ class StemInputGuardAdapter:
                 return vocal_path
             if separator_instance:
                 print(f"[Prerequisite Guard] 🛡️ 檢測到專項模型需要 pure vocals，自動先剝離伴奏...")
-                v_dict = separator_instance.separate_vocals(audio_path, output_dir)
-                return v_dict.get("vocals", vocal_path)
+                res_vocals = separator_instance.separate_vocals(audio_path, output_dir)
+                if isinstance(res_vocals, tuple):
+                    return res_vocals[0]
+                elif isinstance(res_vocals, dict):
+                    return res_vocals.get("vocals", vocal_path)
+                return vocal_path
             return audio_path
 
         return audio_path
@@ -453,22 +461,49 @@ class CascadedStemSeparator:
         return guitar_path, no_guitar_path
 
     def separate_piano(self, audio_path, output_dir, is_already_instrumental=False):
+        """鋼琴分離: 結合 StemInputGuardAdapter 防呆級聯 (instrumental_only) 與標準化 Peak Guard"""
         os.makedirs(output_dir, exist_ok=True)
-        target_input = audio_path
-        if not is_already_instrumental:
-            _, target_input = self.separate_vocals(audio_path, output_dir)
-        piano_path = os.path.join(output_dir, "piano.wav")
+        req_type = "general_audio" if is_already_instrumental else "instrumental_only"
+        prepared_input = self.input_guard.prepare_prerequisite_audio(
+            audio_path, req_type, output_dir, separator_instance=self
+        )
+
+        standardized_input = self.input_guard.standardize_audio_input(
+            prepared_input, target_sr=44100, require_stereo=True, max_peak_db=-1.0
+        )
+
+        piano_path    = os.path.join(output_dir, "piano.wav")
         no_piano_path = os.path.join(output_dir, "no_piano.wav")
-        shutil.copyfile(target_input, piano_path)
-        shutil.copyfile(target_input, no_piano_path)
+        try:
+            paths = self._demucs_separate(standardized_input, output_dir, "htdemucs_6s",
+                                          {"piano", "guitar", "bass", "drums", "other", "vocals"})
+            piano_path = paths.get("piano", piano_path)
+            import soundfile as sf, numpy as np
+            residual_keys = [k for k in ("guitar", "bass", "drums", "other", "vocals") if paths.get(k)]
+            if residual_keys:
+                arrays = [sf.read(paths[k])[0] for k in residual_keys]
+                mix = sum(arrays)
+                sr_val = sf.read(paths[residual_keys[0]])[1]
+                sf.write(no_piano_path, mix.astype(np.float32), sr_val)
+                print(f"[Demucs Piano Specialized] ✅ 鋼琴專項分離完成 (HTDemucs 6s + Guard Adapter)")
+            else:
+                shutil.copyfile(standardized_input, no_piano_path)
+        except Exception as e:
+            print(f"[Piano Demucs Fallback] {e} — 降級為複製伴奏")
+            shutil.copyfile(standardized_input, piano_path)
+            shutil.copyfile(standardized_input, no_piano_path)
         return piano_path, no_piano_path
 
     def separate_strings(self, audio_path, output_dir):
+        """弦樂分離: 結合 StemInputGuardAdapter 與標準化 Peak Guard"""
         os.makedirs(output_dir, exist_ok=True)
-        strings_path = os.path.join(output_dir, "strings.wav")
+        standardized_input = self.input_guard.standardize_audio_input(
+            audio_path, target_sr=44100, require_stereo=True, max_peak_db=-1.0
+        )
+        strings_path    = os.path.join(output_dir, "strings.wav")
         no_strings_path = os.path.join(output_dir, "no_strings.wav")
-        shutil.copyfile(audio_path, strings_path)
-        shutil.copyfile(audio_path, no_strings_path)
+        shutil.copyfile(standardized_input, strings_path)
+        shutil.copyfile(standardized_input, no_strings_path)
         return strings_path, no_strings_path
 
     def separate_guitar_substem(self, guitar_path, output_dir):
