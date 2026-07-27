@@ -168,6 +168,35 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
 | `vlog_enhanced_path` | `str` | `SaveSpeechEnhancedOutputNode` | Web UI | 語音高亮淨化完成檔 (`vlog_speech_enhanced.wav`) |
 
+---
+
+## 🎤 大場景 3：歌唱與伴奏製作 (Vocal & Karaoke)
+
+### 3-1. 經典純伴奏製作工作流 (`vocal_pure_inst`)
+
+#### 🎯 目標與聲學指標
+- **目標**：從原曲中完全去除主唱與和聲，產出無人聲純淨伴奏。
+- **目標 LUFS**：`-14.0 LUFS`
+- **True Peak 上限**：`-1.0 dBFS`
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: VocalPureInstRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: PureInstrumentalNode (BS-Roformer)"]
+    N1 --> N2["State 2: LoudnessNormalizeNode (target_lufs=-14.0, force=True)"]
+    N2 --> N3["State 3: SavePureInstOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
+| `pure_inst_path` | `str` | `SavePureInstOutputNode` | Web UI | 淨化落盤之純伴奏 WAV 路徑 (`Pure_Instrumental.wav`) |
+
+
 
 
 
