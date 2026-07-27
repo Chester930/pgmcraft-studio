@@ -3,7 +3,7 @@ Stage 6: Package & DAW Material Handoff Behavior Tree (PackageRoot)
 """
 
 import os
-from pgm_craft.workflow.nodes import BaseNode, NodeStatus, SequenceNode
+from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
 from pgm_craft.packager import PGMProjectPackager
 from pgm_craft.daw_exporter import DAWExporter, DAWProfileRegistry
 
@@ -90,10 +90,48 @@ class ZIPArchivePackagerNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class DAWPresetsPackagerNode(BaseNode):
+    """
+    【全 DAW 專案檔一鍵預設包導出節點】
+    - 彙整 Ableton Live (.als)、REAPER (.rpp)、Cubase (.csv) 與 MIDI 素材
+    - 打包產生獨立檔 daw_presets_pack.zip 供全平台 DAW 使用
+    """
+    required_keys = ["output_dir"]
+    output_keys = ["daw_presets_pack_path"]
+
+    def __init__(self):
+        super().__init__("DAWPresetsPackagerNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        import zipfile
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        zip_path = os.path.join(output_dir, "daw_presets_pack.zip")
+
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, _, files in os.walk(output_dir):
+                    for file in files:
+                        if file.endswith(('.als', '.rpp', '.csv', '.mid', '.txt', '.md')) and file != "daw_presets_pack.zip":
+                            fp = os.path.join(root, file)
+                            arcname = os.path.relpath(fp, output_dir)
+                            zipf.write(fp, arcname)
+
+            blackboard.set_val("daw_presets_pack_path", zip_path)
+            outputs = blackboard.get_val("outputs", {})
+            outputs["daw_presets_pack"] = zip_path
+            blackboard.set_val("outputs", outputs)
+            print(f"[{self.name}] 📦 成功打包全 DAW 一鍵預設工程包 ➔ {zip_path}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] 打包 DAW 預設包失敗: {e}")
+            return NodeStatus.SUCCESS
+
+
 def build_package_tree() -> SequenceNode:
     """Constructs Stage 6 PackageRoot Behavior Tree."""
     return SequenceNode("PackageRoot", [
         DAWSessionGenerateNode(),
         LiveDashboardExportNode(),
         ZIPArchivePackagerNode(),
+        DAWPresetsPackagerNode()
     ])
