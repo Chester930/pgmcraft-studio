@@ -2,8 +2,9 @@
 PGMCraft Behavior Tree (BT) & State Machine Workflow Core Engine.
 """
 
-from enum import Enum, auto
+import os
 import time
+from enum import Enum, auto
 
 class NodeStatus(Enum):
     SUCCESS = auto()
@@ -42,6 +43,49 @@ class Blackboard(dict):
         validations = self.setdefault("contract_validation", [])
         entry["index"] = len(validations)
         validations.append(entry)
+
+    def get_audio_hash(self) -> str:
+        """Retrieves or calculates SHA256 hash (first 16 chars) for current audio_path."""
+        if "audio_hash" in self:
+            return self["audio_hash"]
+        audio_path = self.get_val("audio_path")
+        if not audio_path or not os.path.exists(audio_path):
+            return "default_hash"
+        import hashlib
+        hasher = hashlib.sha256()
+        with open(audio_path, "rb") as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        h = hasher.hexdigest()[:16]
+        self["audio_hash"] = h
+        return h
+
+    def get_cached_artifact(self, cache_key: str):
+        """Reads JSON cached artifact from ./cache/{audio_hash}/{cache_key}.json if present."""
+        import json
+        h = self.get_audio_hash()
+        cache_dir = os.path.join("cache", h)
+        cache_file = os.path.join(cache_dir, f"{cache_key}.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return None
+        return None
+
+    def set_cached_artifact(self, cache_key: str, data: dict):
+        """Writes JSON artifact to ./cache/{audio_hash}/{cache_key}.json."""
+        import json
+        h = self.get_audio_hash()
+        cache_dir = os.path.join("cache", h)
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{cache_key}.json")
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[Blackboard Cache] ⚠️ Write cache failed: {e}")
 
 
 
