@@ -177,6 +177,80 @@ class DemixPianoCheckNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class SynthesizeFullAutoBackingNode(BaseNode):
+    """
+    BT 節點：全自動純音樂伴奏 (Backing Track) 聲部合成與 Click 軌混合節點
+    自動將已分離的無人聲聲部 (drums + bass + guitar 或 instrumental/no_vocal) 混合導出為 backing.wav 與 backing_with_click.wav。
+    """
+    def __init__(self):
+        super().__init__("SynthesizeFullAutoBackingNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        output_dir = blackboard.get_val("output_dir", "outputs/full_auto_stems")
+        os.makedirs(output_dir, exist_ok=True)
+
+        extracted_stems = blackboard.get_val("extracted_stems", {})
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        click_audio = blackboard.get_val("click_audio")
+
+        # 1. 優先混合純伴奏 (drums, bass, guitar) 或使用 instrumental / no_vocal
+        backing_audio = None
+        loaded_wavs = []
+
+        for stem_key in ["drums", "bass", "guitar"]:
+            if stem_key in extracted_stems and os.path.exists(extracted_stems[stem_key]):
+                try:
+                    w, w_sr = sf.read(extracted_stems[stem_key])
+                    if w.ndim > 1:
+                        w = w.mean(axis=1)
+                    loaded_wavs.append(w)
+                except Exception:
+                    pass
+
+        if loaded_wavs:
+            min_len = min(len(w) for w in loaded_wavs)
+            backing_audio = sum(w[:min_len] for w in loaded_wavs)
+        elif "instrumental" in extracted_stems and os.path.exists(extracted_stems["instrumental"]):
+            try:
+                w, w_sr = sf.read(extracted_stems["instrumental"])
+                if w.ndim > 1:
+                    w = w.mean(axis=1)
+                backing_audio = w
+            except Exception:
+                backing_audio = y
+        else:
+            backing_audio = y
+
+        if backing_audio is None:
+            return NodeStatus.SUCCESS
+
+        # 2. 導出 純音樂伴奏 backing.wav
+        backing_path = os.path.join(output_dir, "backing.wav")
+        sf.write(backing_path, backing_audio, sr)
+        extracted_stems["backing"] = backing_path
+
+        # 3. 若存在 Click 音訊，混入 Click 導出 backing_with_click.wav
+        backing_with_click_path = os.path.join(output_dir, "backing_with_click.wav")
+        if click_audio is not None and len(click_audio) > 0:
+            min_l = min(len(backing_audio), len(click_audio))
+            mixed = backing_audio[:min_l] + click_audio[:min_l] * 0.7
+            peak = np.max(np.abs(mixed))
+            if peak > 0.891:
+                mixed = mixed * (0.891 / peak)
+            sf.write(backing_with_click_path, mixed, sr)
+        else:
+            sf.write(backing_with_click_path, backing_audio, sr)
+
+        extracted_stems["backing_with_click"] = backing_with_click_path
+        blackboard.set_val("extracted_stems", extracted_stems)
+        blackboard.set_val("backing_path", backing_path)
+        blackboard.set_val("backing_with_click_path", backing_with_click_path)
+
+        print(f"[{self.name}] 🎸 成功導出純伴奏 {backing_path} 與 Click 混合伴奏 {backing_with_click_path}")
+        return NodeStatus.SUCCESS
+
+
 class FullAutoDemixingBTEngine:
     """全自動需求驅動分軌行為樹總控引擎（標準 Behavior Tree 樹狀驅動版）"""
 
@@ -197,6 +271,7 @@ class FullAutoDemixingBTEngine:
             DemixBassBranchNode(self.separator, self.default_threshold),
             DemixGuitarBranchNode(self.separator, self.default_threshold),
             DemixPianoCheckNode(self.default_threshold),
+            SynthesizeFullAutoBackingNode(),
         ])
 
     def run_full_auto_demixing(self, audio_path, output_dir="outputs/full_auto_stems", instrument_probs=None):

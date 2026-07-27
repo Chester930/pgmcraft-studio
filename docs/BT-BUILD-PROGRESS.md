@@ -324,7 +324,8 @@ Sequence [StemSeparationRoot]
 | **Pass 98** | **ExportBT BackingWithClickSynthesizerNode 防禦性波形 Lazy Load 與 Peak Limiter 護航** | 1 | ✅ 2026-07-27 |
 | **Pass 99** | **Live Dashboard HTML 視聽 Console 標題與 NoneType 音訊路徑安全讀取修復** | 1 | ✅ 2026-07-27 |
 | **Pass 100** | **🎉 100 大滿貫！Scenario Registry 狀態機工作流命名與聯動選單一致性對齊** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Pass 88~100 百大 SDD 滿貫總驗證** | **258** | ✅ **100% 通過** |
+| **Pass 101** | **全自動 BT 總控 (FullAutoDemixingBTEngine) 純伴奏合成 (SynthesizeFullAutoBackingNode ➔ backing.wav / backing_with_click.wav)** | 2 | ✅ 2026-07-27 |
+| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Pass 88~101 百大 SDD 滿貫總驗證** | **260** | ✅ **100% 通過** |
 
 ---
 
