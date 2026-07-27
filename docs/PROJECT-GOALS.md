@@ -16,7 +16,9 @@ PGMCraft Studio 是一套以節點式音訊工作流為基礎，並透過 Behavi
 - **標的式 Sub-Mix 分析音軌合成 (Rhythm, Harmonic, Structure)**
 - **DAW 自動 3 大 Bus 路由與音量平衡 (Rhythm -3dB / Music -6dB / Vocal 0dB)**
 - **聲部導向 MIDI 拆分 (Piano/Guitar) & Legato 0 衝突微秒修復衛兵**
-- **EBU R128 (-14 LUFS, Peak <= -1.0 dBFS) 聽感極致控制**
+- **EBU R128 (-14 LUFS / -16 LUFS, Peak <= -1.0 dBFS) 聽感極致控制**
+- **兩階層目標驅動應用場景矩陣 (6 大一級領域 + 21 項細分二級狀態機工作流)**
+- **Podcast / Vlog / 卡拉OK / 樂手採譜 / Live PGM / ASMR 狀態機全管道連動**
 - **Live 舞台對時指示儀表板 (JS 即時小節與和弦燈號高亮同步)**
 - **MusicXML `.musicxml` 開放樂譜導出與 Global MIDI Chord Track 和弦軌標記**
 - **Behavior Tree 自我修復衛兵 (BT Exception Self-Healing Guard)**
