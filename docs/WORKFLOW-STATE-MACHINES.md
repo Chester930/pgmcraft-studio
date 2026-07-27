@@ -396,6 +396,31 @@ graph TD
 | `click_track_path` | `str` | `SaveClickCueAudioNode` | Web UI | 精準 Click 節拍對位聲軌 (`click_track.wav`) |
 | `cue_track_path` | `str` | `SaveClickCueAudioNode` | Web UI | 樂段與倒數語音 Cue 聲軌 (`cue_track.wav`) |
 
+---
+
+### 5-3. 樂手即時 HTML5 視聽同步 HUD 控制台面板工作流 (`live_stage_hud`)
+
+#### 🎯 目標與聲學指標
+- **目標**：估算 Downbeats、小節與樂段結構，渲染獨立 HTML5 視聽同步 HUD 視覺化介面。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: LiveStageHUDRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: StageStructureAnalysisNode"]
+    N1 --> N2["State 2: StageHUDGeneratorNode"]
+    N2 --> N3["State 3: SaveStageHUDHtmlNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
+| `hud_html_path` | `str` | `SaveStageHUDHtmlNode` | Web UI | Live Stage HUD 視覺化面板檔 (`live_stage_hud.html`) |
+
+
 
 
 

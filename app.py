@@ -477,6 +477,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【5-2 舞台導聽 Click & Cue Voice 指示音軌自動生成狀態機】！\n- **Click 音軌**: `{clk_p}`\n- **Cue Voice 語音軌**: `{cue_p}`"
         return status_msg, clk_p, cue_p, None, None
 
+    # P75: Live PGM 狀態機工作流 5-3：樂手即時 HTML5 視聽同步 HUD 控制台面板
+    if separation_mode == "live_stage_hud":
+        from pgm_craft.workflow.live_pgm_bt import build_live_stage_hud_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_live_stage_hud_workflow()
+        wf.execute(bb)
+        hud_p = bb.get_val("hud_html_path")
+        status_msg = f"🎉 成功執行【5-3 樂手即時 HTML5 視聽同步 HUD 控制台面板狀態機】！\n- **Live Stage HUD 面板**: `{hud_p}`"
+        return status_msg, hud_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
