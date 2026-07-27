@@ -256,6 +256,70 @@ class BackingWithClickSynthesizerNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class IEMSplitMonoLRNode(BaseNode):
+    """
+    【Live 舞台雙聲道立體聲 IEM 分立路由節點】
+    - 左聲道 (L): 純 Mono Click 節拍打點音軌
+    - 右聲道 (R): 純 Mono 音樂伴奏 (No Vocal Backing Stem)
+    - 導出檔名: iem_split_mono_lr.wav (方便 PA 工程師直連 Stage Box 分路)
+    """
+    required_keys = ["output_dir", "y", "sr"]
+    optional_keys = ["stems", "click_audio"]
+    output_keys = ["iem_split_mono_lr_path"]
+
+    def __init__(self):
+        super().__init__("IEMSplitMonoLRNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        import soundfile as sf
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        stems = blackboard.get_val("stems", {})
+        click_audio = blackboard.get_val("click_audio")
+
+        # 1. Left Channel: Mono Click
+        if click_audio is not None and len(click_audio) > 0:
+            left_click = click_audio.mean(axis=0) if click_audio.ndim > 1 else click_audio
+        else:
+            left_click = np.zeros_like(y.mean(axis=0) if y.ndim > 1 else y)
+
+        # 2. Right Channel: Mono Backing
+        if "drums" in stems and "bass" in stems and "other" in stems:
+            backing = stems["drums"] + stems["bass"] + stems["other"]
+        elif "no_vocal" in stems:
+            backing = stems["no_vocal"]
+        else:
+            backing = y
+        right_backing = backing.mean(axis=0) if backing.ndim > 1 else backing
+
+        # 3. 對齊長度
+        min_len = min(len(left_click), len(right_backing))
+        left_click = left_click[:min_len]
+        right_backing = right_backing[:min_len]
+
+        # 4. 合成 2-Channel Stereo (L=Click, R=Backing)
+        stereo_iem = np.vstack([left_click, right_backing])
+
+        # Peak Limiter Guard (-1.0 dBFS)
+        peak = np.max(np.abs(stereo_iem))
+        if peak > 0.891:
+            stereo_iem = stereo_iem * (0.891 / peak)
+
+        out_path = os.path.join(output_dir, "iem_split_mono_lr.wav")
+        sf.write(out_path, stereo_iem.T, sr)
+
+        blackboard.set_val("iem_split_mono_lr_path", out_path)
+        outputs = blackboard.get_val("outputs", {})
+        outputs["iem_split_mono_lr"] = out_path
+        blackboard.set_val("outputs", outputs)
+
+        print(f"[{self.name}] 🎧 成功導出 Live IEM 分立雙聲道音軌 (L=Click, R=Backing) ➔ {out_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_export_tree() -> SequenceNode:
     """
     建立 Stage 5 成果導出與 DAW 素材生成 Behavior Tree
@@ -269,7 +333,8 @@ def build_export_tree() -> SequenceNode:
         HumanGrooveMIDIExportNode(),
         AudioQuantizerNode(),
         MIDIQuantizerGuardNode(),
-        BackingWithClickSynthesizerNode()
+        BackingWithClickSynthesizerNode(),
+        IEMSplitMonoLRNode()
     ])
 
 

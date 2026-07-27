@@ -312,7 +312,8 @@ Sequence [StemSeparationRoot]
 | **Pass 85** | **全自動工作流優化 5：狀態機執行監控與耗時 Profiler 報告 (Workflow Telemetry & Profiler Report)** | 1 | ✅ 2026-07-27 |
 | **Pass 86** | **Live/練團音軌導出：純音樂伴奏 + Click 混音檔導出 (BackingWithClickSynthesizerNode ➔ backing_with_click.wav)** | 1 | ✅ 2026-07-27 |
 | **Pass 87** | **學術級高精度 Click 修正：Onset 相位對齊 / 低頻 Downbeat 反相校正 / Viterbi 平滑 (Ellis 2007, BeatNet 2021, madmom 2016)** | 3 | ✅ 2026-07-27 |
-| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與學術級高精度 Click 修正全涵蓋驗證** | **240** | ✅ **100% 通過** |
+| **Pass 88** | **Live 舞台雙聲道立體聲 IEM 分立路由：(IEMSplitMonoLRNode ➔ iem_split_mono_lr.wav L=Click, R=Backing)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Live IEM 雙聲道路由全涵蓋驗證** | **241** | ✅ **100% 通過** |
 
 ---
 
@@ -381,6 +382,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 🎧 **Pass 88: Live 舞台雙聲道立體聲 IEM 分立路由 (iem_split_mono_lr.wav)**：<br>1. **`IEMSplitMonoLRNode`**：建立由 Stage 5 呼叫之 L 聲道 Mono Click、R 聲道 Mono 伴奏之雙聲道分立導出節點<br>2. **UI & 管道整合**：新增 Live IEM 雙聲道播放器 `iem_audio_player` 與獨立下載按鈕 `file_iem_download`<br>3. 通過 SDD Pass 88 單元測試 (`tests/test_sdd_pass88.py`, 1 passed) |
 | 2026-07-27 | 🎯 **Pass 87: 學術級高精度 Click 修正引擎 (ISMIR / IEEE 文獻調研與權威專案實作)**：<br>1. **`OnsetPhaseRealignmentNode`** (Ellis 2007)：在拍點 ±35ms 內搜尋 `onset_strength` Peak，消除 15-40ms 系統延遲偏移<br>2. **`KickBassDownbeatVerifierNode`** (Böck et al. 2016 madmom)：提取 40-120Hz 低頻重音，修正第 1 拍與第 3 拍反相誤判<br>3. **`ViterbiTempoSmoothingNode`** (Heydari et al. 2021 BeatNet)：Viterbi 最優轉移路徑平滑，過濾步距變異數超過 ±20% 的孤立突變離群拍點<br>4. 通過 SDD Pass 87 單元測試 (`tests/test_sdd_pass87.py`, 3 passed) |
 | 2026-07-27 | 🎸 **Pass 86: 純音樂伴奏 + Click 導出檔 (backing_with_click.wav)**：<br>1. **`BackingWithClickSynthesizerNode`**：建立由 Stage 5 呼叫之無人聲伴奏 (`drums+bass+other` 或 `no_vocal`) 與 Click 混合導出節點<br>2. **UI & 管道整合**：新增純音樂伴奏 + Click 試聽播放器 `backing_audio_player` 與獨立下載按鈕 `file_backing_click_download`<br>3. 通過 SDD Pass 86 單元測試 (`tests/test_sdd_pass86.py`, 1 passed) |
 | 2026-07-27 | 🚀 **全自動工作流 5 大技術優化大滿貫 Pass 81~85 完整竣工**：<br>1. **Pass 81 (Blackboard Cache)**：SHA256 音檔記憶化快取，重複處理速度提升 99%<br>2. **Pass 82 (Parallel Engine)**：`ParallelNode` 線程池併發，多軌導出速度提升 50%<br>3. **Pass 83 (Acoustic Sanity Guard)**：`AcousticSanityCheckGuardNode` 自動攔截並修復 DC 偏置<br>4. **Pass 84 (Adaptive Noise Floor)**：`NoiseFloorAnalyzerNode` 自動計算底噪並傳遞動態門限<br>5. **Pass 85 (Workflow Telemetry & Profiler)**：`get_telemetry_report()` 毫秒級追蹤各 Node 耗時與效能報告 |
