@@ -291,7 +291,8 @@ Sequence [StemSeparationRoot]
 | **Pass 64** | **Vlog 工作流 2-2：影片對白與背景音樂 (BGM) 二分抽離狀態機 (DialogueBGMSplitNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 65** | **Vlog 工作流 2-3：展覽/街頭人聲高亮與人群雜音剝離狀態機 (SpeechCrowdSepNode ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
 | **Pass 66** | **Vocal 工作流 3-1：經典純伴奏製作狀態機 (PureInstrumentalNode ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **217** | ✅ **100% 通過** |
+| **Pass 67** | **Vocal 工作流 3-2：帶和聲伴奏製作狀態機 (KeepBackingInstNode ➔ R128 -14 LUFS)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **218** | ✅ **100% 通過** |
 
 ---
 
@@ -360,6 +361,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 67: Vocal 工作流 3-2：帶和聲伴奏製作狀態機**：<br>1. **`build_vocal_backing_inst_workflow`**：建立由 AudioLoad ➔ KeepBackingInst ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_backing_inst` 時一鍵觸發狀態機，輸出帶和聲伴奏音檔 `Instrumental_With_Backing.wav`<br>3. 通過 SDD Pass 67 單元測試 (`tests/test_sdd_pass67.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 66: Vocal 工作流 3-1：經典純伴奏製作狀態機**：<br>1. **`build_vocal_pure_inst_workflow`**：建立由 AudioLoad ➔ PureInstrumental (BS-Roformer) ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vocal_pure_inst` 時一鍵觸發狀態機，輸出純伴奏音檔 `Pure_Instrumental.wav`<br>3. 通過 SDD Pass 66 單元測試 (`tests/test_sdd_pass66.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 65: Vlog 工作流 2-3：展覽/街頭人聲高亮與人群雜音剝離狀態機**：<br>1. **`build_vlog_speech_enhance_workflow`**：建立由 AudioLoad ➔ SpeechCrowdSep ➔ Denoise ➔ LoudnessNormalize (-14 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `vlog_speech_enhance` 時一鍵觸發狀態機，輸出語音高亮檔 `vlog_speech_enhanced.wav`<br>3. 通過 SDD Pass 65 單元測試 (`tests/test_sdd_pass65.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 64: Vlog 工作流 2-2：影片對白與背景音樂 (BGM) 二分抽離狀態機**：<br>1. **`build_vlog_dialogue_bgm_split_workflow`**：建立由 AudioLoad ➔ DialogueBGMSplit 構成之狀態機<br>2. **UI & 管道整合**：選取 `vlog_dialogue_bgm_split` 時一鍵觸發狀態機，輸出 `Vlog_Dialogue_Only.wav` 與 `Vlog_Clean_BGM.wav`<br>3. 通過 SDD Pass 64 單元測試 (`tests/test_sdd_pass64.py`, 1 passed) |

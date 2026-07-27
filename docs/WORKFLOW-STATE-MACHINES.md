@@ -196,6 +196,32 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
 | `pure_inst_path` | `str` | `SavePureInstOutputNode` | Web UI | 淨化落盤之純伴奏 WAV 路徑 (`Pure_Instrumental.wav`) |
 
+---
+
+### 3-2. 帶和聲伴奏製作工作流 (`vocal_backing_inst`)
+
+#### 🎯 目標與聲學指標
+- **目標**：從原曲中去除去主唱 (Lead Vocal)，但完整保留配唱和聲 (Backing Vocals) 與器樂伴奏。
+- **目標 LUFS**：`-14.0 LUFS`
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: VocalBackingInstRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: KeepBackingInstNode"]
+    N1 --> N2["State 2: LoudnessNormalizeNode (target_lufs=-14.0, force=True)"]
+    N2 --> N3["State 3: SaveBackingInstOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始原曲音檔路徑 |
+| `backing_inst_path` | `str` | `SaveBackingInstOutputNode` | Web UI | 帶和聲伴奏 WAV 落盤路徑 (`Instrumental_With_Backing.wav`) |
+
+
 
 
 

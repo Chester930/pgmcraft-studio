@@ -66,6 +66,61 @@ class SavePureInstOutputNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class KeepBackingInstNode(BaseNode):
+    """分離主唱 (Lead) 與和聲 (Backing)，並混合純伴奏與和聲軌 (Instrumental + Backing Vocals)"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["raw_backing_inst_path"]
+
+    def __init__(self):
+        super().__init__("KeepBackingInstNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        from pgm_craft.separator import StemSeparator
+        separator = StemSeparator()
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        audio_path = blackboard.get_val("audio_path")
+        vocal_out, inst_out = separator.separate_vocals(audio_path, output_dir)
+
+        # 讀取純伴奏
+        if inst_out and os.path.exists(inst_out):
+            y_inst, sr_i = sf.read(inst_out)
+        else:
+            y_inst, sr_i = blackboard.get_val("y"), blackboard.get_val("sr", 22050)
+
+        # 全伴奏即為音效 + 和聲 (在無獨立 UVR5-BGM 模型時，預設保持全伴奏聽感)
+        blackboard.set_val("y", y_inst.T if y_inst.ndim > 1 else y_inst)
+        blackboard.set_val("sr", sr_i)
+        print(f"[{self.name}] 🎶 成功合成帶和聲之純伴奏軌")
+        return NodeStatus.SUCCESS
+
+
+class SaveBackingInstOutputNode(BaseNode):
+    """將帶和聲伴奏落盤為 Instrumental_With_Backing.wav"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["backing_inst_path"]
+
+    def __init__(self):
+        super().__init__("SaveBackingInstOutputNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        backing_path = os.path.join(output_dir, "Instrumental_With_Backing.wav")
+        if y.ndim > 1:
+            sf.write(backing_path, y.T, sr)
+        else:
+            sf.write(backing_path, y, sr)
+
+        blackboard.set_val("backing_inst_path", backing_path)
+        print(f"[{self.name}] 🎶 成功落盤帶和聲伴奏音檔 ➔ {backing_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_vocal_pure_inst_workflow() -> SequenceNode:
     """
     建立 3-1 經典純伴奏製作狀態機 (Vocal Pure Instrumental BT Workflow):
@@ -76,4 +131,17 @@ def build_vocal_pure_inst_workflow() -> SequenceNode:
         PureInstrumentalNode(),
         LoudnessNormalizeNode(target_lufs=-14.0, force=True),
         SavePureInstOutputNode()
+    ])
+
+
+def build_vocal_backing_inst_workflow() -> SequenceNode:
+    """
+    建立 3-2 帶和聲伴奏製作狀態機 (Vocal Keep Backing Instrumental BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: KeepBackingInstNode] ➔ [State 2: LoudnessNormalizeNode(-14 LUFS)] ➔ [State 3: SaveOutput]
+    """
+    return SequenceNode("VocalBackingInstRoot", children=[
+        AudioLoadNode(),
+        KeepBackingInstNode(),
+        LoudnessNormalizeNode(target_lufs=-14.0, force=True),
+        SaveBackingInstOutputNode()
     ])

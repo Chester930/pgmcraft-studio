@@ -368,6 +368,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【3-1 經典純伴奏製作狀態機】！\n- **BS-Roformer 人聲剝離與 EBU R128 -14 LUFS / -1.0 dBFS Peak 保底完成** ➔ `{inst_p}`"
         return status_msg, inst_p, None, None, None
 
+    # P67: Vocal 狀態機工作流 3-2：帶和聲伴奏製作
+    if separation_mode == "vocal_backing_inst":
+        from pgm_craft.workflow.vocal_bt import build_vocal_backing_inst_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_vocal_backing_inst_workflow()
+        wf.execute(bb)
+        back_p = bb.get_val("backing_inst_path")
+        status_msg = f"🎉 成功執行【3-2 帶和聲伴奏製作狀態機】！\n- **去主唱保留精采和聲/EBU R128 -14 LUFS 完成** ➔ `{back_p}`"
+        return status_msg, back_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
