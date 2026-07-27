@@ -395,6 +395,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【3-3 主唱與和聲雙軌獨立分離狀態機】！\n- **純主唱 Lead Vocal**: `{lead_p}`\n- **純和聲 Backing Vocals**: `{back_v_p}`"
         return status_msg, lead_p, back_v_p, None, None
 
+    # P69: Vocal 狀態機工作流 3-4：人聲乾聲去殘響與聲音純化
+    if separation_mode == "vocal_dereverb_clean":
+        from pgm_craft.workflow.vocal_bt import build_vocal_dereverb_clean_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_vocal_dereverb_clean_workflow()
+        wf.execute(bb)
+        dry_p = bb.get_val("studio_vocal_path")
+        status_msg = f"🎉 成功執行【3-4 人聲乾聲去殘響與聲音純化狀態機】！\n- **UVR DeReverb 房間 Echo 剝離/雜音淨化完成** ➔ `{dry_p}`"
+        return status_msg, dry_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

@@ -244,6 +244,31 @@ graph TD
 | `lead_vocal_path` | `str` | `LeadBackingSplitNode` | Web UI | 抽離出之純主唱檔 (`Lead_Vocal_Only.wav`) |
 | `backing_vocal_path` | `str` | `LeadBackingSplitNode` | Web UI | 抽離出之純和聲檔 (`Backing_Vocals_Only.wav`) |
 
+---
+
+### 3-4. 人聲乾聲去殘響與聲音純化工作流 (`vocal_dereverb_clean`)
+
+#### 🎯 目標與聲學指標
+- **目標**：剝離人聲軌中過重之房間 Echo 迴音與背景雜音，產出極致錄音室純淨乾聲。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: VocalDeReverbCleanRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: DeReverbFilterNode"]
+    N1 --> N2["State 2: SpectralDenoiseNode"]
+    N2 --> N3["State 3: SaveStudioDryVocalOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始人聲音檔路徑 |
+| `studio_vocal_path` | `str` | `SaveStudioDryVocalOutputNode` | Web UI | 極致純化去殘響之錄音室乾聲檔 (`Studio_Dry_Vocal.wav`) |
+
+
 
 
 

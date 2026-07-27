@@ -153,6 +153,31 @@ class LeadBackingSplitNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class SaveStudioDryVocalOutputNode(BaseNode):
+    """將極致純化去殘響之錄音室乾聲落盤為 Studio_Dry_Vocal.wav"""
+    required_keys = ["y", "sr", "output_dir"]
+    output_keys = ["studio_vocal_path"]
+
+    def __init__(self):
+        super().__init__("SaveStudioDryVocalOutputNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr", 22050)
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        dry_path = os.path.join(output_dir, "Studio_Dry_Vocal.wav")
+        if y.ndim > 1:
+            sf.write(dry_path, y.T, sr)
+        else:
+            sf.write(dry_path, y, sr)
+
+        blackboard.set_val("studio_vocal_path", dry_path)
+        print(f"[{self.name}] 💧 成功落盤錄音室極致乾聲音檔 ➔ {dry_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_vocal_pure_inst_workflow() -> SequenceNode:
     """
     建立 3-1 經典純伴奏製作狀態機 (Vocal Pure Instrumental BT Workflow):
@@ -187,4 +212,18 @@ def build_vocal_lead_backing_split_workflow() -> SequenceNode:
     return SequenceNode("VocalLeadBackingSplitRoot", children=[
         AudioLoadNode(),
         LeadBackingSplitNode()
+    ])
+
+
+def build_vocal_dereverb_clean_workflow() -> SequenceNode:
+    """
+    建立 3-4 人聲乾聲去殘響與聲音純化狀態機 (Vocal DeReverb & Denoise BT Workflow):
+    [State 0: AudioLoadNode] ➔ [State 1: DeReverbFilterNode] ➔ [State 2: SpectralDenoiseNode] ➔ [State 3: SaveOutput]
+    """
+    from pgm_craft.workflow.audio_quality_bt import DeReverbFilterNode, SpectralDenoiseNode
+    return SequenceNode("VocalDeReverbCleanRoot", children=[
+        AudioLoadNode(),
+        DeReverbFilterNode(),
+        SpectralDenoiseNode(),
+        SaveStudioDryVocalOutputNode()
     ])
