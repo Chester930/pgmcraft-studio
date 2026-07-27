@@ -516,6 +516,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【6-1 ASMR 高頻底噪與電流聲淨化狀態機】！\n- **Hiss/電流聲淨化音檔**: `{clean_p}`"
         return status_msg, clean_p, None, None, None
 
+    # P78: ASMR 狀態機工作流 6-2：ASMR 口腔濕潤音與唇齒音極致剝離
+    if separation_mode == "asmr_mouth_click_removal":
+        from pgm_craft.workflow.asmr_bt import build_asmr_mouth_click_removal_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_asmr_mouth_click_removal_workflow()
+        wf.execute(bb)
+        mc_clean_p = bb.get_val("asmr_mouth_click_clean_path")
+        status_msg = f"🎉 成功執行【6-2 ASMR 口腔濕潤音與唇齒音極致剝離狀態機】！\n- **Mouth Click 淨化音檔**: `{mc_clean_p}`"
+        return status_msg, mc_clean_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:

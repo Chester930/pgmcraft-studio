@@ -471,6 +471,31 @@ graph TD
 | `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始 ASMR 音檔路徑 |
 | `asmr_clean_path` | `str` | `SaveASMRHissCleanOutputNode` | Web UI | 淨化落盤之 ASMR 音檔 (`ASMR_Hiss_Cleaned.wav`) |
 
+---
+
+### 6-2. ASMR 口腔濕潤音與唇齒音極致剝離工作流 (`asmr_mouth_click_removal`)
+
+#### 🎯 目標與聲學指標
+- **目標**：平滑抑制微秒級高頻 Mouth Click / Pop 點擊 Spike，並壓制 5k-8kHz 刺耳唇齒音。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: ASMRMouthClickRemovalRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: MouthClickSuppressorNode"]
+    N1 --> N2["State 2: DeEsserFilterNode"]
+    N2 --> N3["State 3: SaveASMRMouthClickCleanOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始 ASMR 音檔路徑 |
+| `asmr_mouth_click_clean_path` | `str` | `SaveASMRMouthClickCleanOutputNode` | Web UI | 剝離濕潤點擊聲與齒音之 ASMR 音檔 (`ASMR_Mouth_Click_Cleaned.wav`) |
+
+
 
 
 

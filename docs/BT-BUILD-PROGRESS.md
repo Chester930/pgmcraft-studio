@@ -302,7 +302,8 @@ Sequence [StemSeparationRoot]
 | **Pass 75** | **Live PGM 工作流 5-3：樂手即時 HTML5 視聽同步 HUD 控制台面板狀態機 (StageStructureAnalysisNode ➔ StageHUDGeneratorNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 76** | **Live PGM 工作流 5-4：Ableton Live / Logic Pro / Cubase 原生專案檔對齊狀態機 (TempoMapFittingNode ➔ NativeALSGeneratorNode)** | 1 | ✅ 2026-07-27 |
 | **Pass 77** | **ASMR 工作流 6-1：ASMR 高頻底噪與電流聲淨化狀態機 (HighPassHissFilterNode ➔ SpectralDenoiseNode ➔ R128 -16 LUFS)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **228** | ✅ **100% 通過** |
+| **Pass 78** | **ASMR 工作流 6-2：ASMR 口腔濕潤音與唇齒音極致剝離狀態機 (MouthClickSuppressorNode ➔ DeEsserFilterNode)** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **229** | ✅ **100% 通過** |
 
 ---
 
@@ -371,6 +372,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 78: ASMR 工作流 6-2：ASMR 口腔濕潤音與唇齒音極致剝離狀態機**：<br>1. **`build_asmr_mouth_click_removal_workflow`**：建立由 AudioLoad ➔ MouthClickSuppressor ➔ DeEsserFilter ➔ SaveASMRMouthClickClean 構成之狀態機<br>2. **UI & 管道整合**：選取 `asmr_mouth_click_removal` 時一鍵觸發狀態機，輸出口腔點擊音淨化音檔 `ASMR_Mouth_Click_Cleaned.wav`<br>3. 通過 SDD Pass 78 單元測試 (`tests/test_sdd_pass78.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 77: ASMR 工作流 6-1：ASMR 高頻底噪與電流聲淨化狀態機**：<br>1. **`build_asmr_hiss_clean_workflow`**：建立由 AudioLoad ➔ HighPassHissFilter ➔ SpectralDenoise ➔ LoudnessNormalize (-16 LUFS) 構成之狀態機<br>2. **UI & 管道整合**：選取 `asmr_hiss_clean` 時一鍵觸發狀態機，輸出極致 ASMR 淨化音檔 `ASMR_Hiss_Cleaned.wav`<br>3. 通過 SDD Pass 77 單元測試 (`tests/test_sdd_pass77.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 76: Live PGM 工作流 5-4：Ableton Live / Logic Pro / Cubase 原生專案檔對齊狀態機**：<br>1. **`build_live_daw_native_align_workflow`**：建立由 AudioLoad ➔ TempoMapFitting ➔ NativeALSGenerator ➔ SaveDAWNativeProject 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_daw_native_align` 時一鍵觸發狀態機，輸出原生 DAW 專案檔 `Ableton_Live_Project.als`<br>3. 通過 SDD Pass 76 單元測試 (`tests/test_sdd_pass76.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 75: Live PGM 工作流 5-3：樂手即時 HTML5 視聽同步 HUD 控制台面板狀態機**：<br>1. **`build_live_stage_hud_workflow`**：建立由 AudioLoad ➔ StageStructureAnalysis ➔ StageHUDGenerator ➔ SaveStageHUDHtml 構成之狀態機<br>2. **UI & 管道整合**：選取 `live_stage_hud` 時一鍵觸發狀態機，輸出 Live HUD 面板網頁檔 `live_stage_hud.html`<br>3. 通過 SDD Pass 75 單元測試 (`tests/test_sdd_pass75.py`, 1 passed) |
