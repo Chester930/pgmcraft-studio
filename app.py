@@ -275,7 +275,19 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
     stem_dir = os.path.join(output_dir, "stems")
     os.makedirs(stem_dir, exist_ok=True)
 
-    status_msg = ""
+    # P60: Podcast 狀態機工作流 1-1：雙人/多人訪談聲音淨化
+    if separation_mode == "podcast_interview_clean":
+        from pgm_craft.workflow.podcast_bt import build_interview_clean_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_interview_clean_workflow()
+        wf.execute(bb)
+        clean_p = bb.get_val("clean_speech_path")
+        status_msg = f"🎉 成功執行【1-1 雙人/多人訪談聲音淨化狀態機】！\n- **去電流聲/去降噪/去房間殘響/EBU R128 音量平衡完成** ➔ `{clean_p}`"
+        return status_msg, clean_p, None, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
@@ -702,7 +714,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
             stem_start_btn.click(
                 fn=process_standalone_separation,
-                inputs=[stem_audio_input, stem_mode_select, stem_output_dir],
+                inputs=[stem_audio_input, scenario_workflow_select, stem_output_dir],
                 outputs=[stem_status_markdown, file_stem_vocal, file_stem_drums, file_stem_bass, file_stem_extra]
             )
 
