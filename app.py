@@ -739,6 +739,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
     piano_roll_html = render_piano_roll_html(report)
     backing_click_path = report.get("outputs", {}).get("backing_with_click", report["outputs"]["mix_with_click"])
     iem_click_path = report.get("outputs", {}).get("iem_split_mono_lr", report["outputs"]["mix_with_click"])
+    countin_click_path = report.get("outputs", {}).get("click_with_countin", report["outputs"]["click_track"])
 
     return (
         full_text,
@@ -750,6 +751,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
         report["outputs"]["mix_with_click"],
         backing_click_path,
         iem_click_path,
+        countin_click_path,
         report["outputs"]["tempo_map_midi"],
         report["outputs"]["click_guide_midi"],
         report_txt_path,
@@ -1074,6 +1076,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 file_mix_download = gr.File(label="下載 mix_with_click.wav")
                 file_backing_click_download = gr.File(label="下載 backing_with_click.wav (純伴奏 + Click)")
                 file_iem_download = gr.File(label="下載 iem_split_mono_lr.wav (Live 耳監 L/R)")
+                file_countin_click_download = gr.File(label="下載 click_with_countin.wav (含預備拍 Click)")
                 file_midi_download = gr.File(label="下載 tempo_map.mid (DAW 速度軌)")
                 file_click_midi_download = gr.File(label="下載 click_guide.mid (MIDI Click)")
                 file_report_download = gr.File(label="下載 PGM 分析報告")
@@ -1185,6 +1188,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     file_mix_download,
                     file_backing_click_download,
                     file_iem_download,
+                    file_countin_click_download,
                     file_midi_download,
                     file_click_midi_download,
                     file_report_download,

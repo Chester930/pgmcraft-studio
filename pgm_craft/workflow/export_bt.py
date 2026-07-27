@@ -320,6 +320,74 @@ class IEMSplitMonoLRNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class CountInSynthesizerNode(BaseNode):
+    """
+    【曲首 1-2 小節預備拍 (Count-In) 合成節點】
+    - 自動依據曲首平均 BPM 計算 1 小節 (4 拍) 的預備拍區間
+    - 合成高分貝高音 1,000Hz (拍 1) 與中音 800Hz (拍 2,3,4) 預備拍脈衝
+    - 導出 click_with_countin.wav 並記錄 countin_offset_sec
+    """
+    required_keys = ["output_dir", "sr", "beats"]
+    optional_keys = ["click_audio"]
+    output_keys = ["click_with_countin_path", "countin_offset_sec"]
+
+    def __init__(self, count_in_bars: int = 1):
+        super().__init__("CountInSynthesizerNode")
+        self.count_in_bars = count_in_bars
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        import soundfile as sf
+        output_dir = blackboard.get_val("output_dir", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+
+        sr = blackboard.get_val("sr", 22050)
+        beats = blackboard.get_val("beats")
+        click_audio = blackboard.get_val("click_audio")
+
+        if beats is None or len(beats) < 4:
+            return NodeStatus.SUCCESS
+
+        timestamps = beats[:, 0].astype(float)
+        # 計算前 4 拍平均步距
+        beat_interval = np.mean(np.diff(timestamps[:4])) if len(timestamps) >= 4 else 0.5
+        count_in_beats = self.count_in_bars * 4
+        count_in_duration = count_in_beats * beat_interval
+
+        # 合成預備拍音效 (Count-In Audio)
+        count_in_samples = int(count_in_duration * sr)
+        countin_sig = np.zeros(count_in_samples, dtype=np.float32)
+
+        for i in range(count_in_beats):
+            t_sec = i * beat_interval
+            idx = int(t_sec * sr)
+            freq = 1000.0 if i == 0 else 800.0 # 拍 1 高音，拍 2/3/4 中音
+            t_pulse = np.linspace(0, 0.05, int(sr * 0.05), False)
+            pulse = np.sin(2 * np.pi * freq * t_pulse) * np.exp(-t_pulse * 40.0)
+            p_len = min(len(pulse), count_in_samples - idx)
+            if p_len > 0:
+                countin_sig[idx:idx+p_len] += pulse[:p_len].astype(np.float32)
+
+        # 拼接至原 Click 音軌前面
+        if click_audio is not None and len(click_audio) > 0:
+            click_mono = click_audio.mean(axis=0) if click_audio.ndim > 1 else click_audio
+            full_click_with_ci = np.concatenate([countin_sig, click_mono])
+        else:
+            full_click_with_ci = countin_sig
+
+        out_path = os.path.join(output_dir, "click_with_countin.wav")
+        sf.write(out_path, full_click_with_ci, sr)
+
+        blackboard.set_val("click_with_countin_path", out_path)
+        blackboard.set_val("countin_offset_sec", count_in_duration)
+
+        outputs = blackboard.get_val("outputs", {})
+        outputs["click_with_countin"] = out_path
+        blackboard.set_val("outputs", outputs)
+
+        print(f"[{self.name}] ⏱️ 成功合成曲首 {self.count_in_bars} 小節預備拍 (Count-In: {count_in_duration:.2f}s) ➔ {out_path}")
+        return NodeStatus.SUCCESS
+
+
 def build_export_tree() -> SequenceNode:
     """
     建立 Stage 5 成果導出與 DAW 素材生成 Behavior Tree
@@ -334,7 +402,8 @@ def build_export_tree() -> SequenceNode:
         AudioQuantizerNode(),
         MIDIQuantizerGuardNode(),
         BackingWithClickSynthesizerNode(),
-        IEMSplitMonoLRNode()
+        IEMSplitMonoLRNode(),
+        CountInSynthesizerNode()
     ])
 
 
