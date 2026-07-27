@@ -320,6 +320,32 @@ graph TD
 | `estimated_key` | `str` | `KeyDetectionNode` | Web UI / Report | 分析估算主調性 (如 `C Major`) |
 | `chord_key_json_path` | `str` | `SaveChordKeyReportNode` | Web UI | 和弦與調性結構分析 JSON 報告路徑 (`chord_key_analysis.json`) |
 
+---
+
+### 4-3. 爵士鼓與打擊樂器節拍聲軌採譜工作流 (`transcribe_drum_pattern`)
+
+#### 🎯 目標與聲學指標
+- **目標**：分析爵士鼓對位與起音打卡點 (Kick, Snare, Hi-Hat)，導出鼓 MIDI 音符軌與 JSON 報告。
+
+#### 🧬 狀態機 Behavior Tree 鏈路圖 (Node Chain)
+
+```mermaid
+graph TD
+    Root["SequenceNode: TranscribeDrumPatternRoot"] --> N0["State 0: AudioLoadNode"]
+    N0 --> N1["State 1: DrumStemIsolationNode"]
+    N1 --> N2["State 2: DrumOnsetDetectionNode"]
+    N2 --> N3["State 3: SaveDrumMidiOutputNode"]
+```
+
+#### 🔑 Blackboard 黑板資料契約 (Blackboard State Contract)
+
+| Key Name | Data Type | Source Node | Consumer Node | 說明 |
+|---|---|---|---|---|
+| `audio_path` | `str` | UI / User Input | `AudioLoadNode` | 原始輸入音檔路徑 |
+| `drum_midi_path` | `str` | `SaveDrumMidiOutputNode` | Web UI | 爵士鼓 MIDI 軌路徑 (`Drum_Track.mid`) |
+| `drum_json_path` | `str` | `SaveDrumMidiOutputNode` | Web UI | 爵士鼓打擊點 JSON 報告路徑 (`drum_pattern_report.json`) |
+
+
 
 
 

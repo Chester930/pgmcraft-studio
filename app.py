@@ -436,6 +436,20 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         status_msg = f"🎉 成功執行【4-2 和弦與調性分析報告狀態機】！\n- **主調性**: `{key_name}`\n- **和弦調性報告**: `{report_p}`"
         return status_msg, report_p, None, None, None
 
+    # P72: Transcribe 狀態機工作流 4-3：爵士鼓與打擊樂器節拍聲軌採譜
+    if separation_mode == "transcribe_drum_pattern":
+        from pgm_craft.workflow.transcribe_bt import build_transcribe_drum_pattern_workflow
+        from pgm_craft.workflow.nodes import Blackboard
+        bb = Blackboard()
+        bb.set_val("audio_path", audio_input)
+        bb.set_val("output_dir", output_dir)
+        wf = build_transcribe_drum_pattern_workflow()
+        wf.execute(bb)
+        d_midi_p = bb.get_val("drum_midi_path")
+        d_json_p = bb.get_val("drum_json_path")
+        status_msg = f"🎉 成功執行【4-3 爵士鼓節拍聲軌採譜狀態機】！\n- **爵士鼓 MIDI 軌**: `{d_midi_p}`\n- **鼓點 JSON 報告**: `{d_json_p}`"
+        return status_msg, d_midi_p, d_json_p, None, None
+
     vocal_out, drums_out, bass_out, extra_out = None, None, None, None
     mode_id = resolve_separation_mode_id(separation_mode)
     if mode_id is None:
