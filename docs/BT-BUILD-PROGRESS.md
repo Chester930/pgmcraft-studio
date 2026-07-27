@@ -282,7 +282,8 @@ Sequence [StemSeparationRoot]
 | **Pass 55** | **P1 雙核：Sub-Bass 40-100Hz 低頻聲學對位與 Live Web Audio 視聽同步面板** | 1 | ✅ 2026-07-27 |
 | **Pass 56** | **P1 雙核：立體聲 180 度相位反相翻轉修復衛兵與 UTF-8 Unicode Zip 跨平台解壓護航** | 2 | ✅ 2026-07-27 |
 | **Pass 57** | **Ableton Live `.als` 原生專案檔導出器 (Gzip XML, Tempo Map & Locators 鏈路對齊)** | 1 | ✅ 2026-07-27 |
-| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **207** | ✅ **100% 通過** |
+| **Pass 58** | **獨立影音下載區塊 (STAGE 1) 升級：線上 Audio Previewer 預聽與 ID3 Tag 標籤寫入** | 1 | ✅ 2026-07-27 |
+| **聯合測試** | **全套系統核心與 Stage 0~6 BT 整合驗證** | **208** | ✅ **100% 通過** |
 
 ---
 
@@ -351,6 +352,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-27 | 完成 **Pass 58: 獨立影音無損下載區塊 (STAGE 1) 極致體驗優化**：<br>1. **Audio Previewer 預聽**：下載完成後自動於 UI 渲染 `<audio>` 播放器，提供線上即時聽感確認<br>2. **ID3 Tag 元資料護航**：`inject_id3_metadata` 自動將影片標題與歌手寫入下載音檔<br>3. 通過 SDD Pass 58 單元測試 (`tests/test_sdd_pass58.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 57: Ableton Live `.als` 原生工程檔導出器**：<br>1. **`generate_ableton_als`**：產出相容 Ableton Live 11/12 之 Gzip XML 工程檔 (`ableton_project.als`)，對齊 Tempo Envelope, Stems 音軌卡槽與 Locators (Markers)<br>2. **`DAWSessionGenerateNode`**：連動將 `.als` 原生專案檔自動歸檔入 DAW 專案素材包<br>3. 通過 SDD Pass 57 單元測試 (`tests/test_sdd_pass57.py`, 1 passed) |
 | 2026-07-27 | 完成 **Pass 56 (P1 雙核): 立體聲 180 度相位反相修復衛兵與 UTF-8 Unicode Zip 跨平台解壓護航**：<br>1. **`StereoPhaseCorrectionNode`**：自動檢測左右聲道互相關係數 (corr < -0.5)，自動觸發 180 度相位翻轉修復，消除混縮 Mono 時聲音發空問題<br>2. **`build_zip_archive`**：使用 `zipfile.ZipInfo` + UTF-8 `0x800` 旗標保護日文/中文檔名，跨平台 Windows/macOS 解壓 100% 絕不亂碼<br>3. 通過 SDD Pass 56 單元測試 (`tests/test_sdd_pass56.py`, 2 passed) |
 | 2026-07-27 | 完成 **Pass 55 (P1 雙核): Sub-Bass 低頻脈衝對位與 Live HTML 提詞器視聽同步**：<br>1. **`KickSnarePulseNode`**：無鼓/前奏區間自動提取 Sub-Bass 40-100Hz 脈衝補充為正拍對位錨點<br>2. **`export_live_dashboard`**：HTML 舞台提詞面板注入 Web Audio API 音訊播放器與 JavaScript 動態小節/和弦高亮滾動引擎<br>3. 通過 SDD Pass 55 單元測試 (`tests/test_sdd_pass55.py`, 1 passed) |

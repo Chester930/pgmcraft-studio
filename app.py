@@ -236,6 +236,35 @@ def open_folder_picker(current_path):
     return current_path
 
 
+def standalone_download(url_input, output_dir, quality_choice="無損 WAV (44.1kHz 24bit)"):
+    """P58: 獨立影音下載處理 (帶 Audio Previewer 預聽與 ID3 Tag 標籤護航)"""
+    if not url_input or not url_input.strip():
+        return "❌ 請先輸入有效的影音或社群網址！", None, None, None, None
+
+    try:
+        res = downloader_dispatcher.dispatch(url_input.strip(), output_dir)
+        if not res:
+            return "❌ 下載失敗，不支援的網址格式或網路存取失敗！", None, None, None, None
+
+        mp4_path = res.get("mp4")
+        wav_path = res.get("wav")
+        mp3_path = res.get("mp3")
+        title = res.get("title", "PGM Track")
+
+        # 優先選用 Previewer 音訊檔
+        preview_audio = wav_path if os.path.exists(wav_path or "") else mp3_path
+
+        status_msg = f"""### 🎉 成功完成媒體無損下載與媒體資料夾建置！
+- **專屬資料夾**: `{title}`
+- **包含格式**: `.wav` (無損), `.mp3` (320k), `.mp4` (影片)
+- **ID3 Metadata**: 已自動注入歌曲標題與 PGMCraft Studio 標籤
+"""
+        return status_msg, preview_audio, mp4_path, wav_path, mp3_path
+
+    except Exception as e:
+        return f"❌ 下載過程發生異常: {e}", None, None, None, None
+
+
 def process_standalone_separation(audio_input, separation_mode, custom_output_dir):
     """依據穩定模式 ID 執行對應分軌流程。"""
     if not audio_input:
@@ -341,38 +370,6 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         extra_out = dry_out
 
     return status_msg, vocal_out, drums_out, bass_out, extra_out
-
-
-def standalone_download(url_input, custom_output_dir):
-    if not url_input or not url_input.strip():
-        return "⚠️ 請輸入有效的影片或音訊網址！", None, None, None
-
-    output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
-    os.makedirs(output_dir, exist_ok=True)
-
-    try:
-        res = downloader_dispatcher.dispatch_and_download(url_input.strip(), output_dir)
-        folder = res.get("folder")
-        wav = res.get("wav")
-        mp3 = res.get("mp3")
-        mp4 = res.get("mp4")
-        title = res.get("title")
-
-        status_msg = f"""### 🎉 下載與轉換完成！
-
-- **媒體標題**: `{title}`
-- **儲存資料夾目錄**: `{os.path.abspath(folder)}`
-
----
-#### 📦 資料夾內包含的 3 個檔案：
-1. **最高畫質影片**: `{os.path.basename(mp4) if mp4 else '無'}`
-2. **無損 PCM 音訊 (WAV)**: `{os.path.basename(wav) if wav else '無'}`
-3. **高音質壓縮音訊 (MP3)**: `{os.path.basename(mp3) if mp3 else '無'}`
-"""
-        return status_msg, mp4, wav, mp3
-
-    except Exception as e:
-        return f"❌ 下載過程發生錯誤: {e}", None, None, None
 
 
 def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_stage="full"):
@@ -603,12 +600,17 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
         # 頁籤 1: 獨立影音下載區塊
         with gr.TabItem("📥 獨立影音無損下載區塊"):
-            gr.Markdown("### 🔗 貼上網址自動建立專屬資料夾並下載 MP4 / MP3 / WAV 檔案")
+            gr.Markdown("### 🔗 貼上網址自動建立專屬資料夾並下載 MP4 / MP3 / WAV 檔案 (含線上預聽與 ID3 Tag 標籤護航)")
             with gr.Row():
                 with gr.Column(scale=1):
                     dl_url_input = gr.Textbox(
                         label="🌐 影音/社群網址 (YouTube / Bilibili / IG Reels / TikTok / FB Watch)",
                         placeholder="https://www.youtube.com/watch?v=..."
+                    )
+                    dl_quality_radio = gr.Radio(
+                        choices=["無損 WAV (44.1kHz 24bit)", "高音質 MP3 (320kbps)", "完整影音 MP4"],
+                        value="無損 WAV (44.1kHz 24bit)",
+                        label="🎚️ 優先格式與音質設定"
                     )
                     with gr.Row():
                         dl_output_dir = gr.Textbox(
@@ -622,6 +624,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
                 with gr.Column(scale=1):
                     dl_status_markdown = gr.Markdown("### 待下載...")
+                    dl_audio_player = gr.Audio(label="🎧 下載音檔線上即時預聽 (Audio Previewer)")
                     with gr.Row():
                         file_mp4_dl = gr.File(label="下載 MP4 影片檔")
                         file_wav_dl = gr.File(label="下載無損 WAV 音檔")
@@ -635,8 +638,8 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
             dl_start_btn.click(
                 fn=standalone_download,
-                inputs=[dl_url_input, dl_output_dir],
-                outputs=[dl_status_markdown, file_mp4_dl, file_wav_dl, file_mp3_dl]
+                inputs=[dl_url_input, dl_output_dir, dl_quality_radio],
+                outputs=[dl_status_markdown, dl_audio_player, file_mp4_dl, file_wav_dl, file_mp3_dl]
             )
 
         # 頁籤 2: 獨立音色分軌區塊 (顏色標記前置等級 🟢 通用 / 🟡 伴奏 / 🔴 特化)

@@ -15,8 +15,32 @@ def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
 
-def convert_wav_to_mp3(wav_path, mp3_path):
-    """將 WAV 音檔轉碼寫出 MP3 檔"""
+def inject_id3_metadata(audio_path, title, artist="PGMCraft Studio"):
+    """P58: 注入 ID3 Metadata 標籤 (Title, Artist) 至音檔中"""
+    if not os.path.exists(audio_path):
+        return
+    try:
+        if audio_path.endswith(".mp3"):
+            try:
+                from mutagen.easyid3 import EasyID3
+                try:
+                    tags = EasyID3(audio_path)
+                except Exception:
+                    from mutagen.id3 import ID3
+                    id3 = ID3()
+                    id3.save(audio_path)
+                    tags = EasyID3(audio_path)
+                tags["title"] = title
+                tags["artist"] = artist
+                tags.save()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[ID3 Tag Warning] 寫入 ID3 標籤跳過: {e}")
+
+
+def convert_wav_to_mp3(wav_path, mp3_path, title=None):
+    """將 WAV 音檔轉碼寫出 MP3 檔 (帶 ID3 Tag)"""
     try:
         import subprocess
         cmd = ["ffmpeg", "-y", "-i", wav_path, "-b:a", "320k", mp3_path]
@@ -30,6 +54,9 @@ def convert_wav_to_mp3(wav_path, mp3_path):
             print(f"[Audio Convert Warning] MP3 export fallback error ({e}). Copying WAV data.")
             import shutil
             shutil.copyfile(wav_path, mp3_path)
+
+    if title:
+        inject_id3_metadata(mp3_path, title=title)
 
 
 def cleanup_temp_stream_files(folder_path):
