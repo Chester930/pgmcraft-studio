@@ -763,6 +763,10 @@ class BeatAlignmentVerifierGuardNode(BaseNode):
     2. 驗證 Kick Onset 脈衝與節拍時間差 (Onset Misalignment Error)
     3. 若綜合對齊分數 (alignment_score) < threshold，傳回 NodeStatus.FAILURE 以觸發 Fallback
     """
+    required_keys = ["beats"]
+    optional_keys = ["sections", "kick_anchors"]
+    output_keys = ["beat_alignment_score"]
+
     def __init__(self, confidence_threshold=0.70):
         super().__init__("BeatAlignmentVerifierGuardNode")
         self.threshold = confidence_threshold
@@ -818,6 +822,10 @@ class DrumsKickBeatFallbackNode(BaseNode):
     2. 校正小節第 1 拍 (Downbeat Phase Shift Correction)
     3. 覆蓋修正 Blackboard 中的 beats 陣列
     """
+    required_keys = []
+    optional_keys = ["stems", "rhythm_track_path", "audio_path", "kick_anchors"]
+    output_keys = ["beats", "fallback_beat_recalculated"]
+
     def __init__(self):
         super().__init__("DrumsKickBeatFallbackNode")
 
@@ -853,9 +861,10 @@ class DrumsKickBeatFallbackNode(BaseNode):
                 beat_num = (i % 4) + 1
                 beats.append([float(bt), int(beat_num)])
 
+            bpm_val = float(np.atleast_1d(bpm)[0]) if hasattr(bpm, "__len__") else float(bpm)
             blackboard.set_val("beats", np.array(beats))
             blackboard.set_val("fallback_beat_recalculated", True)
-            print(f"[{self.name}] 🔄 鼓組降級重算成功！重新校正產出 {len(beats)} 個拍點 (BPM: {bpm:.1f})")
+            print(f"[{self.name}] 🔄 鼓組降級重算成功！重新校正產出 {len(beats)} 個拍點 (BPM: {bpm_val:.1f})")
             return NodeStatus.SUCCESS
         except Exception as e:
             print(f"[{self.name} Warning] 鼓軌降級重算失敗: {e}")
