@@ -911,7 +911,7 @@ class DeHumFilterNode(BaseNode):
 class SeparateCrowdNode(BaseNode):
     """【Pre-Vocal 淨化】：現場觀眾歡呼與尖叫聲剝離至 source/crowd_cheering.wav。"""
     required_keys = ["audio_path"]
-    optional_keys = ["output_dir"]
+    optional_keys = ["output_dir", "project_dir"]
     output_keys = ["crowd_path"]
 
     def __init__(self, separator=None):
@@ -921,7 +921,8 @@ class SeparateCrowdNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         audio_path = blackboard.get_val("audio_path")
-        output_dir = blackboard.get_val("output_dir", os.path.dirname(audio_path))
+        project_dir = blackboard.get_val("project_dir")
+        output_dir = os.path.join(project_dir, "source") if project_dir else blackboard.get_val("output_dir", os.path.dirname(audio_path))
         if not audio_path or not os.path.exists(audio_path):
             return NodeStatus.FAILURE
         try:
@@ -937,7 +938,7 @@ class SeparateCrowdNode(BaseNode):
 class DeReverbFilterNode(BaseNode):
     """【Pre-Vocal 淨化】：去除房間迴音與教堂殘響，還原 Studio 極乾聲。"""
     required_keys = ["audio_path"]
-    optional_keys = ["output_dir"]
+    optional_keys = ["output_dir", "project_dir"]
     output_keys = ["dereverb_dry_path"]
 
     def __init__(self, separator=None):
@@ -947,7 +948,8 @@ class DeReverbFilterNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         audio_path = blackboard.get_val("audio_path")
-        output_dir = blackboard.get_val("output_dir", os.path.dirname(audio_path))
+        project_dir = blackboard.get_val("project_dir")
+        output_dir = os.path.join(project_dir, "source") if project_dir else blackboard.get_val("output_dir", os.path.dirname(audio_path))
         if not audio_path or not os.path.exists(audio_path):
             return NodeStatus.FAILURE
         try:

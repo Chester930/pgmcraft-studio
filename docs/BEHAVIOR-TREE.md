@@ -1,6 +1,6 @@
 # Behavior Tree 設計圖
 
-**最後更新：** 2026-07-23
+**最後更新：** 2026-07-29
 
 本文件記錄 PGMCraft Studio 的 Behavior Tree 設計。所有圖都以 Markdown 形式保存，方便 GitHub 預覽、版本控管與後續討論。
 
@@ -18,24 +18,108 @@ PGMCraft Studio 的工作流不應被寫成一條大型 procedural function，�
 
 ## 目前已實作的 BT
 
-目前主要工作流由 `pgm_craft/workflow/builder.py` 建立，節點實作集中在 `pgm_craft/workflow/audio_nodes.py`。
+目前主要工作流由 `pgm_craft/workflow/builder.py` 建立，節點實作分散於 `pgm_craft/workflow/audio_nodes.py`、`pgm_craft/workflow/beat_tracking_bt.py`、`pgm_craft/workflow/export_bt.py` 等模組。
+
+`target_stage="module3"` 走模塊三專用測試工作流，用於手動測試節拍分析、切分/提前音判讀、click 打點與去人聲伴奏加 click。它與完整 Stage 3 共用同一系列 beat tracking 節點，但不直接跑完整 Stage 5/6。
 
 ### ASCII 圖
 
 ```text
 PGMCraftWorkflowRoot [Sequence]
-├── VideoURLDownloadNode
-├── AudioLoadNode
-├── DemucsStemNode
-├── BeatTrackingSelector [Fallback]
-│   ├── BeatNetNode
-│   └── LibrosaBeatNode
-├── BeatValidationNode
-├── DownbeatRefineNode
-├── MeasureMapNode
-├── KeyChordAnalysisNode
-├── ClickSynthesisNode
-└── MIDIExportNode
+├── Input Acquisition
+├── Audio Quality
+├── Stem Separation
+├── BeatTrackingRoot [Sequence]
+│   ├── SynthesizeRhythmTrackNode
+│   ├── PrepareInstrumentalTrackNode
+│   ├── KickSnarePulseNode
+│   ├── TrackA_RhythmBranch
+│   │   └── BeatNetFallbackA [BeatNetSingleTrackNode -> LibrosaSingleTrackNode]
+│   ├── TrackB_InstrumentalBranch
+│   │   └── BeatNetFallbackB [BeatNetSingleTrackNode -> LibrosaSingleTrackNode]
+│   ├── MultiModelBeatEnsembleNode
+│   ├── BeatFusionArbitratorNode
+│   ├── ReEntryReAnchoringNode
+│   ├── BeatValidationNode
+│   ├── DownbeatRefineNode
+│   ├── OnsetPhaseRealignmentNode
+│   ├── MicroTimingTransientSnapNode
+│   ├── KickBassDownbeatVerifierNode
+│   ├── ViterbiTempoSmoothingNode
+│   └── BeatAlignmentVerificationAndFallback
+├── Music Analysis
+├── Export
+└── Package
+```
+
+### Module 3 節拍與 Click 測試 BT
+
+```text
+Module3BeatClickRoot [Sequence]
+├── InputAcquisitionRoot
+├── AudioQualityRoot
+├── OptionalStemSeparationNode
+├── CandidateTrackBuildNode
+│   ├── full_mix  = 原曲 / 降噪音檔
+│   ├── rhythm    = drums + bass
+│   ├── band      = drums + bass + guitar + piano / no_vocals
+│   └── vocal     = vocals / lead_vocal
+├── SynthesizeRhythmTrackNode              # 共用 Stage 3 preparation
+├── PrepareInstrumentalTrackNode           # 共用 Stage 3 preparation
+├── KickSnarePulseNode                     # 共用 Stage 3 preparation
+├── TrackA_RhythmBranch                    # 共用 Stage 3 dual-track analysis
+├── TrackB_InstrumentalBranch              # 共用 Stage 3 dual-track analysis
+├── MultiModelBeatEnsembleNode             # 共用 Stage 3 fusion
+├── BeatFusionArbitratorNode               # 共用 Stage 3 fusion
+├── PerTrackBeatAnalysisNode
+├── SegmentGridNode
+├── PerSegmentConfidenceNode
+├── SegmentSourceAttributionNode
+├── BeatGridSynthesisNode
+├── ReEntryReAnchoringNode                 # 共用 Stage 3 refinement guard
+├── BeatValidationNode                     # 共用 Stage 3 refinement guard
+├── DownbeatRefineNode                     # 共用 Stage 3 refinement guard
+├── OnsetPhaseRealignmentNode              # 共用 Stage 3 refinement guard
+├── MicroTimingTransientSnapNode           # 共用 Stage 3 refinement guard
+├── KickBassDownbeatVerifierNode           # 共用 Stage 3 refinement guard
+├── ViterbiTempoSmoothingNode              # 共用 Stage 3 refinement guard
+├── BeatAlignmentVerificationAndFallback   # 共用 Stage 3 fallback guard
+├── MusicAnalysisRoot
+├── SubdivisionGridNode
+├── SyncopationClassificationNode
+└── Module3ExportRoot
+    ├── ClickSynthesisNode
+    ├── Module3BackingWithClickNode
+    └── Module3OutputSummaryNode
+```
+
+此路徑的核心原則：
+
+- 不把四軌候選全曲選一軌，而是按小節或段落寫出 `segment_source_map`。
+- 模塊三與完整全自動 Stage 3 使用同一系列節點；差異在於模塊三於 Stage 3 dual-track fusion 後插入 `PerTrackBeatAnalysisNode` 到 `BeatGridSynthesisNode` 的分段可信度合成，再交回 Stage 3 refinement guards。
+- `BeatGridSynthesisNode` 依每段 primary/supporting source 合成唯一 `beats` / `refined_beats`，之後仍會經過 onset phase、transient snap、downbeat verifier 與 tempo smoothing。
+- `SubdivisionGridNode` 建立 8 分音符分析 grid，但 `click_grid` 維持 4 分音符。
+- `SyncopationClassificationNode` 標記切分音、提前音與 phrase onset，避免 click 被非拍點 transient 拉走。
+- `Module3ExportRoot` 只輸出模塊三必要檔案，不跑 DAW marker、lyrics marker、voice cue、IEM、完整 package；沒有 no-vocal/instrumental stem 時不假裝產生純音樂伴奏。
+- `PGMCraftEngine.run(target_stage="module3")` 不建立 `pgm_project_package`，只回傳 `project_package_status="SKIPPED_MODULE3_TEST_PROJECT"`。
+
+Module 3 output layout:
+
+```text
+{output_root}/{project_name}/
+├── source/
+│   ├── *_raw.wav
+│   ├── *_normalized.wav
+│   └── *_denoised.wav
+├── stems/                    # enable_stem=true 時包含候選 stems/submix
+├── click/
+│   ├── click_track.wav
+│   ├── mix_with_click.wav
+│   └── backing_with_click.wav # 只有 no_vocals/instrumental 存在時產生
+└── reports/
+    ├── module3_beat_click_report.json
+    ├── module3_pipeline_report.json
+    └── tempo_curve.png
 ```
 
 ### Mermaid 圖
@@ -43,26 +127,46 @@ PGMCraftWorkflowRoot [Sequence]
 ```mermaid
 flowchart TD
     Root["PGMCraftWorkflowRoot<br/>Sequence"]
-    Download["VideoURLDownloadNode<br/>URL 則下載，local file 則跳過"]
-    Load["AudioLoadNode<br/>載入音訊並寫入 y/sr"]
-    Stem["DemucsStemNode<br/>可選 stem separation"]
-    BeatFallback{"BeatTrackingSelector<br/>Fallback"}
-    BeatNet["BeatNetNode<br/>優先 beat/downbeat 偵測"]
-    Librosa["LibrosaBeatNode<br/>Librosa fallback"]
+    Input["Input Acquisition"]
+    Quality["Audio Quality"]
+    Stem["Stem Separation"]
+    RhythmPrep["SynthesizeRhythmTrackNode"]
+    InstPrep["PrepareInstrumentalTrackNode"]
+    Pulse["KickSnarePulseNode"]
+    TrackA{"BeatNetFallbackA"}
+    TrackB{"BeatNetFallbackB"}
+    BeatNetA["BeatNetSingleTrackNode A"]
+    LibrosaA["LibrosaSingleTrackNode A"]
+    BeatNetB["BeatNetSingleTrackNode B"]
+    LibrosaB["LibrosaSingleTrackNode B"]
+    Ensemble["MultiModelBeatEnsembleNode"]
+    Fusion["BeatFusionArbitratorNode"]
+    ReEntry["ReEntryReAnchoringNode"]
     BeatCheck["BeatValidationNode<br/>PASS/WARN/FAIL 品質檢查"]
     DownbeatRefine["DownbeatRefineNode<br/>保守補強 downbeat"]
-    MeasureMap["MeasureMapNode<br/>可變小節地圖"]
-    KeyChord["KeyChordAnalysisNode<br/>調性與和弦參考"]
-    Click["ClickSynthesisNode<br/>Click WAV 與 mix preview"]
-    Midi["MIDIExportNode<br/>tempo_map.mid + click_guide.mid"]
+    Phase["OnsetPhaseRealignmentNode"]
+    Snap["MicroTimingTransientSnapNode"]
+    LowFreq["KickBassDownbeatVerifierNode"]
+    Smooth["ViterbiTempoSmoothingNode"]
+    Align{"BeatAlignmentVerificationAndFallback"}
+    Music["Music Analysis"]
+    Export["Export"]
+    Package["Package"]
 
-    Root --> Download --> Load --> Stem --> BeatFallback
-    BeatFallback --> BeatNet
-    BeatFallback --> Librosa
-    BeatNet --> BeatCheck
-    Librosa --> BeatCheck
-    BeatCheck --> DownbeatRefine --> MeasureMap --> KeyChord
-    KeyChord --> Click --> Midi
+    Root --> Input --> Quality --> Stem --> RhythmPrep --> InstPrep --> Pulse
+    Pulse --> TrackA
+    Pulse --> TrackB
+    TrackA --> BeatNetA
+    TrackA --> LibrosaA
+    TrackB --> BeatNetB
+    TrackB --> LibrosaB
+    BeatNetA --> Ensemble
+    LibrosaA --> Ensemble
+    BeatNetB --> Ensemble
+    LibrosaB --> Ensemble
+    Ensemble --> Fusion --> ReEntry --> BeatCheck --> DownbeatRefine
+    DownbeatRefine --> Phase --> Snap --> LowFreq --> Smooth --> Align
+    Align --> Music --> Export --> Package
 ```
 
 ## 目前 BT 的節點責任
@@ -71,11 +175,24 @@ flowchart TD
 |------|------|----------|----------|
 | `VideoURLDownloadNode` | Action | 判斷 URL，必要時下載並取得 WAV | 已實作 |
 | `AudioLoadNode` | Action | 載入音訊，寫入 `y`、`sr`、`target_analysis_path` | 已實作 |
-| `DemucsStemNode` | Optional Action | 依 `enable_stem` 決定是否跑分軌 | 已實作流程，分軌品質目前仍偏 placeholder |
-| `BeatNetNode` | Action | 優先使用 BeatNet 偵測節拍 | 已實作，依賴不足時會失敗 |
-| `LibrosaBeatNode` | Fallback Action | BeatNet 不可用時改用 Librosa | 已實作 |
+| `StemSeparationRoot` | Optional Sequence | 依 `enable_stem` 建立可供節拍、和聲、匯出的 stems | 已實作流程，分軌品質仍需真實模型驗證 |
+| `SynthesizeRhythmTrackNode` | Action | 合成 drums+bass rhythm track，缺軌時 fallback 到既有 submix 或原曲 | 已實作 |
+| `PrepareInstrumentalTrackNode` | Action | 選擇 no_vocals / instrumental 作為 B 軌 | 已實作 |
+| `KickSnarePulseNode` | Action / Guard Data | 從 kick、snare、bass stem 提取脈衝錨點 | 已實作 |
+| `BeatNetSingleTrackNode` | Action | 分別對 A/B 軌使用 BeatNet 偵測 beat/downbeat | 已實作，依賴不足時會失敗 |
+| `LibrosaSingleTrackNode` | Fallback Action | A/B 軌 BeatNet 不可用時改用 Librosa | 已實作 |
+| `TrackValidationNode` | Guard / Action | 對單軌 beat 計算 confidence | 已實作 |
+| `MultiModelBeatEnsembleNode` | Action | 對 A/B 軌候選拍點做時間窗口共識融合 | 已實作 |
+| `BeatFusionArbitratorNode` | Action | 依 A 軌能量與 A/B confidence 選擇或補全拍點 | 已實作 |
+| `ReEntryReAnchoringNode` | Guard / Action | 偵測無鼓到有鼓 re-entry，重錨 downbeat phase | 已實作 |
 | `BeatValidationNode` | Guard / Action | 檢查 beat 數量、timestamp、BPM 範圍、BPM 跳動、downbeat 標籤與變動小節長度 | 已實作 v1 |
-| `DownbeatRefineNode` | Action | 保留可信 downbeat；downbeat 不足時產生 4 拍候選並標記警告 | 已實作 v1 |
+| `DownbeatRefineNode` | Action | 保留可信 downbeat；downbeat 不足時產生 4 拍候選並標記警告 | 已實作，會同步 `beats` 與 `refined_beats` |
+| `OnsetPhaseRealignmentNode` | Guard / Action | 在 onset strength ±35ms 內微調 beat timestamp | 已實作 |
+| `MicroTimingTransientSnapNode` | Guard / Action | 對 drums / 原曲 transient peak 做更細緻 snap | 已實作 |
+| `KickBassDownbeatVerifierNode` | Guard / Action | 以低頻能量檢查 downbeat 是否 180 度反相 | 已實作 |
+| `ViterbiTempoSmoothingNode` | Guard / Action | 平滑孤立 interval outlier，保留為 guard 而非絕對校正 | 已實作 |
+| `BeatAlignmentVerifierGuardNode` | Guard | 檢查 section / kick anchor 與 beat/downbeat 的閉環對齊 | 已實作 |
+| `DrumsKickBeatFallbackNode` | Fallback Action | 閉環對齊失敗時用鼓軌或原曲重算 beat | 已實作 |
 | `MeasureMapNode` | Action | 依 downbeat 切小節；缺 downbeat 時使用 4 拍 fallback 並標警告 | 已實作 v1 |
 | `KeyChordAnalysisNode` | Action | 估算調性與小節和弦 | 已實作基礎版本 |
 | `ClickSynthesisNode` | Action | 產生 click WAV 與原曲加 click 預聽檔 | 已實作 |
@@ -92,17 +209,34 @@ flowchart TD
 | `sr` | `AudioLoadNode` | sample rate |
 | `target_analysis_path` | `AudioLoadNode` / `DemucsStemNode` | beat 分析目標音檔 |
 | `stems` | `DemucsStemNode` | 分軌結果 |
-| `beats` | `BeatNetNode` / `LibrosaBeatNode` | 節拍與拍號標籤 |
+| `rhythm_track_path` | `SynthesizeRhythmTrackNode` | A 軌節奏骨幹分析目標 |
+| `inst_track_path` | `PrepareInstrumentalTrackNode` | B 軌伴奏分析目標 |
+| `beats_rhythm` | `BeatNetSingleTrackNode` / `LibrosaSingleTrackNode` | A 軌候選節拍 |
+| `beats_inst` | `BeatNetSingleTrackNode` / `LibrosaSingleTrackNode` | B 軌候選節拍 |
+| `conf_rhythm` | `TrackValidationNode` | A 軌節拍 confidence |
+| `conf_inst` | `TrackValidationNode` | B 軌節拍 confidence |
+| `kick_anchors` | `KickSnarePulseNode` | kick / sub-bass 脈衝錨點 |
+| `snare_anchors` | `KickSnarePulseNode` | snare 脈衝錨點 |
+| `ensemble_beats` | `MultiModelBeatEnsembleNode` | A/B 軌共識候選 |
+| `ensemble_confidence` | `MultiModelBeatEnsembleNode` | A/B 軌共識比例 |
+| `beat_fusion_report` | `BeatFusionArbitratorNode` | A/B 軌融合統計 |
+| `beats` | Stage 3 canonical beat chain | 目前最新版節拍與拍號標籤，後處理節點會持續覆寫 |
 | `beat_validation` | `BeatValidationNode` | beat 品質檢查結果 |
 | `beat_confidence_level` | `BeatValidationNode` | `PASS`、`WARN` 或 `FAIL` |
 | `beat_warnings` | `BeatValidationNode` | 可繼續但需人工確認的警告 |
 | `beat_errors` | `BeatValidationNode` | 需停止流程的錯誤 |
 | `beat_validation.stats.measure_lengths` | `BeatValidationNode` | 相鄰 downbeat 間的拍數統計，允許同曲變動 |
-| `refined_beats` | `DownbeatRefineNode` | 補強 downbeat 標籤後的 beat 陣列，timestamp 不變 |
+| `refined_beats` | `DownbeatRefineNode` / snap / smoothing / fallback | 與 canonical `beats` 同步的最終 beat 陣列 |
 | `downbeat_refinement` | `DownbeatRefineNode` | downbeat 補強摘要、來源、警告與候選 |
 | `downbeat_refine_status` | `DownbeatRefineNode` | `PASS`、`WARN` 或 `FAIL` |
 | `downbeat_refine_warnings` | `DownbeatRefineNode` | downbeat 補強警告 |
 | `downbeat_candidates` | `DownbeatRefineNode` | downbeat 候選位置 |
+| `phase_realignment_report` | `OnsetPhaseRealignmentNode` | onset 相位微調統計 |
+| `snap_offsets_ms` | `MicroTimingTransientSnapNode` | transient snap 偏移量 |
+| `downbeat_fix_report` | `KickBassDownbeatVerifierNode` | 低頻 downbeat 修正摘要 |
+| `smoothing_report` | `ViterbiTempoSmoothingNode` | interval outlier 平滑摘要 |
+| `beat_alignment_score` | `BeatAlignmentVerifierGuardNode` | section/kick anchor 閉環對齊分數 |
+| `fallback_beat_recalculated` | `DrumsKickBeatFallbackNode` | 是否啟動鼓軌 fallback 重算 |
 | `measure_map` | `MeasureMapNode` | 小節地圖，每一小節保留自己的 `beat_count` |
 | `measure_map_status` | `MeasureMapNode` | `PASS`、`WARN` 或 `FAIL` |
 | `measure_map_warnings` | `MeasureMapNode` | 小節地圖 fallback 或待人工確認警告 |
@@ -110,6 +244,17 @@ flowchart TD
 | `chord_progression` | `KeyChordAnalysisNode` | 小節和弦參考 |
 | `click_track` | `ClickSynthesisNode` | click WAV 路徑 |
 | `mix_with_click` | `ClickSynthesisNode` | 原曲加 click 預聽檔 |
+| `beat_candidate_tracks` | `CandidateTrackBuildNode` | 模塊三 full/rhythm/band/vocal 四軌候選來源 |
+| `beat_candidates` | `PerTrackBeatAnalysisNode` | 模塊三每軌 beat candidates |
+| `analysis_segments` | `SegmentGridNode` | 模塊三分段可信度分析區間 |
+| `per_segment_confidence` | `PerSegmentConfidenceNode` | 每段每軌可信度 |
+| `segment_source_map` | `SegmentSourceAttributionNode` | 每段 primary/supporting timing source |
+| `beat_synthesis_report` | `BeatGridSynthesisNode` | 最終 beat grid 合成摘要 |
+| `subdivision_grid` | `SubdivisionGridNode` | 8 分音符分析 grid |
+| `click_grid` | `SubdivisionGridNode` | 4 分音符 click grid |
+| `syncopation_events` | `SyncopationClassificationNode` | 切分音、提前音、phrase onset 標註 |
+| `module3_outputs` | `Module3OutputSummaryNode` / `PGMCraftEngine` | 模塊三 output manifest：測試專案資料夾、source/stems/click/reports 路徑、候選軌、click、report |
+| `module3_report_json` | `Module3OutputSummaryNode` | 模塊三手動測試報告 |
 | `tempo_map_midi` | `MIDIExportNode` | MIDI 匯出路徑 |
 | `click_guide_midi` | `MIDIExportNode` | MIDI click guide 路徑 |
 | `workflow_status` | `BTWorkflowEngine` | 整體 BT 執行狀態 |
@@ -133,6 +278,16 @@ Trace entry 格式：
 ```
 
 若節點丟出未處理 exception，trace entry 會以 `FAILURE` 記錄並帶上 `error` 欄位，然後重新拋出例外。`PGMCraftEngine` 會將 `workflow_status` 與 `workflow_trace` 寫入 `pgm_report.json`。
+
+`PGMCraftEngine` 也會將完整 `beats`、`refined_beats` 與 `beat_precision_diagnostics` 寫入 `pgm_report.json`。這些資料不是新的 BT 節點輸出，而是 Stage 3 blackboard 結果的 report serialization，用於後續 reference annotation 評估與 DAW grid 對拍。
+
+CLI reference 評估範例：
+
+```bash
+pgm-craft --audio song.wav --output outputs/song_eval --reference-beats annotations/beats.txt --reference-downbeats annotations/downbeats.txt
+```
+
+輸出的 `beat_evaluation.json` 會記錄 70 ms matching window 下的 precision、recall、F-measure 與 matched beat offset 統計。
 
 ## Phase 1 目標 BT
 

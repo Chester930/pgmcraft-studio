@@ -740,7 +740,14 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
     backing_click_path = report.get("outputs", {}).get("backing_with_click", report["outputs"]["mix_with_click"])
     iem_click_path = report.get("outputs", {}).get("iem_split_mono_lr", report["outputs"]["mix_with_click"])
     countin_click_path = report.get("outputs", {}).get("click_with_countin", report["outputs"]["click_track"])
-    zip_path = project_package.get("daw_presets_pack_path") or report.get("outputs", {}).get("zip_path")
+    zip_path = (
+        project_package.get("zip_archive")
+        or project_package.get("files", {}).get("zip_archive")
+        or report.get("outputs", {}).get("zip_archive")
+        or report.get("outputs", {}).get("zip_path")
+    )
+    report["outputs"]["zip_archive"] = zip_path
+    report["outputs"]["zip_path"] = zip_path
 
     return (
         full_text,
@@ -760,6 +767,115 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
         diagnostics_html,
         piano_roll_html,
         zip_path
+    )
+
+
+def process_module3_click_test(audio_file, enable_stem, candidate_sources, custom_output_dir):
+    if audio_file is None:
+        return "### 請先選擇音檔", {}, None, None, None, None, None, None, None, None
+
+    output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    candidate_sources = candidate_sources or ["full_mix"]
+
+    module3_engine = PGMCraftEngine(enable_stem_separation=enable_stem)
+    report = module3_engine.run(
+        audio_file,
+        output_dir=output_dir,
+        enable_stem=enable_stem,
+        target_stage="module3",
+        module3_candidate_sources=candidate_sources,
+    )
+    outputs = report.get("outputs", {})
+    module3_outputs = report.get("module3_outputs", {})
+    source_map = report.get("segment_source_map", []) or []
+
+    source_counts = {}
+    for item in source_map:
+        source = item.get("primary_source", "unknown")
+        source_counts[source] = source_counts.get(source, 0) + 1
+    source_counts_text = ", ".join(f"{key}: {value}" for key, value in sorted(source_counts.items())) or "無"
+
+    segment_preview = ""
+    for item in source_map[:12]:
+        segment_preview += (
+            f"- M{item.get('measure', '?')}: `{item.get('primary_source', 'unknown')}` "
+            f"score `{item.get('primary_score', 0)}` "
+            f"({item.get('reason', 'no_reason')})\n"
+        )
+    if len(source_map) > 12:
+        segment_preview += f"\n已省略其餘 {len(source_map) - 12} 段，完整內容請看 JSON 報告。\n"
+
+    backing_path = outputs.get("backing_with_click") or module3_outputs.get("backing_with_click")
+    if not backing_path or not os.path.exists(backing_path):
+        backing_path = None
+
+    report_path = outputs.get("module3_report_json") or module3_outputs.get("module3_report_json") or outputs.get("json_report")
+    pipeline_report_path = module3_outputs.get("pipeline_report_json") or outputs.get("json_report")
+    tempo_curve_path = module3_outputs.get("tempo_curve_plot") or outputs.get("tempo_curve_plot")
+    click_path = outputs.get("click_track") or module3_outputs.get("click_track")
+    mix_path = outputs.get("mix_with_click") or module3_outputs.get("mix_with_click")
+    test_project_dir = module3_outputs.get("test_project_dir") or report.get("project_dir") or output_dir
+    candidate_tracks = module3_outputs.get("candidate_tracks", {}) or {}
+    enabled_candidate_sources = [
+        source for source, meta in candidate_tracks.items()
+        if meta.get("enabled")
+    ]
+
+    def _path_text(path):
+        return f"`{path}`" if path else "`未產生`"
+
+    status_md = f"""# 模塊三節拍 Click 測試完成
+
+- 輸入音檔: `{os.path.basename(audio_file)}`
+- 測試專案資料夾: `{test_project_dir}`
+- 分軌產生候選軌: `{"ON" if enable_stem else "OFF"}`
+- 前端選用候選: `{", ".join(candidate_sources)}`
+- 實際啟用候選: `{", ".join(enabled_candidate_sources) if enabled_candidate_sources else "無"}`
+- Workflow 狀態: `{report.get('workflow_status', 'UNKNOWN')}`
+- 平均 BPM: `{report.get('average_bpm', 'N/A')}`
+- 總拍數: `{report.get('total_beats', 0)}`
+- 總小節數: `{report.get('total_measures', 0)}`
+- 分段主要可信來源統計: `{source_counts_text}`
+- Backing + Click: `{module3_outputs.get('backing_with_click_status', 'UNKNOWN')}`
+
+## 輸出清單
+
+| 類別 | 檔案 / 資料夾 |
+| --- | --- |
+| 測試專案 | {_path_text(test_project_dir)} |
+| Source | {_path_text(module3_outputs.get('source_audio'))} |
+| C 版分析音訊 | {_path_text(module3_outputs.get('denoised_wav'))} |
+| 原曲 + Click | {_path_text(mix_path)} |
+| Click Only | {_path_text(click_path)} |
+| Backing + Click | {_path_text(backing_path)} |
+| 模塊三 BT 報告 | {_path_text(report_path)} |
+| Pipeline 摘要報告 | {_path_text(pipeline_report_path)} |
+| 速度曲線 | {_path_text(tempo_curve_path)} |
+
+## 前 12 段可信來源
+{segment_preview or "尚無分段可信來源資料"}
+"""
+
+    debug_payload = {
+        "output_manifest": module3_outputs,
+        "segment_source_map": source_map,
+        "beat_synthesis_report": report.get("beat_synthesis_report", {}),
+        "subdivision_grid_preview": (report.get("subdivision_grid", []) or [])[:32],
+        "syncopation_events": report.get("syncopation_events", []),
+    }
+
+    return (
+        status_md,
+        debug_payload,
+        tempo_curve_path,
+        mix_path,
+        click_path,
+        backing_path,
+        mix_path,
+        click_path,
+        backing_path,
+        report_path,
     )
 
 
@@ -881,10 +997,10 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             def _handle_full_auto(url, audio, outdir):
                 yield "### 🚀 [1/3] 正在進行 AI 多階層聲學分軌、低頻對齊與節拍分析中...", None, None, None
                 res = process_full_auto_pgm(url, audio, outdir)
-                if isinstance(res, tuple) and len(res) >= 12:
-                    zip_name = os.path.basename(res[11]) if res[11] else "pgm_project_package.zip"
+                if isinstance(res, tuple) and len(res) >= 17:
+                    zip_name = os.path.basename(res[16]) if res[16] else "pgm_project_package.zip"
                     status_md = f"### 🎉 全自動 Live PGM 素材包打包完成！\n- **成功產出素材包**: `{zip_name}`\n- 已包含 Reaper (.rpp), Ableton (.als), Logic (.fcpxml), Cubase (.csv) 專案檔及 MIDI Tempo Map！"
-                    yield status_md, res[2], res[3], res[11]
+                    yield status_md, res[2], res[5], res[16]
                 else:
                     yield "❌ 執行過程發生錯誤，請檢查輸入檔格式或 URL 狀態！", None, None, None
 
@@ -959,7 +1075,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     )
                     scenario_workflow_select = gr.Dropdown(
                         choices=ScenarioManager.get_workflows_by_domain("podcast"),
-                        value="podcast_interview_clean",
+                        value=ScenarioManager.get_default_workflow_id("podcast"),
                         label="⚡ 第二階：選擇狀態機工作流 (State Machine Workflow)"
                     )
                     with gr.Row():
@@ -1000,6 +1116,84 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 fn=process_standalone_separation,
                 inputs=[stem_audio_input, scenario_workflow_select, stem_output_dir],
                 outputs=[stem_status_markdown, file_stem_vocal, file_stem_drums, file_stem_bass, file_stem_extra]
+            )
+
+        # 頁籤 3: 模塊三節拍 Click 測試專案
+        with gr.TabItem("🥁 模塊三節拍 Click 測試"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    module3_audio_input = gr.File(
+                        label="選擇測試音檔",
+                        type="filepath",
+                        file_types=[".mp3", ".wav", ".flac", ".m4a"]
+                    )
+                    module3_enable_stem_chk = gr.Checkbox(
+                        label="啟用分軌產生候選軌",
+                        value=False
+                    )
+                    module3_candidate_sources_chk = gr.CheckboxGroup(
+                        choices=[
+                            ("Full Mix / 原曲保底", "full_mix"),
+                            ("Rhythm / 鼓+Bass", "rhythm"),
+                            ("Band / 鼓+Bass+吉他+鋼琴/伴奏", "band"),
+                            ("Vocal / 人聲 phrase 輔助", "vocal"),
+                        ],
+                        value=["full_mix", "rhythm", "band", "vocal"],
+                        label="四軌候選來源",
+                    )
+                    with gr.Row():
+                        module3_output_dir = gr.Textbox(
+                            value=DEFAULT_OUTPUT_DIR,
+                            label="測試專案輸出資料夾",
+                            scale=4
+                        )
+                        module3_browse_btn = gr.Button("📂 選擇資料夾", variant="secondary", scale=1)
+
+                    module3_start_btn = gr.Button("建立模塊三測試專案", variant="primary")
+
+                with gr.Column(scale=2):
+                    module3_status_markdown = gr.Markdown("### 待建立模塊三測試專案")
+                    module3_tempo_curve = gr.Image(label="速度曲線")
+                    module3_debug_json = gr.JSON(label="分段可信來源與合成報告")
+
+            gr.Markdown("### 模塊三試聽與檔案")
+            with gr.Row():
+                module3_mix_player = gr.Audio(label="原曲 + Click")
+                module3_click_player = gr.Audio(label="Click Only")
+                module3_backing_player = gr.Audio(label="Backing + Click")
+
+            with gr.Row():
+                module3_mix_file = gr.File(label="下載 mix_with_click.wav")
+                module3_click_file = gr.File(label="下載 click_track.wav")
+                module3_backing_file = gr.File(label="下載 backing_with_click.wav")
+                module3_report_file = gr.File(label="下載 module3_beat_click_report.json")
+
+            module3_browse_btn.click(
+                fn=open_folder_picker,
+                inputs=[module3_output_dir],
+                outputs=[module3_output_dir]
+            )
+
+            module3_start_btn.click(
+                fn=process_module3_click_test,
+                inputs=[
+                    module3_audio_input,
+                    module3_enable_stem_chk,
+                    module3_candidate_sources_chk,
+                    module3_output_dir,
+                ],
+                outputs=[
+                    module3_status_markdown,
+                    module3_debug_json,
+                    module3_tempo_curve,
+                    module3_mix_player,
+                    module3_click_player,
+                    module3_backing_player,
+                    module3_mix_file,
+                    module3_click_file,
+                    module3_backing_file,
+                    module3_report_file,
+                ]
             )
 
         # 頁籤 3: 完整 PGM 採譜與分析管道
@@ -1112,6 +1306,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                             ("Stage 1 ~ Stage 3: 音質 + 分軌 + 雙軌節拍與 Downbeat 脈衝分析", "stage3"),
                             ("Stage 1 ~ Stage 4: 音質 + 分軌 + 節拍 + 和聲與 Downbeat 樂段對齊", "stage4"),
                             ("Stage 1 ~ Stage 5: 音質 + 分軌 + 節拍 + 和聲 + 5 大 MIDI/WAV/HTML 導出 (Stage 5)", "stage5"),
+                            ("Module 3: 節拍候選可信度合成 + Click 手動測試", "module3"),
                             ("Stage 1 ~ Stage 6: 全管道完整分析、DAW 素材包歸檔與 ZIP 打包 (Stage 6 Full)", "full"),
                         ],
                         value="full",
@@ -1142,7 +1337,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 input_src = url if url else audio
                 
                 # 根據選擇的階段設定 enable_stem
-                enable_stem = (stage_mode in ("stage2", "stage3", "stage4", "stage5", "full"))
+                enable_stem = (stage_mode in ("stage2", "stage3", "stage4", "stage5", "module3", "full"))
                 
                 report = engine.run(input_src, output_dir=DEFAULT_OUTPUT_DIR, enable_stem=enable_stem, target_stage=stage_mode)
                 md, html = format_workflow_diagnostics(report)
@@ -1224,6 +1419,3 @@ if __name__ == "__main__":
         share=False,
         allowed_paths=[DEFAULT_OUTPUT_DIR] + allowed_drives
     )
-
-
-

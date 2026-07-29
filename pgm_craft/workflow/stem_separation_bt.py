@@ -379,9 +379,38 @@ class SeparateGuitarNode(BaseNode):
         self.separator = separator or CascadedStemSeparator()
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
+        target_input = (
+            blackboard.get_val("other_path") or
+            blackboard.get_val("instrumental_path") or
+            blackboard.get_val("target_analysis_path") or
+            blackboard.get_val("audio_path")
+        )
         stems_dir = blackboard.get_val("stems_dir")
         guitar_dir = os.path.join(stems_dir, "guitars")
         os.makedirs(guitar_dir, exist_ok=True)
+
+        if not target_input or not os.path.exists(target_input):
+            print("[SeparateGuitar] target input not found")
+            return NodeStatus.FAILURE
+
+        try:
+            guitar_path, no_guitar_path = self.separator.separate_guitar(
+                target_input,
+                guitar_dir,
+                is_already_instrumental=True,
+            )
+            blackboard.set_val("guitar_path", guitar_path)
+            blackboard.set_val("no_guitar_path", no_guitar_path)
+
+            stems = blackboard.get_val("stems", {})
+            stems["guitar"] = guitar_path
+            blackboard.set_val("stems", stems)
+
+            print(f"[SeparateGuitar] OK -> guitar: {guitar_path}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[SeparateGuitar] FAILED: {e}")
+            return NodeStatus.FAILURE
 
 class VocalDeBreatheNode(BaseNode):
     """【人聲二階細分】：從 vocals.wav 進行口水音與換氣聲過濾，產出 vocals_debreathed.wav。"""

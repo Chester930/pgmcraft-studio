@@ -307,7 +307,8 @@ class BeatValidationNode(BaseNode):
 
         if len(beat_array) < self.MIN_BEATS:
             if len(beat_array) > 0:
-                warnings.append(f"beat 數量較少 ({len(beat_array)} 拍)，自動補全等速拍點。")
+                errors.append(f"beat 數量不足 ({len(beat_array)} 拍)，至少需要 {self.MIN_BEATS} 拍。")
+                return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
             else:
                 errors.append(f"beat 數量不足，至少需要 {self.MIN_BEATS} 拍。")
                 return self._result("FAIL", warnings, errors, total_beats=len(beat_array))
@@ -412,6 +413,7 @@ class DownbeatRefineNode(BaseNode):
 
         refined_beats, result = self.refine(beats, count_in_events=count_in_events, clap_events=clap_events)
         blackboard.set_val("refined_beats", refined_beats)
+        blackboard.set_val("beats", refined_beats)
         blackboard.set_val("downbeat_refinement", result)
         blackboard.set_val("downbeat_refine_status", result["status"])
         blackboard.set_val("downbeat_refine_warnings", result["warnings"])
@@ -590,8 +592,8 @@ class DownbeatRefineNode(BaseNode):
 class MeasureMapNode(BaseNode):
     """將 beat/downbeat 資料整理成允許變動小節長度的 measure map。"""
     required_keys = ["beats", "beat_validation"]
-    optional_keys = ["refined_beats", "downbeat_refinement"]
-    output_keys = ["measure_map", "measure_map_status", "measure_map_warnings"]
+    optional_keys = ["refined_beats", "downbeat_refinement", "output_dir", "project_dir"]
+    output_keys = ["measure_map", "measure_map_status", "measure_map_warnings", "measure_map_json"]
 
     FALLBACK_MEASURE_LENGTH = 4
 
@@ -612,7 +614,8 @@ class MeasureMapNode(BaseNode):
         blackboard.set_val("measure_map_status", status)
         blackboard.set_val("measure_map_warnings", warnings)
 
-        output_dir = blackboard.get_val("output_dir", "outputs")
+        project_dir = blackboard.get_val("project_dir")
+        output_dir = os.path.join(project_dir, "reports") if project_dir else blackboard.get_val("output_dir", "outputs")
         os.makedirs(output_dir, exist_ok=True)
         json_path = os.path.join(output_dir, "measure_map.json")
         with open(json_path, "w", encoding="utf-8") as f:
@@ -984,8 +987,8 @@ class BasicPitchNode(BaseNode):
 class SectionStructureNode(BaseNode):
     """Segments audio measures into structural sections (Intro, Verse, Chorus, Outro)."""
     required_keys = ["measure_map"]
-    optional_keys = ["y", "sr", "chord_progression", "stems", "structure_track_path"]
-    output_keys = ["sections"]
+    optional_keys = ["y", "sr", "chord_progression", "stems", "structure_track_path", "output_dir", "project_dir"]
+    output_keys = ["sections", "sections_json"]
 
     def __init__(self):
         super().__init__("SectionStructureNode")
@@ -1014,7 +1017,8 @@ class SectionStructureNode(BaseNode):
             if chorus_end <= total_measures and chorus_end < total_measures:
                 sections.append({"measure": chorus_end, "name": "Outro", "start_time": measure_map[chorus_end - 1]["start_time"]})
 
-        output_dir = blackboard.get_val("output_dir", "outputs")
+        project_dir = blackboard.get_val("project_dir")
+        output_dir = os.path.join(project_dir, "reports") if project_dir else blackboard.get_val("output_dir", "outputs")
         os.makedirs(output_dir, exist_ok=True)
         json_path = os.path.join(output_dir, "sections.json")
         with open(json_path, "w", encoding="utf-8") as f:
@@ -1442,10 +1446,6 @@ class VoiceSplitMIDIExportNode(BaseNode):
 
         blackboard.set_val("voice_split_midis", split_midis)
         return NodeStatus.SUCCESS
-
-
-
-
 
 
 

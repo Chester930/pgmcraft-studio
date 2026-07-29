@@ -40,6 +40,7 @@ class TestSDDPass28(unittest.TestCase):
         self.assertIsNotNone(refined)
         # 索引 1 (t=1.0) 應被成功錨定為 1 拍 (Downbeat)
         self.assertEqual(int(refined[1, 1]), 1)
+        np.testing.assert_array_equal(bb.get_val("beats"), refined)
 
     def test_beat_fusion_memory_cache(self):
         """測試 BeatFusionArbitratorNode 優先使用 Blackboard 記憶體音訊緩存」"""

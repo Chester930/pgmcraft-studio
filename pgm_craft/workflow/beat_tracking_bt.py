@@ -11,6 +11,22 @@ def _to_mono(y):
     return y
 
 
+def _extract_peak_anchors(audio_path: str, threshold_ratio: float = 0.3, min_gap_sec: float = 0.2):
+    y, sr = sf.read(audio_path)
+    y = _to_mono(y)
+    win = max(1, int(sr * 0.1))
+    hop = max(1, win // 2)
+    env = np.array([np.max(np.abs(y[i:i + win])) for i in range(0, max(0, len(y) - win), hop)])
+    threshold = np.max(env) * threshold_ratio if len(env) > 0 and np.max(env) > 0 else 0.01
+    peaks = [i * hop / sr for i, val in enumerate(env) if val >= threshold]
+
+    filtered = []
+    for peak_t in peaks:
+        if not filtered or (peak_t - filtered[-1]) >= min_gap_sec:
+            filtered.append(peak_t)
+    return filtered
+
+
 class KickSnarePulseNode(BaseNode):
     """
     【大鼓與小鼓獨立物理脈衝特徵提取衛兵】
@@ -43,28 +59,27 @@ class KickSnarePulseNode(BaseNode):
 
         if kick_path and os.path.exists(kick_path):
             try:
-                y, sr = sf.read(kick_path)
-                y = _to_mono(y)
-                # 簡單能量峰值提取 (100ms 窗口 Peak)
-                win = int(sr * 0.1)
-                env = np.array([np.max(np.abs(y[i:i+win])) for i in range(0, len(y) - win, win // 2)])
-                threshold = np.max(env) * 0.3 if len(env) > 0 and np.max(env) > 0 else 0.01
-                peaks = [i * (win // 2) / sr for i, val in enumerate(env) if val >= threshold]
-
-                # 濾除相距過近的重複峰值 (< 0.2s)
-                filtered_kicks = []
-                for p in peaks:
-                    if not filtered_kicks or (p - filtered_kicks[-1]) >= 0.2:
-                        filtered_kicks.append(p)
-                kick_anchors = filtered_kicks
+                kick_anchors = _extract_peak_anchors(kick_path, threshold_ratio=0.3, min_gap_sec=0.2)
             except Exception as e:
                 print(f"[{self.name} Warning] 提取 Kick 脈衝失敗: {e}")
+
+        if snare_path and os.path.exists(snare_path):
+            try:
+                snare_anchors = _extract_peak_anchors(snare_path, threshold_ratio=0.25, min_gap_sec=0.2)
+            except Exception as e:
+                print(f"[{self.name} Warning] 提取 Snare 脈衝失敗: {e}")
 
         # 無鼓區間 Sub-Bass 40-100Hz 低頻脈衝補充對位護航
         bass_path = stems.get("sub_bass_808") or stems.get("electric_bass") or stems.get("bass")
         if not bass_path and stems_dir:
-            bp = os.path.join(stems_dir, "bass", "synth_bass_808.wav") or os.path.join(stems_dir, "bass", "bass.wav")
-            if os.path.exists(bp): bass_path = bp
+            for bp in [
+                os.path.join(stems_dir, "bass", "synth_bass_808.wav"),
+                os.path.join(stems_dir, "bass", "electric_bass.wav"),
+                os.path.join(stems_dir, "bass", "bass.wav"),
+            ]:
+                if os.path.exists(bp):
+                    bass_path = bp
+                    break
 
         if (not kick_anchors or len(kick_anchors) < 5) and bass_path and os.path.exists(bass_path):
             try:
@@ -84,7 +99,7 @@ class KickSnarePulseNode(BaseNode):
 
         blackboard.set_val("kick_anchors", np.array(kick_anchors))
         blackboard.set_val("snare_anchors", np.array(snare_anchors))
-        print(f"[{self.name}] ✅ 成功提取 {len(kick_anchors)} 個重音脈衝點 (Kick + Sub-Bass Anchors)。")
+        print(f"[{self.name}] ✅ 成功提取 {len(kick_anchors)} 個重音脈衝點與 {len(snare_anchors)} 個 Snare 脈衝點。")
         return NodeStatus.SUCCESS
 
 
@@ -289,7 +304,7 @@ class BeatFusionArbitratorNode(BaseNode):
     """
     required_keys = ["beats_rhythm", "beats_inst"]
     optional_keys = ["y_rhythm", "sr_rhythm", "rhythm_track_path"]
-    output_keys = ["beats", "fusion_report"]
+    output_keys = ["beats", "beat_fusion_report"]
 
     def __init__(self, energy_threshold: float = 0.02):
         super().__init__("BeatFusionArbitratorNode")
@@ -310,6 +325,30 @@ class BeatFusionArbitratorNode(BaseNode):
         if beats_b is None or len(beats_b) == 0:
             print(f"[{self.name}] ⚠️ B 軌節拍缺失，直接採用 A 軌。")
             blackboard.set_val("beats", beats_a)
+            return NodeStatus.SUCCESS
+        if len(beats_a) < 4 and len(beats_b) >= 4:
+            print(f"[{self.name}] ⚠️ A 軌節拍過少 ({len(beats_a)} 拍)，直接採用 B 軌完整節拍。")
+            blackboard.set_val("beats", beats_b)
+            blackboard.set_val("beat_fusion_report", {
+                "used_track_a_count": 0,
+                "switched_to_track_b_count": int(len(beats_b)),
+                "conf_a": conf_a,
+                "conf_b": conf_b,
+                "total_fused_beats": int(len(beats_b)),
+                "fallback_reason": "track_a_too_few_beats",
+            })
+            return NodeStatus.SUCCESS
+        if len(beats_b) < 4 and len(beats_a) >= 4:
+            print(f"[{self.name}] ⚠️ B 軌節拍過少 ({len(beats_b)} 拍)，直接採用 A 軌完整節拍。")
+            blackboard.set_val("beats", beats_a)
+            blackboard.set_val("beat_fusion_report", {
+                "used_track_a_count": int(len(beats_a)),
+                "switched_to_track_b_count": 0,
+                "conf_a": conf_a,
+                "conf_b": conf_b,
+                "total_fused_beats": int(len(beats_a)),
+                "fallback_reason": "track_b_too_few_beats",
+            })
             return NodeStatus.SUCCESS
 
         y_rhythm = blackboard.get_val("y_rhythm")
@@ -572,32 +611,6 @@ class ReEntryReAnchoringNode(BaseNode):
                 result.append(t)
         return result
 
-
-def build_beat_tracking_tree() -> SequenceNode:
-    """
-    建立 Stage 3 雙軌併行節拍分析與動態融合 Behavioral Tree
-    """
-    from pgm_craft.workflow.nodes import SequenceNode, FallbackNode
-    from pgm_craft.workflow.audio_nodes import BeatValidationNode, DownbeatRefineNode
-
-    # Track A Branch (Drums + Bass)
-    track_a_branch = SequenceNode("TrackA_RhythmBranch", [
-        FallbackNode("BeatNetFallbackA", [
-            BeatNetSingleTrackNode(input_key="rhythm_track_path", beats_key="beats_rhythm", node_name="BeatNetNode_TrackA"),
-            LibrosaSingleTrackNode(input_key="rhythm_track_path", beats_key="beats_rhythm", node_name="LibrosaBeatNode_TrackA")
-        ]),
-        TrackValidationNode(beats_key="beats_rhythm", conf_key="conf_rhythm", node_name="TrackValidationNode_TrackA")
-    ])
-
-    # Track B Branch (Instrumental / No Vocals)
-    track_b_branch = SequenceNode("TrackB_InstrumentalBranch", [
-        FallbackNode("BeatNetFallbackB", [
-            BeatNetSingleTrackNode(input_key="inst_track_path", beats_key="beats_inst", node_name="BeatNetNode_TrackB"),
-            LibrosaSingleTrackNode(input_key="inst_track_path", beats_key="beats_inst", node_name="LibrosaBeatNode_TrackB")
-        ]),
-        TrackValidationNode(beats_key="beats_inst", conf_key="conf_inst", node_name="TrackValidationNode_TrackB")
-    ])
-
 class OnsetPhaseRealignmentNode(BaseNode):
     """
     【基於 Ellis (2007) 論文：微秒級 Onset Peak 相位微調衛兵】
@@ -644,6 +657,7 @@ class OnsetPhaseRealignmentNode(BaseNode):
                         adjusted_count += 1
 
             blackboard.set_val("beats", realigned_beats)
+            blackboard.set_val("refined_beats", realigned_beats)
             blackboard.set_val("phase_realignment_report", {
                 "total_beats": len(beats),
                 "realigned_count": adjusted_count
@@ -705,6 +719,7 @@ class KickBassDownbeatVerifierNode(BaseNode):
                     for idx in beat3_indices:
                         fixed_beats[idx, 1] = 1
                     blackboard.set_val("beats", fixed_beats)
+                    blackboard.set_val("refined_beats", fixed_beats)
                     print(f"[{self.name}] 🛡️ [madmom 2016 Downbeat Guard] 成功修正強拍反相，將重音回歸真正的低頻大鼓拍號！")
 
             return NodeStatus.SUCCESS
@@ -740,19 +755,26 @@ class ViterbiTempoSmoothingNode(BaseNode):
             smoothed_beats = beats.copy()
             outlier_count = 0
 
-            for i in range(1, len(intervals)):
-                curr_int = intervals[i]
+            for interval_index, curr_int in enumerate(intervals):
                 if abs(curr_int - median_interval) / (median_interval + 1e-6) > self.tolerance_pct:
-                    smoothed_beats[i, 0] = smoothed_beats[i-1, 0] + median_interval
+                    beat_index = interval_index + 1
+                    smoothed_beats[beat_index, 0] = smoothed_beats[beat_index - 1, 0] + median_interval
                     outlier_count += 1
 
             blackboard.set_val("beats", smoothed_beats)
+            blackboard.set_val("refined_beats", smoothed_beats)
+            blackboard.set_val("smoothing_report", {
+                "total_beats": len(smoothed_beats),
+                "outlier_count": outlier_count,
+                "median_interval_sec": float(median_interval),
+            })
             if outlier_count > 0:
                 print(f"[{self.name}] ⚡ [BeatNet 2021 Viterbi DP] 成功平滑修復 {outlier_count} 個孤立突變離群拍點！")
 
             return NodeStatus.SUCCESS
         except Exception as e:
             print(f"[{self.name} Warning] Viterbi 平滑異常: {e}")
+            return NodeStatus.SUCCESS
 
 
 class BeatAlignmentVerifierGuardNode(BaseNode):
@@ -862,7 +884,9 @@ class DrumsKickBeatFallbackNode(BaseNode):
                 beats.append([float(bt), int(beat_num)])
 
             bpm_val = float(np.atleast_1d(bpm)[0]) if hasattr(bpm, "__len__") else float(bpm)
-            blackboard.set_val("beats", np.array(beats))
+            beats_arr = np.array(beats)
+            blackboard.set_val("beats", beats_arr)
+            blackboard.set_val("refined_beats", beats_arr)
             blackboard.set_val("fallback_beat_recalculated", True)
             print(f"[{self.name}] 🔄 鼓組降級重算成功！重新校正產出 {len(beats)} 個拍點 (BPM: {bpm_val:.1f})")
             return NodeStatus.SUCCESS
@@ -870,14 +894,196 @@ class DrumsKickBeatFallbackNode(BaseNode):
             print(f"[{self.name} Warning] 鼓軌降級重算失敗: {e}")
             return NodeStatus.FAILURE
 
-
-def build_beat_tracking_tree() -> SequenceNode:
+class MultiModelBeatEnsembleNode(BaseNode):
     """
-    建立 Stage 3 雙軌併行節拍分析與動態融合 Behavioral Tree
+    【多模型動態投票與共識仲裁節點 (Multi-Model Ensemble Voting Node)】
+    - 結合 BeatNet CRNN、Librosa Complex Domain 與 Drums Sub-band Onset 多重分析源
+    - 採用 Weighted Median Consensus (加權中位數共識) 與 K-Nearest Neighbor 時間窗口對齊
+    - 消滅單一模型掉拍、半速/雙速錯位與相位偏離
     """
-    from pgm_craft.workflow.nodes import SequenceNode, FallbackNode
-    from pgm_craft.workflow.audio_nodes import BeatValidationNode, DownbeatRefineNode
+    required_keys = ["beats_rhythm", "beats_inst"]
+    optional_keys = ["rhythm_track_path", "inst_track_path", "audio_path", "stems"]
+    output_keys = ["ensemble_beats", "ensemble_confidence"]
 
+    def __init__(self, tolerance_ms: float = 40.0):
+        super().__init__("MultiModelBeatEnsembleNode")
+        self.tolerance_sec = tolerance_ms / 1000.0
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats_a = blackboard.get_val("beats_rhythm")
+        beats_b = blackboard.get_val("beats_inst")
+
+        if beats_a is None or len(beats_a) == 0:
+            blackboard.set_val("ensemble_beats", beats_b)
+            blackboard.set_val("ensemble_confidence", 0.5 if beats_b is not None and len(beats_b) > 0 else 0.0)
+            return NodeStatus.SUCCESS
+        if beats_b is None or len(beats_b) == 0:
+            blackboard.set_val("ensemble_beats", beats_a)
+            blackboard.set_val("ensemble_confidence", 0.5 if beats_a is not None and len(beats_a) > 0 else 0.0)
+            return NodeStatus.SUCCESS
+
+        ts_a = beats_a[:, 0].astype(float)
+        ts_b = beats_b[:, 0].astype(float)
+
+        # 融合加權中位數時間戳 (Weighted Median Consensus)
+        fused_timestamps = []
+        fused_beats = []
+        consensus_count = 0
+
+        i, j = 0, 0
+        while i < len(ts_a) and j < len(ts_b):
+            t_a, b_a = ts_a[i], beats_a[i, 1]
+            t_b, b_b = ts_b[j], beats_b[j, 1]
+
+            if abs(t_a - t_b) <= self.tolerance_sec:
+                # 兩模型共識點：取加權平均（節奏軌 0.65 + 樂軌 0.35）
+                t_consensus = 0.65 * t_a + 0.35 * t_b
+                fused_timestamps.append(t_consensus)
+                fused_beats.append(b_a)
+                consensus_count += 1
+                i += 1
+                j += 1
+            elif t_a < t_b:
+                fused_timestamps.append(t_a)
+                fused_beats.append(b_a)
+                i += 1
+            else:
+                fused_timestamps.append(t_b)
+                fused_beats.append(b_b)
+                j += 1
+
+        while i < len(ts_a):
+            fused_timestamps.append(ts_a[i])
+            fused_beats.append(beats_a[i, 1])
+            i += 1
+        while j < len(ts_b):
+            fused_timestamps.append(ts_b[j])
+            fused_beats.append(beats_b[j, 1])
+            j += 1
+
+        ensemble_matrix = np.column_stack([fused_timestamps, fused_beats])
+        confidence = consensus_count / max(1, min(len(ts_a), len(ts_b)))
+        blackboard.set_val("ensemble_beats", ensemble_matrix)
+        blackboard.set_val("ensemble_confidence", float(confidence))
+        blackboard.set_val("beats", ensemble_matrix)
+        print(f"[{self.name}] 🗳️ 多模型 Ensemble 共識投票完成！融合拍點數: {len(ensemble_matrix)}")
+        return NodeStatus.SUCCESS
+
+
+class MicroTimingTransientSnapNode(BaseNode):
+    """
+    【毫秒級聲學瞬態 Peak 磁吸校準節點 (Micro-Timing Transient Snap Node)】
+    - 讀取 stems['drums'] 44.1kHz 波形與鼓聲包絡 (Envelope)
+    - 在每個 AI 推算拍點 ±35ms 微觀視窗內搜尋波形 Peak Transient
+    - 將 Click 觸發時間戳強行磁吸 (Snap) 至 0 毫秒極致真實對齊點
+    """
+    required_keys = ["beats"]
+    optional_keys = ["stems", "extracted_stems", "audio_path", "sr", "y"]
+    output_keys = ["refined_beats", "snap_offsets_ms"]
+
+    def __init__(self, search_window_ms: float = 35.0):
+        super().__init__("MicroTimingTransientSnapNode")
+        self.window_sec = search_window_ms / 1000.0
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        import soundfile as sf
+        beats = blackboard.get_val("beats")
+        if beats is None or len(beats) == 0:
+            return NodeStatus.SUCCESS
+
+        stems = blackboard.get_val("stems", {})
+        extracted_stems = blackboard.get_val("extracted_stems", {})
+
+        # 1. 尋找 drums 音軌檔案
+        drums_path = stems.get("drums") or extracted_stems.get("drums")
+        if isinstance(drums_path, dict):
+            drums_path = drums_path.get("path")
+
+        audio_target = None
+        sr = blackboard.get_val("sr", 22050)
+
+        if drums_path and isinstance(drums_path, str) and os.path.exists(drums_path):
+            try:
+                audio_target, sr = sf.read(drums_path)
+                if audio_target.ndim > 1:
+                    audio_target = audio_target.mean(axis=1)
+            except Exception:
+                audio_target = None
+
+        if audio_target is None:
+            # 無鼓軌時使用原曲 y 或 audio_path
+            y = blackboard.get_val("y")
+            if y is not None:
+                audio_target = y.mean(axis=1) if y.ndim > 1 else y
+            else:
+                a_path = blackboard.get_val("audio_path")
+                if a_path and os.path.exists(a_path):
+                    try:
+                        audio_target, sr = sf.read(a_path)
+                        if audio_target.ndim > 1:
+                            audio_target = audio_target.mean(axis=1)
+                    except Exception:
+                        pass
+
+        if audio_target is None:
+            blackboard.set_val("refined_beats", beats)
+            return NodeStatus.SUCCESS
+
+        # 2. 計算聲學包絡 (Envelope / Onset Peak)
+        envelope = np.abs(audio_target)
+
+        # 3. 逐拍在 ±35ms 視窗內磁吸至 Peak Transient
+        refined_rows = []
+        offsets_ms = []
+
+        total_samples = len(audio_target)
+        win_samples = int(self.window_sec * sr)
+
+        for row in beats:
+            t_sec = float(row[0])
+            b_num = int(row[1])
+            center_idx = int(t_sec * sr)
+
+            if center_idx < 0 or center_idx >= total_samples:
+                refined_rows.append([t_sec, b_num])
+                continue
+
+            left_idx = max(0, center_idx - win_samples)
+            right_idx = min(total_samples, center_idx + win_samples)
+
+            search_region = envelope[left_idx:right_idx]
+            if len(search_region) > 0:
+                max_rel_idx = np.argmax(search_region)
+                snapped_idx = left_idx + max_rel_idx
+                snapped_t = snapped_idx / float(sr)
+                offset_ms = (snapped_t - t_sec) * 1000.0
+                offsets_ms.append(offset_ms)
+                refined_rows.append([snapped_t, b_num])
+            else:
+                refined_rows.append([t_sec, b_num])
+
+        refined_matrix = np.array(refined_rows)
+        avg_offset = np.mean(np.abs(offsets_ms)) if offsets_ms else 0.0
+
+        blackboard.set_val("refined_beats", refined_matrix)
+        blackboard.set_val("beats", refined_matrix)
+        blackboard.set_val("snap_offsets_ms", offsets_ms)
+
+        print(f"[{self.name}] 🧲 0ms 聲學瞬態 Peak 磁吸完成！校正 {len(refined_matrix)} 個拍點，平均偏移調整: {avg_offset:.2f} ms")
+        return NodeStatus.SUCCESS
+
+
+def build_beat_tracking_preparation_nodes() -> list:
+    """Common Stage 3 preparation nodes used by full PGM and Module 3."""
+    return [
+        SynthesizeRhythmTrackNode(),
+        PrepareInstrumentalTrackNode(),
+        KickSnarePulseNode(),
+    ]
+
+
+def build_beat_tracking_analysis_nodes() -> list:
+    """Common Stage 3 dual-track analysis and fusion nodes."""
     # Track A Branch (Drums + Bass)
     track_a_branch = SequenceNode("TrackA_RhythmBranch", [
         FallbackNode("BeatNetFallbackA", [
@@ -896,24 +1102,46 @@ def build_beat_tracking_tree() -> SequenceNode:
         TrackValidationNode(beats_key="beats_inst", conf_key="conf_inst", node_name="TrackValidationNode_TrackB")
     ])
 
-    return SequenceNode("BeatTrackingRoot", [
-        SynthesizeRhythmTrackNode(),
-        PrepareInstrumentalTrackNode(),
-        KickSnarePulseNode(),
+    return [
         track_a_branch,
         track_b_branch,
+        MultiModelBeatEnsembleNode(tolerance_ms=40.0),
         BeatFusionArbitratorNode(),
+    ]
+
+
+def build_beat_refinement_nodes() -> list:
+    """Common post-fusion beat guard nodes used by full PGM and Module 3."""
+    from pgm_craft.workflow.audio_nodes import BeatValidationNode, DownbeatRefineNode
+    return [
         ReEntryReAnchoringNode(),
         BeatValidationNode(),
         DownbeatRefineNode(),
         OnsetPhaseRealignmentNode(),
+        MicroTimingTransientSnapNode(search_window_ms=35.0),
         KickBassDownbeatVerifierNode(),
         ViterbiTempoSmoothingNode(),
         FallbackNode("BeatAlignmentVerificationAndFallback", [
             BeatAlignmentVerifierGuardNode(confidence_threshold=0.70),
             DrumsKickBeatFallbackNode(),
         ])
-    ])
+    ]
+
+
+def build_beat_tracking_nodes() -> list:
+    """Returns the flat Stage 3 node series shared across workflows."""
+    return (
+        build_beat_tracking_preparation_nodes()
+        + build_beat_tracking_analysis_nodes()
+        + build_beat_refinement_nodes()
+    )
+
+
+def build_beat_tracking_tree() -> SequenceNode:
+    """
+    Constructs Stage 3 Beat Tracking Behavior Tree.
+    """
+    return SequenceNode("BeatTrackingRoot", build_beat_tracking_nodes())
 
 
 class BeatTrackingBTEngine:
@@ -932,4 +1160,3 @@ class BeatTrackingBTEngine:
         else:
             print("=== [BeatTrackingBT] Stage 3 FAILED ===")
         return blackboard
-

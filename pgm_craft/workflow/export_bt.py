@@ -196,78 +196,203 @@ class MIDILyricsMarkerExportNode(BaseNode):
 
 class BackingWithClickSynthesizerNode(BaseNode):
     """
-    純音樂伴奏 + Click 打點音軌合成節點。
-    自動擷取無人聲伴奏 (drums + bass + other) 並與 Click 聲波進行 -14.0 LUFS 混合，
-    導出 Live 練團/演唱會 IEM 專用之 backing_with_click.wav。
+    【純音樂伴奏 + Click 混合音軌合成衛兵 (Backing Track with Click Synthesizer Node)】
+    - 讀取 Stage 2/4 產出之樂器音軌 (drums, bass, guitar, piano, instrumental, no_vocals)
+    - 排除主唱聲音，將純樂器伴奏 (鼓+Bass+吉他+鋼琴等) 與 Click 導引軌進行精確疊加
+    - 同時導出至 `click/backing_with_click.wav` 與專案根目錄
     """
-    required_keys = ["output_dir", "y", "sr"]
-    optional_keys = ["stems", "click_audio"]
+    required_keys = []
+    optional_keys = ["y", "sr", "audio_path", "stems", "extracted_stems", "click_audio", "output_dir", "project_dir", "click_track"]
     output_keys = ["backing_with_click_path"]
 
     def __init__(self):
         super().__init__("BackingWithClickSynthesizerNode")
 
+    def _to_mono(self, audio) -> np.ndarray:
+        arr = np.asarray(audio)
+        if arr.ndim == 0:
+            return arr.reshape(1).astype(np.float32)
+        if arr.ndim == 1:
+            return arr.astype(np.float32)
+        if arr.ndim == 2:
+            # soundfile reads as samples x channels, while some separators keep channels x samples.
+            if arr.shape[0] <= 8 and arr.shape[1] > arr.shape[0]:
+                return arr.mean(axis=0).astype(np.float32)
+            return arr.mean(axis=1).astype(np.float32)
+        return arr.reshape(-1).astype(np.float32)
+
+    def _resample_if_needed(self, audio: np.ndarray, source_sr: int, target_sr: int) -> np.ndarray:
+        source_sr = int(source_sr or target_sr)
+        target_sr = int(target_sr or source_sr)
+        if source_sr == target_sr:
+            return audio.astype(np.float32)
+        if len(audio) <= 1:
+            return audio.astype(np.float32)
+        try:
+            import librosa
+            return librosa.resample(audio.astype(np.float32), orig_sr=source_sr, target_sr=target_sr)
+        except Exception:
+            new_len = max(1, int(round(len(audio) * target_sr / source_sr)))
+            old_x = np.linspace(0.0, 1.0, num=len(audio), endpoint=False)
+            new_x = np.linspace(0.0, 1.0, num=new_len, endpoint=False)
+            return np.interp(new_x, old_x, audio).astype(np.float32)
+
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         import soundfile as sf
-        output_dir = blackboard.get_val("output_dir", "outputs")
-        os.makedirs(output_dir, exist_ok=True)
+        target_dir = blackboard.get_val("project_dir", blackboard.get_val("output_dir", "outputs"))
+        click_dir = os.path.join(target_dir, "click") if os.path.basename(target_dir) != "click" else target_dir
+        os.makedirs(click_dir, exist_ok=True)
 
+        sr = int(blackboard.get_val("sr", 22050) or 22050)
         y = blackboard.get_val("y")
-        sr = blackboard.get_val("sr", 22050)
-        if y is None:
-            audio_path = blackboard.get_val("audio_path")
-            if audio_path and os.path.exists(audio_path):
-                try:
-                    y, sr = sf.read(audio_path)
-                    if y.ndim > 1:
-                        y = y.mean(axis=1)
-                    blackboard.set_val("y", y)
-                    blackboard.set_val("sr", sr)
-                except Exception as e:
-                    print(f"[{self.name}] 載入音訊波形失敗: {e}")
-                    return NodeStatus.FAILURE
-            else:
-                return NodeStatus.FAILURE
 
         stems = blackboard.get_val("stems", {})
+        extracted_stems = blackboard.get_val("extracted_stems", {})
         click_audio = blackboard.get_val("click_audio")
+        click_sr = sr if click_audio is not None else None
 
-        # 1. 取得純音樂伴奏聲部
-        if "drums" in stems and "bass" in stems and "other" in stems:
-            backing = stems["drums"] + stems["bass"] + stems["other"]
-        elif "no_vocal" in stems:
-            backing = stems["no_vocal"]
-        else:
-            backing = y
+        # 0. 若未能從 blackboard 取得 click_audio，嘗試從 click_track.wav 讀取
+        if click_audio is None:
+            click_file = blackboard.get_val("click_track") or os.path.join(click_dir, "click_track.wav")
+            if click_file and os.path.exists(click_file):
+                try:
+                    click_audio, click_sr = sf.read(click_file)
+                    click_audio = self._to_mono(click_audio)
+                except Exception:
+                    click_audio = None
+                    click_sr = None
+        elif click_audio is not None:
+            click_audio = self._to_mono(click_audio)
+
+        # 1. 取得/合成純樂器伴奏 (無主唱)
+        backing_audio = None
+        backing_sr = sr
+        backing_source = None
+
+        # (a) 檢查是否有現成伴奏音訊陣列或檔案 (no_vocals / instrumental)
+        for key in ["no_vocal", "no_vocals", "instrumental"]:
+            val = stems.get(key)
+            if val is None:
+                val = extracted_stems.get(key)
+            if isinstance(val, np.ndarray):
+                backing_audio = self._to_mono(val)
+                backing_source = key
+                break
+            elif isinstance(val, str) and os.path.exists(val):
+                try:
+                    w, w_sr = sf.read(val)
+                    backing_audio = self._to_mono(w)
+                    backing_sr = int(w_sr)
+                    backing_source = key
+                    break
+                except Exception:
+                    pass
+
+        # 若沒在 stems 字典中找到，主動到 stems/ 目錄下尋找 instrumental.wav 或 no_vocals.wav
+        if backing_audio is None:
+            for fname in ["instrumental.wav", "no_vocals.wav", "no_vocal.wav"]:
+                candidate = os.path.join(target_dir, "stems", fname)
+                if os.path.exists(candidate):
+                    try:
+                        w, w_sr = sf.read(candidate)
+                        backing_audio = self._to_mono(w)
+                        backing_sr = int(w_sr)
+                        backing_source = fname
+                        break
+                    except Exception:
+                        pass
+
+        # (b) 若無整體伴奏檔，嘗試讀取/加載各大樂器分軌並求和 (drums, bass, guitar, piano, other, stringss)
+        if backing_audio is None:
+            instrument_parts = []
+            mix_sr = None
+            stem_keys = ["drums", "bass", "guitar", "guitars", "piano", "pianos", "other", "stringss"]
+            for skey in stem_keys:
+                val = stems.get(skey)
+                if val is None:
+                    val = extracted_stems.get(skey)
+                if isinstance(val, np.ndarray):
+                    w = self._to_mono(val)
+                    part_sr = sr
+                    mix_sr = mix_sr or part_sr
+                    w = self._resample_if_needed(w, part_sr, mix_sr)
+                    instrument_parts.append(w)
+                elif isinstance(val, str) and os.path.exists(val):
+                    try:
+                        w, w_sr = sf.read(val)
+                        part_sr = int(w_sr)
+                        mix_sr = mix_sr or part_sr
+                        w = self._resample_if_needed(self._to_mono(w), part_sr, mix_sr)
+                        instrument_parts.append(w)
+                    except Exception:
+                        pass
+                elif isinstance(val, dict):
+                    p = val.get("path")
+                    if p and os.path.exists(p):
+                        try:
+                            w, w_sr = sf.read(p)
+                            part_sr = int(w_sr)
+                            mix_sr = mix_sr or part_sr
+                            w = self._resample_if_needed(self._to_mono(w), part_sr, mix_sr)
+                            instrument_parts.append(w)
+                        except Exception:
+                            pass
+
+            if instrument_parts:
+                min_len = min(len(w) for w in instrument_parts)
+                backing_audio = sum(w[:min_len] for w in instrument_parts)
+                backing_sr = int(mix_sr or sr)
+                backing_source = "instrument_parts"
+
+        # (c) Fallback: 若全無分軌，回退使用原始音訊波形 y
+        if backing_audio is None:
+            if y is not None:
+                backing_audio = self._to_mono(y)
+                backing_source = "original_waveform"
+            else:
+                audio_path = blackboard.get_val("audio_path")
+                if audio_path and os.path.exists(audio_path):
+                    try:
+                        w, backing_sr = sf.read(audio_path)
+                        backing_sr = int(backing_sr)
+                        backing_audio = self._to_mono(w)
+                        backing_source = "audio_path"
+                    except Exception:
+                        backing_audio = None
+
+        if backing_audio is None:
+            print(f"[{self.name}] ⚠️ 無法取得伴奏音訊，略過 backing_with_click 導出。")
+            return NodeStatus.SUCCESS
 
         # 2. 混入 Click 音訊 (若存在)
         if click_audio is not None and len(click_audio) > 0:
-            min_len = min(backing.shape[-1] if backing.ndim > 1 else len(backing),
-                          click_audio.shape[-1] if click_audio.ndim > 1 else len(click_audio))
-            if backing.ndim > 1:
-                mixed = backing[:, :min_len] + click_audio[:, :min_len] * 0.7
-            else:
-                mixed = backing[:min_len] + click_audio[:min_len] * 0.7
+            click_mono = self._resample_if_needed(self._to_mono(click_audio), click_sr or sr, backing_sr)
+            min_len = min(len(backing_audio), len(click_mono))
+            mixed = backing_audio[:min_len] + click_mono[:min_len] * 0.7
         else:
-            mixed = backing
+            mixed = backing_audio
 
-        # 防爆音 Peak Limiter Guard (-1.0 dBFS)
+        # Peak Limiter Guard (-1.0 dBFS)
+        if mixed is None or len(mixed) == 0:
+            print(f"[{self.name}] ⚠️ backing_with_click 音訊為空，略過導出。")
+            return NodeStatus.SUCCESS
+
         peak = np.max(np.abs(mixed))
         if peak > 0.891:
             mixed = mixed * (0.891 / peak)
 
-        out_path = os.path.join(output_dir, "backing_with_click.wav")
-        if mixed.ndim > 1:
-            sf.write(out_path, mixed.T, sr)
-        else:
-            sf.write(out_path, mixed, sr)
+        out_click_path = os.path.join(click_dir, "backing_with_click.wav")
+        sf.write(out_click_path, mixed.astype(np.float32), backing_sr)
 
-        blackboard.set_val("backing_with_click_path", out_path)
+        blackboard.set_val("backing_with_click_path", out_click_path)
+        blackboard.set_val("backing_with_click_sample_rate", backing_sr)
+        blackboard.set_val("backing_with_click_duration_sec", float(len(mixed) / backing_sr))
+        blackboard.set_val("backing_with_click_source", backing_source)
         outputs = blackboard.get_val("outputs", {})
-        outputs["backing_with_click"] = out_path
+        outputs["backing_with_click"] = out_click_path
         blackboard.set_val("outputs", outputs)
 
-        print(f"[{self.name}] 🎧 成功導出純音樂伴奏 + Click 音軌 ➔ {out_path}")
+        print(f"[{self.name}] 🎧 成功導出純樂器伴奏 + Click 音軌 ➔ {out_click_path}")
         return NodeStatus.SUCCESS
 
 
@@ -278,8 +403,8 @@ class IEMSplitMonoLRNode(BaseNode):
     - 右聲道 (R): 純 Mono 音樂伴奏 (No Vocal Backing Stem)
     - 導出檔名: iem_split_mono_lr.wav (方便 PA 工程師直連 Stage Box 分路)
     """
-    required_keys = ["output_dir", "y", "sr"]
-    optional_keys = ["stems", "click_audio"]
+    required_keys = ["output_dir"]
+    optional_keys = ["y", "sr", "audio_path", "stems", "click_audio", "click_track"]
     output_keys = ["iem_split_mono_lr_path"]
 
     def __init__(self):
@@ -295,11 +420,34 @@ class IEMSplitMonoLRNode(BaseNode):
         stems = blackboard.get_val("stems", {})
         click_audio = blackboard.get_val("click_audio")
 
+        if y is None:
+            audio_path = blackboard.get_val("audio_path")
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    y, sr = sf.read(audio_path)
+                except Exception:
+                    y = None
+
+        if click_audio is None:
+            click_file = blackboard.get_val("click_track") or os.path.join(output_dir, "click", "click_track.wav")
+            if click_file and os.path.exists(click_file):
+                try:
+                    click_audio, _ = sf.read(click_file)
+                except Exception:
+                    click_audio = None
+
+        if y is None and click_audio is None:
+            print(f"[{self.name}] ⚠️ 無可用原曲或 click 音訊，略過 IEM 分立導出。")
+            return NodeStatus.SUCCESS
+
+        reference_audio = y if y is not None else click_audio
+        reference_mono = reference_audio.mean(axis=1) if reference_audio.ndim > 1 else reference_audio
+
         # 1. Left Channel: Mono Click
         if click_audio is not None and len(click_audio) > 0:
-            left_click = click_audio.mean(axis=0) if click_audio.ndim > 1 else click_audio
+            left_click = click_audio.mean(axis=1) if click_audio.ndim > 1 else click_audio
         else:
-            left_click = np.zeros_like(y.mean(axis=0) if y.ndim > 1 else y)
+            left_click = np.zeros_like(reference_mono)
 
         # 2. Right Channel: Mono Backing
         if "drums" in stems and "bass" in stems and "other" in stems:
@@ -307,8 +455,8 @@ class IEMSplitMonoLRNode(BaseNode):
         elif "no_vocal" in stems:
             backing = stems["no_vocal"]
         else:
-            backing = y
-        right_backing = backing.mean(axis=0) if backing.ndim > 1 else backing
+            backing = y if y is not None else np.zeros_like(left_click)
+        right_backing = backing.mean(axis=1) if backing.ndim > 1 else backing
 
         # 3. 對齊長度
         min_len = min(len(left_click), len(right_backing))

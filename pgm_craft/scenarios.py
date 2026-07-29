@@ -14,20 +14,20 @@ SCENARIO_DOMAINS = [
 
 SCENARIO_WORKFLOWS = {
     "podcast": [
-        {"id": "podcast_vocal_master", "label": "1-1. 播客極致人聲優化 (Podcast Vocal Master)", "steps": ["vocal_master"]},
-        {"id": "podcast_bgm_ducking", "label": "1-2. 自動開場背景音樂 Fade 避讓 (BGM Ducking)", "steps": ["bgm_ducking"]},
-        {"id": "podcast_chapter_gen", "label": "1-3. 多人對談自動章節標記報告 (Chapter Generator)", "steps": ["chapter_gen"]}
+        {"id": "podcast_interview_clean", "label": "1-1. 雙人/多人訪談聲音淨化 (Interview Clean)", "steps": ["interview_clean"]},
+        {"id": "podcast_r128_normalize", "label": "1-2. 播客音量 EBU R128 自動標準化 (R128 Normalize)", "steps": ["r128_normalize"]},
+        {"id": "podcast_voice_isolation", "label": "1-3. Talking Head 語音抽出與背景音分離 (Voice Isolation)", "steps": ["voice_isolation"]}
     ],
     "vlog": [
-        {"id": "vlog_outdoor_denoise", "label": "2-1. 室外風噪與環境雜音降噪 (Outdoor Denoise)", "steps": ["outdoor_denoise"]},
-        {"id": "vlog_sfx_leveling", "label": "2-2. 綜藝效果音音量平滑監控 (SFX Leveling)", "steps": ["sfx_leveling"]},
-        {"id": "vlog_vocal_srt_align", "label": "2-3. 人聲導出並嵌入字幕對齊時間軸 (SRT Align)", "steps": ["vocal_srt_align"]}
+        {"id": "vlog_wind_env_clean", "label": "2-1. 戶外外景低頻風切聲與車流雜音降噪 (Wind & Environment Clean)", "steps": ["wind_env_clean"]},
+        {"id": "vlog_dialogue_bgm_split", "label": "2-2. 影片對白與背景音樂二分抽離 (Dialogue / BGM Split)", "steps": ["dialogue_bgm_split"]},
+        {"id": "vlog_speech_enhance", "label": "2-3. 展覽/街頭人聲高亮與人群雜音剝離 (Speech Enhance)", "steps": ["speech_enhance"]}
     ],
     "vocal_karaoke": [
-        {"id": "vocal_karaoke_gen", "label": "3-1. KTV / Live 伴奏帶去除原唱 (Karaoke Generator)", "steps": ["karaoke_gen"]},
-        {"id": "vocal_dry_stem_clean", "label": "3-2. 清唱幹音品質修復 (Vocal Dry Clean)", "steps": ["vocal_dry_clean"]},
-        {"id": "vocal_harmony_extract", "label": "3-3. 和聲人聲分離與導出 (Harmony Extract)", "steps": ["harmony_extract"]},
-        {"id": "vocal_pitch_correction", "label": "3-4. 自動 Pitch 校正與音準報告 (Pitch Correction)", "steps": ["pitch_correction"]}
+        {"id": "vocal_pure_inst", "label": "3-1. 經典純伴奏製作 (Pure Instrumental)", "steps": ["pure_inst"]},
+        {"id": "vocal_backing_inst", "label": "3-2. 帶和聲伴奏製作 (Backing Instrumental)", "steps": ["backing_inst"]},
+        {"id": "vocal_lead_backing_split", "label": "3-3. 主唱與和聲雙軌獨立分離 (Lead / Backing Split)", "steps": ["lead_backing_split"]},
+        {"id": "vocal_dereverb_clean", "label": "3-4. 人聲乾聲去殘響與聲音純化 (Vocal De-reverb Clean)", "steps": ["dereverb_clean"]}
     ],
     "transcribe_practice": [
         {"id": "transcribe_instrument_midi", "label": "4-1. 鋼琴/吉他獨奏轉 MIDI 音符檔 (Instrument MIDI)", "steps": ["instrument_midi"]},

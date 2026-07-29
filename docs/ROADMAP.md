@@ -4,6 +4,8 @@
 
 本路線圖定義 PGMCraft Studio 的階段。每個階段都應產生一個可理解、可測試、可繼續擴充的專案狀態。
 
+模塊三「和弦簡譜與節拍器生成」的專用任務規劃見：[`docs/MODULE3-CHORD-CLICK-PLAN.md`](MODULE3-CHORD-CLICK-PLAN.md)。和弦簡譜目標需能承載大小和弦、七和弦、九和弦、增減和弦、altered dominant 與 slash chord，不應只輸出根音或簡單三和弦。
+
 ## Phase 0：版控與專案基線
 
 狀態：大致完成。

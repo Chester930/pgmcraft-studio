@@ -61,6 +61,7 @@ class TestSDDPass102BeatAlignmentVerification(unittest.TestCase):
         status_fallback = fallback.run(bb)
         self.assertEqual(status_fallback, NodeStatus.SUCCESS)
         self.assertTrue(bb.get_val("fallback_beat_recalculated"))
+        np.testing.assert_array_equal(bb.get_val("refined_beats"), bb.get_val("beats"))
 
     def test_build_beat_tracking_tree_includes_verifier(self):
         """驗證 build_beat_tracking_tree 的根節點包含閉環對齊驗證與 Fallback 節點」"""

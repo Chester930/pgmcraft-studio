@@ -91,14 +91,19 @@ class TestSDDPass87LiteratureBasedPrecisionBeatEngine(unittest.TestCase):
             [0.5, 1],
             [1.0, 0],
             [1.8, 0], # 離群跳拍 (0.8s 步距而非 0.5s)
-            [2.0, 0],
-            [2.5, 1]
+            [2.3, 0],
+            [2.8, 1],
+            [3.3, 0]
         ])
         blackboard.set_val("beats", beats)
 
         node = ViterbiTempoSmoothingNode(tolerance_pct=0.20)
         status = node.execute(blackboard)
         self.assertEqual(status.name, "SUCCESS")
+        smoothed = blackboard.get_val("beats")
+        self.assertAlmostEqual(smoothed[2, 0], 1.5)
+        np.testing.assert_array_equal(blackboard.get_val("refined_beats"), smoothed)
+        self.assertEqual(blackboard.get_val("smoothing_report")["outlier_count"], 1)
 
 
 if __name__ == "__main__":

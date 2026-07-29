@@ -10,6 +10,7 @@ from pgm_craft.workflow.beat_tracking_bt import build_beat_tracking_tree
 from pgm_craft.workflow.music_analysis_bt import build_music_analysis_tree
 from pgm_craft.workflow.export_bt import build_export_tree
 from pgm_craft.workflow.package_bt import build_package_tree
+from pgm_craft.workflow.module3_bt import build_module3_pipeline_tree
 
 from pgm_craft.workflow.audio_nodes import (
     BasicPitchNode,
@@ -57,8 +58,11 @@ def build_full_pipeline_tree():
 def build_master_pipeline_tree(target_stage: str = "full"):
     """
     Constructs the Master Behavior Tree dynamically truncating at target_stage.
-    target_stage options: 'stage1', 'stage2', 'stage3', 'stage4', 'stage5', 'stage6', 'full'
+    target_stage options: 'stage1', 'stage2', 'stage3', 'stage4', 'stage5', 'stage6', 'module3', 'full'
     """
+    if target_stage == "module3":
+        return build_module3_pipeline_tree()
+
     stage_nodes = [
         build_input_acquisition_tree(), # Stage 0
         build_audio_quality_tree(),      # Stage 1
@@ -110,7 +114,15 @@ class BTWorkflowEngine:
         self.target_stage = target_stage
         self.tree = build_master_pipeline_tree(target_stage=target_stage)
 
-    def run(self, audio_path, output_dir="outputs", enable_stem=False, validate_contracts=False, target_stage: str = None):
+    def run(
+        self,
+        audio_path,
+        output_dir="outputs",
+        enable_stem=False,
+        validate_contracts=False,
+        target_stage: str = None,
+        module3_candidate_sources=None,
+    ):
         if target_stage is not None and target_stage != self.target_stage:
             self.target_stage = target_stage
             self.tree = build_master_pipeline_tree(target_stage=target_stage)
@@ -122,6 +134,8 @@ class BTWorkflowEngine:
         blackboard.set_val("enable_stem", enable_stem)
         blackboard.set_val("validate_contracts", validate_contracts)
         blackboard.set_val("target_stage", self.target_stage)
+        if module3_candidate_sources is not None:
+            blackboard.set_val("module3_candidate_sources", module3_candidate_sources)
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow (Target: {self.target_stage}) for {audio_path} ===")
         status = self.tree.run(blackboard)
@@ -137,4 +151,3 @@ class BTWorkflowEngine:
 
 # 為向下相容測試別名導出
 MasterBTWorkflowEngine = BTWorkflowEngine
-

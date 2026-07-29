@@ -1,6 +1,6 @@
 # 系統架構
 
-**最後更新：** 2026-07-24 (SDD 5 Pass 商業級優化完工版本)
+**最後更新：** 2026-07-29 (Stage 3 beat tracking 架構校準)
 
 ## 架構風格
 
@@ -79,6 +79,8 @@ Blackboard 是節點之間共享的工作流狀態。
 - `workflow_trace`
 - `validate_contracts`
 - `contract_validation`
+- `beats` / `refined_beats` 會被寫入 `pgm_report.json`，供 reference evaluation 與 DAW 對拍檢查使用
+- `beat_precision_diagnostics` 會保存 phase realignment、transient snap、downbeat verifier、tempo smoothing 與 fallback 診斷摘要
 
 主要 key 已在 `docs/BLACKBOARD-CONTRACT.md` 文件化。後續可進一步轉成型別化 schema，降低隱性耦合。
 
@@ -90,33 +92,55 @@ Behavior Tree 決定節點執行順序與 fallback 行為。
 
 ```text
 Root Sequence
-├── VideoURLDownloadNode
-├── AudioLoadNode
-├── DemucsStemNode
-├── Fallback: BeatTrackingSelector
-│   ├── BeatNetNode
-│   └── LibrosaBeatNode
-├── BeatValidationNode
-├── DownbeatRefineNode
-├── MeasureMapNode
-├── KeyChordAnalysisNode
-├── ClickSynthesisNode
-└── MIDIExportNode
+├── Input Acquisition
+├── Audio Quality
+├── Stem Separation
+├── BeatTrackingRoot
+│   ├── SynthesizeRhythmTrackNode
+│   ├── PrepareInstrumentalTrackNode
+│   ├── KickSnarePulseNode
+│   ├── TrackA_RhythmBranch
+│   │   └── BeatNetFallbackA: BeatNetSingleTrackNode -> LibrosaSingleTrackNode
+│   ├── TrackB_InstrumentalBranch
+│   │   └── BeatNetFallbackB: BeatNetSingleTrackNode -> LibrosaSingleTrackNode
+│   ├── MultiModelBeatEnsembleNode
+│   ├── BeatFusionArbitratorNode
+│   ├── ReEntryReAnchoringNode
+│   ├── BeatValidationNode
+│   ├── DownbeatRefineNode
+│   ├── OnsetPhaseRealignmentNode
+│   ├── MicroTimingTransientSnapNode
+│   ├── KickBassDownbeatVerifierNode
+│   ├── ViterbiTempoSmoothingNode
+│   └── BeatAlignmentVerificationAndFallback
+├── Music Analysis
+├── Export
+└── Package
 ```
 
 這個結構代表：
 
 - 必要前置步驟依序執行
 - 選用 stem separation 可以跳過
-- BeatNet 是優先方案
-- Librosa 是 fallback
+- BeatNet 是優先候選；Librosa 是 deterministic fallback
+- 節拍分析以 rhythm track 與 instrumental track 雙軌估計，避免只依賴全曲混音或單一鼓軌
+- ensemble / fusion 節點只能做候選融合，不應取代可量化的 reference evaluation
 - beat validation 會在分析後先判斷是否可繼續輸出
-- downbeat refinement 只能補強 downbeat 標籤，不應移動 beat timestamp
+- downbeat refinement 只補強 downbeat 標籤；後續 onset / transient snap 節點才允許在小範圍內移動 timestamp
+- Viterbi / tempo smoothing 是 guard，不能把 rubato、變拍號或自由速度素材無條件拉直
 - 小節資料模型需要允許同一首歌內出現不同小節長度
 - measure map 會保留每一小節自己的 `beat_count`，缺 downbeat 時只能標記為 fallback
 - 匯出節點只在分析成功後執行
 - `BaseNode.run()` 會記錄 `workflow_trace`，讓執行後可檢查節點順序、狀態與耗時。
 - `validate_contracts=True` 時會記錄非阻斷式 `contract_validation`，協助開發時檢查節點 required key。
+
+架構判斷依據：
+
+- BeatNet / BeatNet+：neural beat/downbeat salience + temporal inference 是高精度 tracker 的主流方向。
+- librosa / Ellis dynamic programming：適合作為低依賴 fallback，但不應單獨宣稱 downbeat 精準。
+- madmom：RNN activation + DBN post-processing 顯示「模型候選 + 時序推論」是成熟設計，但 DBN 假設需要 guard。
+- Beat This!：提醒固定 DBN/固定拍號假設會傷害變拍號、rubato 與非典型素材；PGMCraft 的 smoothing 應保守。
+- MIREX / mir_eval：最終精度必須以 annotated beats 做 F-measure、CML/AML、Cemgil 等評估。
 
 ## 節點分類
 
@@ -236,7 +260,8 @@ AI 分軌與 Podcast 工作流在真正完成與測試前，應被記錄為 exte
 |------|----------|----------|
 | GUI | `app.py` | Gradio app，含下載、分軌與 PGM 頁籤 |
 | CLI | `pgm_craft/cli.py` | 執行主要 PGM pipeline |
-| Pipeline | `pgm_craft/pipeline.py` | 將 Behavior Tree 結果整理成 report |
+| Pipeline | `pgm_craft/pipeline.py` | 將 Behavior Tree 結果整理成 report，包含完整 beat grid 與精度診斷 |
+| Beat Evaluation | `pgm_craft/beat_evaluation.py` | 以 reference annotation 比對 beat/downbeat，輸出 F-measure 與 offset 統計 |
 | BT Core | `pgm_craft/workflow/nodes.py` | Sequence、fallback、blackboard 基礎 |
 | BT Builder | `pgm_craft/workflow/builder.py` | 定義主要工作流 |
 | Audio Nodes | `pgm_craft/workflow/audio_nodes.py` | 下載、載入、節拍、分析、匯出節點 |
@@ -259,3 +284,13 @@ AI 分軌與 Podcast 工作流在真正完成與測試前，應被記錄為 exte
 5. 接入 Behavior Tree
 6. 測試節點與工作流路徑
 7. 更新本文件
+
+## Reference Evaluation
+
+`pgm_report.json` 會保留完整 `beats` 與 `refined_beats`，避免只留下 `total_beats` 而無法客觀比對。CLI 可用以下參數執行 reference-based 驗收：
+
+```bash
+pgm-craft --audio song.wav --output outputs/song_eval --reference-beats annotations/beats.txt --reference-downbeats annotations/downbeats.txt
+```
+
+評估輸出為 `beat_evaluation.json`。預設 matching tolerance 是 0.07 秒，對齊 MIREX / mir_eval 常用 beat/downbeat F-measure window。這個評估仍不能取代最終人工聽感與 DAW grid 檢查，但它能把半速、雙速、整體 phase shift、downbeat 反相與毫秒偏移用數字暴露出來。
