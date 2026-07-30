@@ -16,6 +16,12 @@ from pgm_craft.workflow.audio_quality_bt import build_audio_quality_tree
 from pgm_craft.workflow.input_acquisition_bt import build_input_acquisition_tree
 from pgm_craft.workflow.module3_bt import Module3BackingWithClickNode, Module3OutputSummaryNode, OptionalStemSeparationNode
 from pgm_craft.workflow.audio_nodes import ClickSynthesisNode
+from pgm_craft.workflow.beat_tracking_bt import (
+    DrumFillDetectionNode,
+    KickBassDownbeatVerifierNode,
+    OnsetPhaseRealignmentNode,
+    _score_beat_grid_quality,
+)
 from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
 
 
@@ -424,7 +430,17 @@ class ReliableBarAnchorNode(BaseNode):
 
 
 class NoDrumPhaseCarryNode(BaseNode):
-    """Carry the previous bar phase through a no-drum span as provisional bars."""
+    """Carry the previous bar phase through a no-drum span as provisional bars.
+
+    When a future drum anchor exists within the lookahead window, bars are
+    carried up to that anchor (unchanged behaviour). When no future anchor is
+    found at all -- e.g. a long ambient outro past the lookahead range -- v1's
+    `_inertia_fill` still produced a bounded constant-tempo extrapolation
+    instead of silently leaving that whole span without any click coverage.
+    This pass ports that fallback here, capped at `max_fallback_bars` and by
+    the audio's own duration when known, and tagged with a distinct status so
+    reviewers can tell it apart from an anchor-confirmed carry.
+    """
 
     optional_keys = [
         "reliable_bar_anchors",
@@ -433,12 +449,16 @@ class NoDrumPhaseCarryNode(BaseNode):
         "tempo_bpm",
         "meter_profile",
         "lookahead_bar_candidates",
+        "audio_duration_sec",
+        "y",
+        "sr",
     ]
     output_keys = ["provisional_bar_starts", "no_drum_phase_report"]
 
-    def __init__(self, tolerance_sec: float = 0.08):
+    def __init__(self, tolerance_sec: float = 0.08, max_fallback_bars: int = 8):
         super().__init__("NoDrumPhaseCarryNode")
         self.tolerance_sec = float(tolerance_sec)
+        self.max_fallback_bars = int(max_fallback_bars)
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         anchors = list(blackboard.get_val("reliable_bar_anchors", []) or [])
@@ -449,21 +469,57 @@ class NoDrumPhaseCarryNode(BaseNode):
         next_anchor = self._next_anchor(blackboard.get_val("lookahead_bar_candidates", []), previous)
         bar_duration = self._bar_duration(blackboard)
         provisional = []
-        if previous is not None and next_anchor is not None and bar_duration > 0:
-            current = previous + bar_duration
-            while current < next_anchor - self.tolerance_sec:
-                provisional.append(round(current, 6))
-                current += bar_duration
+        status = "NO_SPAN"
+        used_fallback = False
+
+        if previous is not None and bar_duration > 0:
+            if next_anchor is not None:
+                current = previous + bar_duration
+                while current < next_anchor - self.tolerance_sec:
+                    provisional.append(round(current, 6))
+                    current += bar_duration
+                status = "CARRIED" if provisional else "NO_SPAN"
+            else:
+                duration_cap = self._audio_duration_cap(blackboard)
+                current = previous + bar_duration
+                count = 0
+                while count < self.max_fallback_bars and (
+                    duration_cap is None or current <= duration_cap + self.tolerance_sec
+                ):
+                    provisional.append(round(current, 6))
+                    current += bar_duration
+                    count += 1
+                used_fallback = True
+                status = "CARRIED_FALLBACK_NO_LOOKAHEAD" if provisional else "NO_SPAN"
+
         blackboard.set_val("provisional_bar_starts", provisional)
         blackboard.set_val("no_drum_phase_report", {
-            "status": "CARRIED" if provisional else "NO_SPAN",
+            "status": status,
             "previous_anchor": previous,
             "next_anchor": next_anchor,
             "bar_duration_sec": round(bar_duration, 6) if bar_duration else None,
             "count": len(provisional),
             "provisional": True,
+            "used_no_lookahead_fallback": used_fallback,
         })
         return NodeStatus.SUCCESS
+
+    def _audio_duration_cap(self, blackboard: Blackboard) -> float | None:
+        try:
+            explicit = float(blackboard.get_val("audio_duration_sec"))
+            if explicit > 0:
+                return explicit
+        except (TypeError, ValueError):
+            pass
+        y = blackboard.get_val("y")
+        sr = blackboard.get_val("sr")
+        try:
+            if y is not None and sr:
+                length = y.shape[-1] if hasattr(y, "shape") else len(y)
+                return float(length) / float(sr)
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return None
 
     def _next_anchor(self, candidates, previous):
         values = []
@@ -674,6 +730,31 @@ class TransitionConfidenceNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+def _score_bar_start_list_quality(bars: list[float]) -> float | None:
+    """Lightweight duration-consistency score for a committed bar-start list.
+
+    Mirrors the intent of Stage 3's `_score_beat_grid_quality` (tempo
+    stability is its largest single weight) but works directly on bar-start
+    times, since v2 commits bars one probe window at a time -- before any
+    beat matrix exists for `_score_beat_grid_quality` to consume. Returns
+    `None` when there are too few bars to judge duration consistency, which
+    callers must treat as "no opinion" rather than a low score.
+    """
+    if len(bars) < 3:
+        return None
+    ordered = sorted(bars)
+    intervals = [b - a for a, b in zip(ordered, ordered[1:])]
+    valid = [d for d in intervals if d > 0.05]
+    if len(valid) < 2:
+        return None
+    mean = sum(valid) / len(valid)
+    if mean <= 0:
+        return None
+    variance = sum((d - mean) ** 2 for d in valid) / len(valid)
+    std = variance ** 0.5
+    return max(0.0, 1.0 - (std / mean))
+
+
 class BarStartCandidateCommitNode(BaseNode):
     """Commits the best bar-start candidate or records an unresolved probe span."""
 
@@ -692,10 +773,16 @@ class BarStartCandidateCommitNode(BaseNode):
         "last_bar_probe_result",
     ]
 
-    def __init__(self, default_threshold: float = 0.7, duplicate_tolerance_sec: float = 0.03):
+    def __init__(
+        self,
+        default_threshold: float = 0.7,
+        duplicate_tolerance_sec: float = 0.03,
+        quality_drop_tolerance: float = 0.15,
+    ):
         super().__init__("BarStartCandidateCommitNode")
         self.default_threshold = float(default_threshold)
         self.duplicate_tolerance_sec = float(duplicate_tolerance_sec)
+        self.quality_drop_tolerance = float(quality_drop_tolerance)
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         committed = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
@@ -712,16 +799,50 @@ class BarStartCandidateCommitNode(BaseNode):
         }
 
         if best and best["confidence"] >= threshold:
-            committed = self._append_unique(committed, best["time"])
-            result = self._probe_result("found", window, best)
-            report.update({
-                "status": "COMMITTED",
-                "committed_time": best["time"],
-                "confidence": best["confidence"],
-                "evidence_sources": best.get("evidence_sources", []),
-            })
-            blackboard.set_val("committed_bar_starts", committed)
-            blackboard.set_val("last_bar_probe_result", result)
+            candidate_committed = self._append_unique(list(committed), best["time"])
+            quality_before = _score_bar_start_list_quality(committed)
+            quality_after = _score_bar_start_list_quality(candidate_committed)
+            regresses = (
+                quality_before is not None
+                and quality_after is not None
+                and quality_after < quality_before - self.quality_drop_tolerance
+            )
+
+            if regresses:
+                reason = "quality_regression"
+                unresolved = list(blackboard.get_val("unresolved_bar_spans", []) or [])
+                unresolved.append({
+                    "start_time": window.get("start_time"),
+                    "end_time": window.get("end_time"),
+                    "reason": reason,
+                    "best_confidence": best["confidence"],
+                    "rejected_time": best["time"],
+                    "quality_before": quality_before,
+                    "quality_after": quality_after,
+                })
+                result = self._probe_result("uncertain", window, best)
+                report.update({
+                    "status": "UNRESOLVED",
+                    "reason": reason,
+                    "best_candidate": best,
+                    "quality_before": quality_before,
+                    "quality_after": quality_after,
+                })
+                blackboard.set_val("unresolved_bar_spans", unresolved)
+                blackboard.set_val("last_bar_probe_result", result)
+            else:
+                committed = candidate_committed
+                result = self._probe_result("found", window, best)
+                report.update({
+                    "status": "COMMITTED",
+                    "committed_time": best["time"],
+                    "confidence": best["confidence"],
+                    "evidence_sources": best.get("evidence_sources", []),
+                    "quality_before": quality_before,
+                    "quality_after": quality_after,
+                })
+                blackboard.set_val("committed_bar_starts", committed)
+                blackboard.set_val("last_bar_probe_result", result)
         else:
             reason = "confidence_below_threshold" if best else "no_candidates"
             unresolved = list(blackboard.get_val("unresolved_bar_spans", []) or [])
@@ -1614,6 +1735,250 @@ class BeatThisCandidateAdapterNode(BaseNode):
         return float(interval) if interval > 0 else None
 
 
+class BarGridContinuityRepairNode(BaseNode):
+    """Bar-level analog of Stage 3's per-beat continuity/oscillation repair.
+
+    v2's final grid is only as good as `committed_bar_starts`:
+    `MeterAwareBeatGridNode` just geometrically subdivides whatever bar list it
+    is given. This node repairs that list itself -- before the fine-grained
+    beat grid is derived -- by inserting bars skipped by a missed detection,
+    dropping near-duplicate bar starts, and damping an isolated bar-duration
+    oscillation (one very short bar immediately followed by one very long bar,
+    or vice versa) that a real tempo ramp would not produce.
+    """
+
+    required_keys = ["committed_bar_starts"]
+    output_keys = ["committed_bar_starts", "bar_grid_repair_report"]
+
+    def __init__(
+        self,
+        insert_gap_ratio: float = 1.55,
+        duplicate_gap_ratio: float = 0.42,
+        oscillation_ratio: float = 0.30,
+        pair_sum_tolerance: float = 0.45,
+        max_insertions_per_gap: int = 3,
+    ):
+        super().__init__("BarGridContinuityRepairNode")
+        self.insert_gap_ratio = insert_gap_ratio
+        self.duplicate_gap_ratio = duplicate_gap_ratio
+        self.oscillation_ratio = oscillation_ratio
+        self.pair_sum_tolerance = pair_sum_tolerance
+        self.max_insertions_per_gap = max_insertions_per_gap
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        bars = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
+        if len(bars) < 4:
+            blackboard.set_val("bar_grid_repair_report", {
+                "status": "SKIPPED_NOT_ENOUGH_BARS",
+                "bar_count_before": len(bars),
+                "bar_count_after": len(bars),
+            })
+            return NodeStatus.SUCCESS
+
+        intervals = np.diff(bars)
+        valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+        if len(valid) == 0:
+            blackboard.set_val("bar_grid_repair_report", {
+                "status": "SKIPPED_NO_VALID_INTERVAL",
+                "bar_count_before": len(bars),
+                "bar_count_after": len(bars),
+            })
+            return NodeStatus.SUCCESS
+
+        median_interval = float(np.median(valid))
+
+        # Pass A: drop near-duplicate bar starts, insert bars for skipped gaps.
+        repaired = [bars[0]]
+        inserted_count = 0
+        removed_count = 0
+        for t in bars[1:]:
+            prev = repaired[-1]
+            gap = float(t - prev)
+            if gap <= median_interval * self.duplicate_gap_ratio:
+                removed_count += 1
+                continue
+            if gap >= median_interval * self.insert_gap_ratio:
+                steps = int(round(gap / median_interval))
+                insertions = max(0, steps - 1)
+                if 0 < insertions <= self.max_insertions_per_gap:
+                    for step in range(1, insertions + 1):
+                        repaired.append(prev + median_interval * step)
+                        inserted_count += 1
+            repaired.append(t)
+
+        # Pass B: damp an isolated short/long bar-duration oscillation, mirroring
+        # Stage 3's TempoOscillationDampingNode but at bar granularity.
+        oscillation_damped = 0
+        for i in range(1, len(repaired) - 1):
+            left = repaired[i] - repaired[i - 1]
+            right = repaired[i + 1] - repaired[i]
+            if left <= 0.05 or right <= 0.05:
+                continue
+            if not self._is_oscillation_pair(left, right, median_interval):
+                continue
+            proposed = (repaired[i - 1] + repaired[i + 1]) / 2.0
+            if abs(proposed - repaired[i]) < 0.02:
+                continue
+            repaired[i] = proposed
+            oscillation_damped += 1
+
+        repaired_arr = sorted(round(float(t), 6) for t in repaired)
+        status = "PASS"
+        if inserted_count or removed_count or oscillation_damped:
+            status = "REPAIRED"
+            blackboard.set_val("committed_bar_starts", repaired_arr)
+
+        blackboard.set_val("bar_grid_repair_report", {
+            "status": status,
+            "bar_count_before": len(bars),
+            "bar_count_after": len(repaired_arr),
+            "median_bar_interval_sec": round(median_interval, 6),
+            "inserted_bar_count": inserted_count,
+            "removed_bar_count": removed_count,
+            "oscillation_damped_count": oscillation_damped,
+        })
+        if status == "REPAIRED":
+            print(
+                f"[{self.name}] 修復小節網格：補 {inserted_count} 個小節、"
+                f"移除 {removed_count} 個近重複小節、抑制 {oscillation_damped} 處小節級節奏震盪。"
+            )
+        return NodeStatus.SUCCESS
+
+    def _is_oscillation_pair(self, left: float, right: float, median_interval: float) -> bool:
+        short_limit = median_interval * (1.0 - self.oscillation_ratio)
+        long_limit = median_interval * (1.0 + self.oscillation_ratio)
+        is_fast_slow = left <= short_limit and right >= long_limit
+        is_slow_fast = left >= long_limit and right <= short_limit
+        if not (is_fast_slow or is_slow_fast):
+            return False
+        pair_sum = left + right
+        expected_sum = 2.0 * median_interval
+        return abs(pair_sum - expected_sum) / (expected_sum + 1e-6) <= self.pair_sum_tolerance
+
+
+class BarStartV2SyncopationClassificationNode(BaseNode):
+    """Classifies onsets against the v2 bar-grid so downstream snap logic does
+    not chase syncopation/anticipation instead of the true beat.
+
+    Module 3 v1's `SyncopationClassificationNode` needs a `subdivision_grid`
+    that v2 never produces (`MeterAwareBeatGridNode` only emits a per-beat
+    `click_grid`). This node derives a lightweight half-beat subdivision grid
+    from `click_grid` itself, then reuses v1's classification thresholds.
+    Exclusion zones are merged additively with whatever is already on the
+    blackboard, the same accumulation pattern `DrumFillDetectionNode` uses --
+    this covers the more general "any instrument played off the grid" case,
+    where the drum-fill node only covers dense kick/snare bursts.
+    """
+
+    required_keys = ["click_grid"]
+    optional_keys = ["onset_events", "kick_anchors", "snare_anchors", "bass_anchors", "snap_exclusion_zones"]
+    output_keys = ["syncopation_events", "snap_exclusion_zones", "subdivision_grid", "syncopation_report"]
+
+    def __init__(self):
+        super().__init__("BarStartV2SyncopationClassificationNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        click_grid = list(blackboard.get_val("click_grid", []) or [])
+        if len(click_grid) < 2:
+            blackboard.set_val("syncopation_report", {"status": "SKIPPED_NOT_ENOUGH_CLICK_GRID", "event_count": 0})
+            return NodeStatus.SUCCESS
+
+        ordered = sorted(click_grid, key=lambda item: float(item.get("time", 0.0)))
+        subdivision_grid = self._derive_subdivision_grid(ordered)
+        blackboard.set_val("subdivision_grid", subdivision_grid)
+
+        onsets = self._collect_onset_times(blackboard)
+        if not onsets:
+            blackboard.set_val("syncopation_report", {"status": "NO_ONSET_EVENTS", "event_count": 0})
+            return NodeStatus.SUCCESS
+
+        events = []
+        new_exclusions = []
+        for t in onsets:
+            nearest_click = self._nearest(ordered, t)
+            nearest_sub = self._nearest(subdivision_grid, t)
+            if nearest_click is None or nearest_sub is None:
+                continue
+            offset_click_ms = (t - float(nearest_click["time"])) * 1000.0
+            offset_sub_ms = (t - float(nearest_sub["time"])) * 1000.0
+            classification = "phrase_onset"
+            snap_click = False
+            if abs(offset_click_ms) <= 35.0:
+                classification = "true_beat"
+                snap_click = True
+            elif -250.0 <= offset_click_ms <= -60.0 and not nearest_sub.get("click"):
+                classification = "anticipation"
+                new_exclusions.append({
+                    "start_time": round(t - 0.04, 6),
+                    "end_time": round(t + 0.04, 6),
+                    "reason": classification,
+                })
+            elif not nearest_sub.get("click") and abs(offset_sub_ms) <= 80.0:
+                classification = "syncopation"
+                new_exclusions.append({
+                    "start_time": round(t - 0.04, 6),
+                    "end_time": round(t + 0.04, 6),
+                    "reason": classification,
+                })
+
+            events.append({
+                "time": round(t, 6),
+                "nearest_click_beat": nearest_click.get("label"),
+                "offset_to_click_ms": round(offset_click_ms, 3),
+                "offset_to_subdivision_ms": round(offset_sub_ms, 3),
+                "classification": classification,
+                "snap_click": snap_click,
+            })
+
+        combined_exclusions = list(blackboard.get_val("snap_exclusion_zones", []) or []) + new_exclusions
+        blackboard.set_val("syncopation_events", events)
+        blackboard.set_val("snap_exclusion_zones", combined_exclusions)
+        blackboard.set_val("syncopation_report", {
+            "status": "CLASSIFIED",
+            "event_count": len(events),
+            "syncopation_count": sum(1 for e in events if e["classification"] == "syncopation"),
+            "anticipation_count": sum(1 for e in events if e["classification"] == "anticipation"),
+            "new_exclusion_count": len(new_exclusions),
+        })
+        return NodeStatus.SUCCESS
+
+    def _derive_subdivision_grid(self, ordered_click_grid: list[dict]) -> list[dict]:
+        subdivisions = [
+            {"time": float(item["time"]), "label": item.get("label"), "click": True}
+            for item in ordered_click_grid
+        ]
+        for a, b in zip(ordered_click_grid, ordered_click_grid[1:]):
+            mid = (float(a["time"]) + float(b["time"])) / 2.0
+            subdivisions.append({"time": mid, "label": "and", "click": False})
+        return sorted(subdivisions, key=lambda item: item["time"])
+
+    def _collect_onset_times(self, blackboard: Blackboard) -> list[float]:
+        raw = list(blackboard.get_val("onset_events", []) or [])
+        times = []
+        for item in raw:
+            if isinstance(item, dict):
+                item = item.get("time")
+            try:
+                times.append(float(item))
+            except (TypeError, ValueError):
+                continue
+        if not times:
+            for key in ("kick_anchors", "snare_anchors", "bass_anchors"):
+                for item in blackboard.get_val(key, []) or []:
+                    if isinstance(item, dict):
+                        item = item.get("time")
+                    try:
+                        times.append(float(item))
+                    except (TypeError, ValueError):
+                        continue
+        return sorted(set(round(t, 6) for t in times if t >= 0.0))
+
+    def _nearest(self, grid: list[dict], t: float) -> dict | None:
+        if not grid:
+            return None
+        return min(grid, key=lambda item: abs(float(item.get("time", 0.0)) - t))
+
+
 class MeterAwareBeatGridNode(BaseNode):
     """Generates final click beats from committed bar starts and meter profile."""
 
@@ -1707,6 +2072,69 @@ class MeterAwareBeatGridNode(BaseNode):
         return 0.0 if mean <= 0 else float(np.std(values) / mean)
 
 
+class BarStartV2QualityScoreNode(BaseNode):
+    """Quantified 0-100 quality score for the v2 grid, as an auxiliary metric
+    next to the pass/fail `promotion_gate`.
+
+    Reuses Stage 3's `_score_beat_grid_quality` on the final beat matrix, then
+    layers v2-specific penalties on top of it: unresolved bar probe spans, a
+    structurally repaired bar grid, and a downbeat rotation triggered by the
+    low-frequency verifier. This does not replace `evaluate_barstart_v2_promotion_gate`'s
+    blocker logic -- it gives reference/manual reviewers an objective number to
+    compare runs against while they decide pass/fail.
+    """
+
+    required_keys = ["beats"]
+    optional_keys = [
+        "refined_beats",
+        "phase_realignment_report",
+        "downbeat_fix_report",
+        "bar_grid_repair_report",
+        "unresolved_bar_spans",
+    ]
+    output_keys = ["barstart_v2_quality_score"]
+
+    def __init__(self):
+        super().__init__("BarStartV2QualityScoreNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
+        base = _score_beat_grid_quality(beats)
+        score = float(base["score"])
+        warnings = list(base.get("warnings", []))
+
+        unresolved = list(blackboard.get_val("unresolved_bar_spans", []) or [])
+        if unresolved:
+            score -= min(15.0, len(unresolved) * 5.0)
+            warnings.append(f"unresolved_bar_spans={len(unresolved)}")
+
+        repair = blackboard.get_val("bar_grid_repair_report", {}) or {}
+        if repair.get("status") == "REPAIRED":
+            repaired_count = (
+                int(repair.get("inserted_bar_count", 0) or 0)
+                + int(repair.get("removed_bar_count", 0) or 0)
+                + int(repair.get("oscillation_damped_count", 0) or 0)
+            )
+            if repaired_count:
+                score -= min(8.0, repaired_count * 2.0)
+                warnings.append(f"bar_grid_repairs={repaired_count}")
+
+        downbeat_fix = blackboard.get_val("downbeat_fix_report", {}) or {}
+        if downbeat_fix.get("status") == "ROTATED":
+            score -= 3.0
+            warnings.append("downbeat_rotated_by_low_freq_verifier")
+
+        result = {
+            "score": round(float(np.clip(score, 0.0, 100.0)), 2),
+            "base_score": base["score"],
+            "tempo_stability": base["tempo_stability"],
+            "downbeat_consistency": base["downbeat_consistency"],
+            "warnings": warnings,
+        }
+        blackboard.set_val("barstart_v2_quality_score", result)
+        return NodeStatus.SUCCESS
+
+
 class Module3BarStartV2SummaryNode(BaseNode):
     """Writes a compact v2 diagnostic report into Module 3 outputs."""
 
@@ -1743,6 +2171,12 @@ class Module3BarStartV2SummaryNode(BaseNode):
         "transition_confidence_report",
         "reference_acceptance",
         "manual_acceptance",
+        "drum_fill_report",
+        "phase_realignment_report",
+        "downbeat_fix_report",
+        "bar_grid_repair_report",
+        "barstart_v2_quality_score",
+        "syncopation_report",
     ]
     output_keys = ["module3_outputs", "barstart_v2_report"]
 
@@ -1752,7 +2186,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         outputs = dict(blackboard.get_val("module3_outputs", {}) or {})
         report = {
-            "status": "EXPERIMENTAL_PASS_117",
+            "status": "EXPERIMENTAL_PASS_125",
             "meter_profile": blackboard.get_val("meter_profile", {}),
             "bar_length_report": blackboard.get_val("bar_length_report", {}),
             "bar_start_seed_report": blackboard.get_val("bar_start_seed_report", {}),
@@ -1782,6 +2216,12 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "transition_confidence_report": blackboard.get_val("transition_confidence_report", {}),
             "bar_start_decision_report": blackboard.get_val("bar_start_decision_report", {}),
             "unresolved_bar_spans": blackboard.get_val("unresolved_bar_spans", []),
+            "bar_grid_repair_report": blackboard.get_val("bar_grid_repair_report", {}),
+            "quality_score": blackboard.get_val("barstart_v2_quality_score", {}),
+            "syncopation_report": blackboard.get_val("syncopation_report", {}),
+            "drum_fill_report": blackboard.get_val("drum_fill_report", {}),
+            "phase_realignment_report": blackboard.get_val("phase_realignment_report", {}),
+            "downbeat_fix_report": blackboard.get_val("downbeat_fix_report", {}),
             "promotion_gate": evaluate_barstart_v2_promotion_gate(
                 reference_acceptance=blackboard.get_val("reference_acceptance", {}),
                 manual_acceptance=blackboard.get_val("manual_acceptance", {}),
@@ -1824,6 +2264,24 @@ def evaluate_barstart_v2_promotion_gate(
 
 def build_module3_barstart_v2_export_tree() -> SequenceNode:
     return SequenceNode("Module3BarStartV2ExportRoot", [
+        # Pass 123: general off-grid onset classification (any instrument) runs
+        # before the drum-specific fill detector so both contribute to the same
+        # accumulated snap_exclusion_zones.
+        BarStartV2SyncopationClassificationNode(),
+        # Pass 119: bar-grid-derived fill/snap exclusion zones must exist before
+        # onset realignment (Pass 118) and downbeat verification (Pass 120) run,
+        # otherwise decorative drum-fill hits get chased as if they were the beat.
+        DrumFillDetectionNode(),
+        # Pass 118: Ellis (2007) ±35ms onset-peak snap. v2's MeterAwareBeatGridNode
+        # only produces a geometrically even grid inside each committed bar, so this
+        # is the first place the actual waveform gets consulted for beat timing.
+        OnsetPhaseRealignmentNode(),
+        # Pass 120: Böck et al. (2016 madmom) 40-120Hz low-frequency downbeat check,
+        # an acoustic second opinion independent of the evidence-ladder candidates.
+        KickBassDownbeatVerifierNode(),
+        # Pass 122: quantified score for the finalized grid, an auxiliary metric
+        # next to the pass/fail promotion_gate.
+        BarStartV2QualityScoreNode(),
         ClickSynthesisNode(),
         Module3BackingWithClickNode(),
         Module3BarStartV2SummaryNode(),
@@ -1852,6 +2310,7 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
         BidirectionalBarAlignmentNode(),
         TransitionConfidenceNode(),
         BarStartCandidateCommitNode(),
+        BarGridContinuityRepairNode(),
         MeterAwareBeatGridNode(),
         build_module3_barstart_v2_export_tree(),
     ])

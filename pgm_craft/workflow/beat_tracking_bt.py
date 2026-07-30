@@ -1024,10 +1024,18 @@ class KickBassDownbeatVerifierNode(BaseNode):
 
             energies = np.array(energies)
             downbeat_indices = np.where(beats[:, 1] == 1)[0]
+            report = {
+                "status": "SKIPPED_NOT_ENOUGH_DOWNBEATS",
+                "downbeat_low_freq_energy": None,
+                "beat3_low_freq_energy": None,
+                "rotated_beat_count": 0,
+            }
             if len(downbeat_indices) >= 2:
-                db_energy = np.mean(energies[downbeat_indices])
+                db_energy = float(np.mean(energies[downbeat_indices]))
                 beat3_indices = (downbeat_indices + 2) % len(beats)
-                beat3_energy = np.mean(energies[beat3_indices])
+                beat3_energy = float(np.mean(energies[beat3_indices]))
+                report["downbeat_low_freq_energy"] = round(db_energy, 8)
+                report["beat3_low_freq_energy"] = round(beat3_energy, 8)
 
                 if beat3_energy > db_energy * 1.35:
                     fixed_beats = beats.copy()
@@ -1036,11 +1044,17 @@ class KickBassDownbeatVerifierNode(BaseNode):
                         fixed_beats[idx, 1] = 1
                     blackboard.set_val("beats", fixed_beats)
                     blackboard.set_val("refined_beats", fixed_beats)
+                    report["status"] = "ROTATED"
+                    report["rotated_beat_count"] = len(beat3_indices)
                     print(f"[{self.name}] 🛡️ [madmom 2016 Downbeat Guard] 成功修正強拍反相，將重音回歸真正的低頻大鼓拍號！")
+                else:
+                    report["status"] = "PASS_NO_INVERSION"
 
+            blackboard.set_val("downbeat_fix_report", report)
             return NodeStatus.SUCCESS
         except Exception as e:
             print(f"[{self.name} Warning] Downbeat 重音校正異常: {e}")
+            blackboard.set_val("downbeat_fix_report", {"status": "ERROR", "error": str(e)})
             return NodeStatus.SUCCESS
 
 
