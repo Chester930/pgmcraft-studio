@@ -1,8 +1,8 @@
-# Blackboard Contract v1.3.0
+# Blackboard Contract v1.3.9
 
-**最後更新：** 2026-07-29 (v1.3.0)
+**最後更新：** 2026-07-29 (v1.3.9)
 
-本文件記錄 PGMCraft Studio 主要 Behavior Tree 工作流的 blackboard key 契約。v1.3.0 更新 Stage 3 雙軌 beat tracking、ensemble/fusion、相位校準與 fallback 重算的 Key 契約。
+本文件記錄 PGMCraft Studio 主要 Behavior Tree 工作流的 blackboard key 契約。v1.3.9 更新 Stage 3 鼓過門排除區、Module 3 BarStart v2 skeleton、rolling probe window、bar-start candidate commit、drum evidence、drums + bass evidence、chord track PK、melody track PK、Beat This! candidate adapter 與本地模型 registry 的 Key 契約。
 
 ## 契約欄位
 
@@ -36,6 +36,9 @@
 | `enable_stem` | `bool` | CLI / GUI / `BTWorkflowEngine` | 是否啟用 experimental 分軌 |
 | `demix_steps` | `list[str]` | optional caller | 分軌步驟，未提供時使用節點預設 |
 | `validate_contracts` | `bool` | optional caller / `BTWorkflowEngine` | 是否啟用非阻斷式 contract validation |
+| `manual_bar_starts` | `list[float]` | optional caller / `BTWorkflowEngine` | `module3_barstart_v2` Pass 105 測試用人工小節開頭 |
+| `user_meter_selection` | `str` | optional caller / `BTWorkflowEngine` | `module3_barstart_v2` 使用者指定拍號，支援 `auto`, `4/4`, `3/4`, `5/4`, `6/8`, `7/8` |
+| `allow_temporary_bar_delta` | `bool or str or int` | optional caller / `BTWorkflowEngine` | 是否允許臨時增減拍；可為 `False`, `True`, `auto`, `+1`, `-1`, `+2` 等 |
 
 ## Audio Preparation Keys
 
@@ -59,6 +62,8 @@
 | `conf_inst` | `float` | `TrackValidationNode` | B 軌節拍 confidence |
 | `kick_anchors` | array-like | `KickSnarePulseNode` | kick / sub-bass 脈衝錨點 |
 | `snare_anchors` | array-like | `KickSnarePulseNode` | snare 脈衝錨點 |
+| `bass_anchors` | array-like | caller / future bass evidence node | bass 或 sub-bass 小節開頭支援錨點，供 BarStart v2 drums + bass evidence 使用 |
+| `bass_onset_candidates` | array-like | caller / future bass evidence node | bass onset 候選秒數，低信心輔助 bar-start search |
 | `ensemble_beats` | array-like Nx2 | `MultiModelBeatEnsembleNode` | A/B 軌共識候選 |
 | `ensemble_confidence` | `float` | `MultiModelBeatEnsembleNode` | A/B 軌共識比例 |
 | `beat_fusion_report` | `dict` | `BeatFusionArbitratorNode` | A/B 軌融合統計 |
@@ -72,8 +77,12 @@
 | `downbeat_refine_status` | `str` | `DownbeatRefineNode` | `PASS` / `WARN` / `FAIL` |
 | `downbeat_refine_warnings` | `list[str]` | `DownbeatRefineNode` | downbeat 補強警告 |
 | `downbeat_candidates` | `list[dict]` | `DownbeatRefineNode` | downbeat 候選 |
+| `drum_fill_regions` | `list[dict]` | `DrumFillDetectionNode` | 鼓過門密集擊點區段 |
+| `drum_fill_report` | `dict` | `DrumFillDetectionNode` | 過門排除區偵測摘要 |
+| `snap_exclusion_zones` | `list[dict]` | `DrumFillDetectionNode` / `SyncopationClassificationNode` | 不允許 click snap 的 transient 區間 |
 | `phase_realignment_report` | `dict` | `OnsetPhaseRealignmentNode` | onset 相位微調統計 |
 | `snap_offsets_ms` | `list[float]` | `MicroTimingTransientSnapNode` | transient snap 偏移量 |
+| `snap_skip_report` | `dict` | `MicroTimingTransientSnapNode` | 因過門或切分排除區而跳過 snap 的統計 |
 | `downbeat_fix_report` | `dict` | `KickBassDownbeatVerifierNode` | 低頻 downbeat 修正摘要 |
 | `smoothing_report` | `dict` | `ViterbiTempoSmoothingNode` | interval outlier 平滑摘要 |
 | `beat_alignment_score` | `float` | `BeatAlignmentVerifierGuardNode` | section/kick anchor 閉環對齊分數 |
@@ -102,11 +111,61 @@
 | `subdivision_grid` | `list[dict]` | `SubdivisionGridNode` | 8 分音符分析 grid |
 | `click_grid` | `list[dict]` | `SubdivisionGridNode` | 4 分音符 click grid |
 | `syncopation_events` | `list[dict]` | `SyncopationClassificationNode` | 切分、提前音、phrase onset 標註 |
-| `snap_exclusion_zones` | `list[dict]` | `SyncopationClassificationNode` | 不允許 click snap 的 transient 區間 |
+| `snap_exclusion_zones` | `list[dict]` | `DrumFillDetectionNode` / `SyncopationClassificationNode` | 不允許 click snap 的 transient 區間 |
 | `backing_with_click_status` | `str` | `Module3BackingWithClickNode` | `EXPORTED` 或 `SKIPPED_NO_NO_VOCAL_SOURCE` |
 | `module3_outputs` | `dict` | `Module3OutputSummaryNode` / `PGMCraftEngine` | 模塊三 output manifest，包含 `test_project_dir`、`source_dir`、`stems_dir`、`click_dir`、`reports_dir`、`candidate_tracks`、click/mix/backing/report 路徑 |
 | `module3_report_json` | `str` | `Module3OutputSummaryNode` | `module3_beat_click_report.json` 路徑 |
 | `project_package_status` | `str` | `PGMCraftEngine` | `module3` 時固定為 `SKIPPED_MODULE3_TEST_PROJECT`，表示未進入完整 PGM/DAW package |
+
+## Module 3 BarStart v2 Keys
+
+`target_stage="module3_barstart_v2"` 目前是 experimental skeleton。Pass 105 完成「人工或既有小節開頭 -> 拍號感知 beat/click grid」。Pass 106 完成 rolling probe window 基礎資料流。Pass 107 完成 candidate / commit contract。Pass 108 完成 drums evidence。Pass 109 完成 drums + bass evidence。Pass 110 完成 chord track PK 與 harmonic anchor evidence。Pass 111 完成 melody track PK 與 phrase/count evidence。Pass 112 完成 Beat This! optional candidate adapter。Pass 113 完成本地模型 registry metadata report。
+
+| Key | 型態 | 來源 | 說明 |
+|-----|------|------|------|
+| `meter_profile` | `dict` | `MeterProfileNode` | 拍號設定，包含 `meter`, `beats_per_bar`, `beat_unit`, `clicks_per_bar` |
+| `allowed_bar_lengths` | `list[int]` | `MeterProfileNode` | 當前允許的小節拍數，依 `allow_temporary_bar_delta` 可包含臨時加減拍 |
+| `temporary_bar_policy` | `str` | `MeterProfileNode` | 臨時增減拍策略摘要，例如 `fixed` 或 `allow_temporary_delta` |
+| `committed_bar_starts` | `list[float]` | caller / `ManualCommittedBarStartsSeedNode` / future bar-start nodes | 已確認的小節開頭秒數；v2 click grid 以它為優先事實 |
+| `bar_start_seed_report` | `dict` | `ManualCommittedBarStartsSeedNode` | Pass 105 人工小節開頭種入摘要 |
+| `bar_probe_window_sec` | `float` | `RollingProbeWindowNode` | 目前 rolling search 窗長，預設 5 秒，每次依結果 ±1 秒 |
+| `bar_probe_windows` | `list[dict]` | `RollingProbeWindowNode` | 已建立的搜尋窗累積記錄 |
+| `active_bar_probe_window` | `dict` | `RollingProbeWindowNode` | 下一輪 evidence ladder 要分析的搜尋窗 |
+| `bar_probe_history` | `list[dict]` | `RollingProbeWindowNode` | 上一次搜尋結果如何影響下一輪窗長與起點的歷史 |
+| `bar_probe_policy` | `dict` | `RollingProbeWindowNode` | rolling window policy，包含 min/max/default/step 與本次 adjustment |
+| `click_grid` | `list[dict]` | `MeterAwareBeatGridNode` | 由相鄰 `committed_bar_starts` 與拍號平均切分出的 click grid |
+| `bar_length_report` | `dict` | `MeterAwareBeatGridNode` | 每個小節 span、拍號、click 間距與臨時拍數判定摘要 |
+| `bar_start_candidates` | `list[dict]` | future evidence nodes / `BarStartCandidateCommitNode` | rolling window 內的小節開頭候選，包含 time、confidence、evidence_sources |
+| `drum_bar_evidence_report` | `dict` | `DrumEvidenceBarSearchNode` | drums / kick / snare evidence 產生的小節開頭候選摘要 |
+| `drum_bass_evidence_report` | `dict` | `DrumBassEvidenceBarSearchNode` | bass coincidence boost 與 bass-only candidate 的統計摘要 |
+| `guitar_chord_anchors` | `list[dict]` | caller / future chord model | guitar chord onset / chord-change 錨點，供 `ChordTrackPKNode` 建立 harmonic evidence |
+| `piano_chord_anchors` | `list[dict]` | caller / future chord model | piano chord onset / chord-change 錨點，供 `ChordTrackPKNode` 建立 harmonic evidence |
+| `chord_track_pk` | `dict` | `ChordTrackPKNode` | guitar/piano/chord_progression harmonic anchors 的 primary/consensus PK 摘要 |
+| `harmonic_anchor_evidence_report` | `dict` | `ChordTrackPKNode` | harmonic anchor 對 bar-start candidates 的 boost / harmonic-only 統計 |
+| `vocal_melody_anchors` | `list[dict]` | caller / future melody model | vocal phrase / melody entry 錨點，供 `MelodyTrackPKNode` 建立 phrase evidence |
+| `piano_melody_anchors` | `list[dict]` | caller / future melody model | piano melody / pickup 錨點，供 `MelodyTrackPKNode` 建立 phrase evidence |
+| `guitar_melody_anchors` | `list[dict]` | caller / future melody model | guitar melody / riff 錨點，供 `MelodyTrackPKNode` 建立 phrase evidence |
+| `melody_track_pk` | `dict` | `MelodyTrackPKNode` | vocal/piano/guitar phrase anchors 的 primary/consensus PK 摘要 |
+| `phrase_anchor_evidence_report` | `dict` | `MelodyTrackPKNode` | phrase/count evidence 對 candidates 的 boost / phrase-only 統計 |
+| `beat_this_beats` | array-like Nx2 or list | caller / future Beat This! adapter | Beat This! beat/downbeat 候選；beat label 1 會轉為 bar-start evidence |
+| `beat_this_downbeats` | `list[float or dict]` | caller / future Beat This! adapter | Beat This! downbeat 秒數或含 confidence 的候選 |
+| `beat_this_candidates` | `list[dict]` | caller / future Beat This! adapter | Beat This! 結構化候選，支援 `kind=downbeat/bar_start` |
+| `beat_this_candidate_report` | `dict` | `BeatThisCandidateAdapterNode` | Beat This! 候選接入、boost 與 graceful fallback 摘要 |
+| `local_model_overrides` | `dict` | caller / future installer | 手動覆寫本地模型 availability/path/license metadata |
+| `local_model_registry` | `dict` | `LocalModelRegistryNode` | Beat This! / BeatNet / Librosa / Demucs / Basic Pitch / chord model availability metadata |
+| `model_availability_report` | `dict` | `LocalModelRegistryNode` | 可用與不可用模型摘要 |
+| `model_license_report` | `dict` | `LocalModelRegistryNode` | 模型授權 metadata 摘要；此節點不載入模型權重 |
+| `reliable_bar_anchors` | `list[dict]` | `ReliableBarAnchorNode` | 高信心前後小節錨點；包含 time/source/confidence/meter/tempo |
+| `provisional_bar_starts` | `list[float]` | `NoDrumPhaseCarryNode` | 無鼓段沿用 phase 推算的暫時小節起點，不得直接視為 committed |
+| `lookahead_bar_candidates` | `list[dict]` | `LookaheadDrumAnchorSearchNode` | 下一個鼓點及 offset 候選，不直接 reset 或 commit |
+| `intervening_bar_count_candidates` | `list[dict]` | `InterveningBarCountEstimatorNode` | 跨無鼓段的 N-1/N/N+1 小節數候選與 duration error |
+| `selected_intervening_bar_count` | `dict` | `InterveningBarCountEstimatorNode` | 目前最小時間誤差的小節數候選 |
+| `bidirectional_alignment_report` | `dict` | `BidirectionalBarAlignmentNode` | forward/backward projection、phase error 與 alignment status |
+| `transition_confidence_report` | `dict` | `TransitionConfidenceNode` | 進鼓後穩定觀測數與是否可升級 high confidence |
+| `bar_start_decision_report` | `dict` | `BarStartCandidateCommitNode` | 本輪候選是否 commit、採用哪個 candidate、門檻與原因 |
+| `unresolved_bar_spans` | `list[dict]` | `BarStartCandidateCommitNode` | 找不到或低信心時留下的未解析搜尋區間 |
+| `last_bar_probe_result` | `dict` | `BarStartCandidateCommitNode` | 供下一輪 `RollingProbeWindowNode` 調整窗長與起點的結果 |
+| `barstart_v2_report` | `dict` | `Module3BarStartV2SummaryNode` / `PGMCraftEngine` | v2 測試流程摘要，包含 meter、bar starts、probe window、decision、promotion gate 與目前限制 |
 
 ## Music Reference Keys
 
@@ -177,7 +236,7 @@ Validation entry 格式：
 }
 ```
 
-## 主要節點契約 (v1.3.0)
+## 主要節點契約 (v1.3.4)
 
 | Node | required_keys | optional_keys | output_keys |
 |------|---------------|---------------|-------------|
@@ -195,8 +254,9 @@ Validation entry 格式：
 | `ReEntryReAnchoringNode` |  | `beats`, `kick_anchors`, `y_rhythm`, `sr_rhythm` | `beats` |
 | `BeatValidationNode` | `beats` |  | `beat_validation`, `beat_confidence_level`, `beat_warnings`, `beat_errors` |
 | `DownbeatRefineNode` | `beats`, `beat_validation` |  | `refined_beats`, `downbeat_refinement`, `downbeat_refine_status`, `downbeat_refine_warnings`, `downbeat_candidates` |
-| `OnsetPhaseRealignmentNode` | `beats`, `y`, `sr` |  | `beats`, `phase_realignment_report` |
-| `MicroTimingTransientSnapNode` | `beats` | `stems`, `extracted_stems`, `audio_path`, `sr`, `y` | `refined_beats`, `snap_offsets_ms` |
+| `DrumFillDetectionNode` |  | `beats`, `kick_anchors`, `snare_anchors`, `stems`, `extracted_stems`, `stems_dir`, `audio_path`, `snap_exclusion_zones` | `drum_fill_regions`, `snap_exclusion_zones`, `drum_fill_report` |
+| `OnsetPhaseRealignmentNode` | `beats`, `y`, `sr` | `snap_exclusion_zones`, `drum_fill_regions` | `beats`, `phase_realignment_report` |
+| `MicroTimingTransientSnapNode` | `beats` | `stems`, `extracted_stems`, `audio_path`, `sr`, `y`, `snap_exclusion_zones`, `drum_fill_regions` | `refined_beats`, `snap_offsets_ms`, `snap_skip_report` |
 | `KickBassDownbeatVerifierNode` | `beats`, `y`, `sr` |  | `beats`, `downbeat_fix_report` |
 | `ViterbiTempoSmoothingNode` | `beats` |  | `beats`, `smoothing_report` |
 | `BeatAlignmentVerifierGuardNode` | `beats` | `sections`, `kick_anchors` | `beat_alignment_score` |
@@ -214,7 +274,25 @@ Validation entry 格式：
 | `SubdivisionGridNode` | `beats` | `measure_map` | `subdivision_grid`, `click_grid` |
 | `SyncopationClassificationNode` | `subdivision_grid`, `click_grid` | `onset_events` | `syncopation_events`, `snap_exclusion_zones` |
 | `Module3BackingWithClickNode` |  | `stems`, `stems_dir`, `no_vocals_path`, `instrumental_path` | `backing_with_click_path`, `backing_with_click_status` |
-| `Module3OutputSummaryNode` |  | `click_track`, `mix_with_click`, `backing_with_click_path`, `segment_source_map`, `beat_synthesis_report`, `subdivision_grid`, `syncopation_events` | `module3_outputs`, `module3_report_json` |
+| `Module3OutputSummaryNode` |  | `click_track`, `mix_with_click`, `backing_with_click_path`, `segment_source_map`, `beat_synthesis_report`, `subdivision_grid`, `syncopation_events`, `barstart_v2_report`, `bar_length_report`, `committed_bar_starts`, `meter_profile`, `active_bar_probe_window`, `bar_probe_windows`, `bar_probe_policy`, `local_model_registry`, `model_availability_report`, `model_license_report`, `drum_bar_evidence_report`, `drum_bass_evidence_report`, `chord_track_pk`, `harmonic_anchor_evidence_report`, `melody_track_pk`, `phrase_anchor_evidence_report`, `beat_this_candidate_report` | `module3_outputs`, `module3_report_json` |
+| `MeterProfileNode` |  | `user_meter_selection`, `allow_temporary_bar_delta`, `meter_profile` | `meter_profile`, `allowed_bar_lengths`, `temporary_bar_policy` |
+| `ManualCommittedBarStartsSeedNode` |  | `committed_bar_starts`, `manual_bar_starts`, `first_bar_anchor` | `committed_bar_starts`, `bar_start_seed_report` |
+| `RollingProbeWindowNode` |  | `committed_bar_starts`, `bar_probe_window_sec`, `last_bar_probe_result`, `bar_probe_history` | `bar_probe_window_sec`, `bar_probe_windows`, `active_bar_probe_window`, `bar_probe_history`, `bar_probe_policy` |
+| `LocalModelRegistryNode` |  | `local_model_overrides` | `local_model_registry`, `model_availability_report`, `model_license_report` |
+| `DrumEvidenceBarSearchNode` |  | `active_bar_probe_window`, `committed_bar_starts`, `kick_anchors`, `snare_anchors`, `drum_onset_candidates`, `snap_exclusion_zones`, `drum_fill_regions`, `bar_start_candidates` | `bar_start_candidates`, `drum_bar_evidence_report` |
+| `DrumBassEvidenceBarSearchNode` |  | `active_bar_probe_window`, `bar_start_candidates`, `bass_anchors`, `bass_onset_candidates`, `committed_bar_starts` | `bar_start_candidates`, `drum_bass_evidence_report` |
+| `ChordTrackPKNode` |  | `active_bar_probe_window`, `bar_start_candidates`, `guitar_chord_anchors`, `piano_chord_anchors`, `chord_progression` | `bar_start_candidates`, `chord_track_pk`, `harmonic_anchor_evidence_report` |
+| `MelodyTrackPKNode` |  | `active_bar_probe_window`, `bar_start_candidates`, `vocal_melody_anchors`, `piano_melody_anchors`, `guitar_melody_anchors`, `count_in_events` | `bar_start_candidates`, `melody_track_pk`, `phrase_anchor_evidence_report` |
+| `BeatThisCandidateAdapterNode` |  | `active_bar_probe_window`, `bar_start_candidates`, `beat_this_beats`, `beat_this_downbeats`, `beat_this_candidates`, `committed_bar_starts` | `bar_start_candidates`, `beat_this_candidate_report` |
+| `ReliableBarAnchorNode` |  | `reliable_bar_anchors`, `bar_start_candidates`, `committed_bar_starts`, `meter_profile` | `reliable_bar_anchors`, `reliable_anchor_report` |
+| `LookaheadDrumAnchorSearchNode` |  | `lookahead_drum_events`, `drum_onset_candidates`, `committed_bar_starts` | `lookahead_bar_candidates`, `lookahead_anchor_report` |
+| `NoDrumPhaseCarryNode` |  | `reliable_bar_anchors`, `lookahead_bar_candidates`, `bar_duration_sec`, `meter_profile` | `provisional_bar_starts`, `no_drum_phase_report` |
+| `InterveningBarCountEstimatorNode` |  | `reliable_bar_anchors`, `lookahead_bar_candidates`, `bar_duration_sec`, `meter_profile` | `intervening_bar_count_candidates`, `selected_intervening_bar_count` |
+| `BidirectionalBarAlignmentNode` |  | `reliable_bar_anchors`, `selected_intervening_bar_count`, `lookahead_bar_candidates` | `bidirectional_alignment_report`, `bar_start_candidates` |
+| `TransitionConfidenceNode` |  | `bidirectional_alignment_report`, `transition_observed_bars` | `transition_confidence_report` |
+| `BarStartCandidateCommitNode` |  | `bar_start_candidates`, `committed_bar_starts`, `active_bar_probe_window`, `candidate_commit_confidence_threshold`, `unresolved_bar_spans` | `bar_start_candidates`, `committed_bar_starts`, `unresolved_bar_spans`, `bar_start_decision_report`, `last_bar_probe_result` |
+| `MeterAwareBeatGridNode` | `committed_bar_starts`, `meter_profile` |  | `beats`, `refined_beats`, `click_grid`, `measure_map`, `meter_changes`, `bar_length_report` |
+| `Module3BarStartV2SummaryNode` |  | `module3_outputs`, `meter_profile`, `bar_length_report`, `bar_start_seed_report`, `committed_bar_starts`, `active_bar_probe_window`, `bar_probe_windows`, `bar_probe_policy`, `local_model_registry`, `model_availability_report`, `model_license_report`, `drum_bar_evidence_report`, `drum_bass_evidence_report`, `chord_track_pk`, `harmonic_anchor_evidence_report`, `melody_track_pk`, `phrase_anchor_evidence_report`, `beat_this_candidate_report`, `reliable_bar_anchors`, `provisional_bar_starts`, `lookahead_bar_candidates`, `intervening_bar_count_candidates`, `selected_intervening_bar_count`, `bidirectional_alignment_report`, `transition_confidence_report`, `bar_start_decision_report`, `unresolved_bar_spans` | `module3_outputs`, `barstart_v2_report` |
 | `MIDIExportNode` | `beats`, `output_dir` | `refined_beats`, `chord_progression` | `tempo_map_midi`, `click_guide_midi`, `chord_guide_midi` |
 | `BasicPitchNode` | `audio_path`, `beats` | `output_dir`, `target_analysis_path` | `melody_lead_midi` |
 | `CREPEPitchNode` | `audio_path` | `output_dir`, `y`, `sr` | `vocal_pitch_midi`, `pitch_contour_json` |

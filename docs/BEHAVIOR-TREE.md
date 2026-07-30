@@ -22,6 +22,8 @@ PGMCraft Studio 的工作流不應被寫成一條大型 procedural function，�
 
 `target_stage="module3"` 走模塊三專用測試工作流，用於手動測試節拍分析、切分/提前音判讀、click 打點與去人聲伴奏加 click。它與完整 Stage 3 共用同一系列 beat tracking 節點，但不直接跑完整 Stage 5/6。
 
+`target_stage="module3_barstart_v2"` 是新版小節開頭優先流程的 experimental workflow。除 meter、rolling probe、evidence ladder 與 model registry 外，Pass 117 已加入雙向 lookahead：無鼓段維持 phase，觀測下一個鼓點後估計中間小節數，並以 forward/backward alignment 驗證，不直接重置既有節拍。
+
 ### ASCII 圖
 
 ```text
@@ -42,6 +44,7 @@ PGMCraftWorkflowRoot [Sequence]
 │   ├── ReEntryReAnchoringNode
 │   ├── BeatValidationNode
 │   ├── DownbeatRefineNode
+│   ├── DrumFillDetectionNode
 │   ├── OnsetPhaseRealignmentNode
 │   ├── MicroTimingTransientSnapNode
 │   ├── KickBassDownbeatVerifierNode
@@ -79,6 +82,7 @@ Module3BeatClickRoot [Sequence]
 ├── ReEntryReAnchoringNode                 # 共用 Stage 3 refinement guard
 ├── BeatValidationNode                     # 共用 Stage 3 refinement guard
 ├── DownbeatRefineNode                     # 共用 Stage 3 refinement guard
+├── DrumFillDetectionNode                  # 共用 Stage 3 fill/snap exclusion guard
 ├── OnsetPhaseRealignmentNode              # 共用 Stage 3 refinement guard
 ├── MicroTimingTransientSnapNode           # 共用 Stage 3 refinement guard
 ├── KickBassDownbeatVerifierNode           # 共用 Stage 3 refinement guard
@@ -98,6 +102,7 @@ Module3BeatClickRoot [Sequence]
 - 不把四軌候選全曲選一軌，而是按小節或段落寫出 `segment_source_map`。
 - 模塊三與完整全自動 Stage 3 使用同一系列節點；差異在於模塊三於 Stage 3 dual-track fusion 後插入 `PerTrackBeatAnalysisNode` 到 `BeatGridSynthesisNode` 的分段可信度合成，再交回 Stage 3 refinement guards。
 - `BeatGridSynthesisNode` 依每段 primary/supporting source 合成唯一 `beats` / `refined_beats`，之後仍會經過 onset phase、transient snap、downbeat verifier 與 tempo smoothing。
+- `DrumFillDetectionNode` 會在 onset phase / transient snap 之前標記鼓過門密集擊點區段，避免 click 被快速連打吸走。
 - `SubdivisionGridNode` 建立 8 分音符分析 grid，但 `click_grid` 維持 4 分音符。
 - `SyncopationClassificationNode` 標記切分音、提前音與 phrase onset，避免 click 被非拍點 transient 拉走。
 - `Module3ExportRoot` 只輸出模塊三必要檔案，不跑 DAW marker、lyrics marker、voice cue、IEM、完整 package；沒有 no-vocal/instrumental stem 時不假裝產生純音樂伴奏。
@@ -122,6 +127,39 @@ Module 3 output layout:
     └── tempo_curve.png
 ```
 
+### Module 3 BarStart v2 Experimental BT
+
+```text
+Module3BarStartClickRoot [Sequence]
+├── InputAcquisitionRoot
+├── AudioQualityRoot
+├── OptionalStemSeparationNode
+├── MeterProfileNode
+├── ManualCommittedBarStartsSeedNode
+├── RollingProbeWindowNode
+├── LocalModelRegistryNode
+├── DrumEvidenceBarSearchNode
+├── DrumBassEvidenceBarSearchNode
+├── ChordTrackPKNode
+├── MelodyTrackPKNode
+├── BeatThisCandidateAdapterNode
+├── ReliableBarAnchorNode
+├── LookaheadDrumAnchorSearchNode
+├── NoDrumPhaseCarryNode
+├── InterveningBarCountEstimatorNode
+├── BidirectionalBarAlignmentNode
+├── TransitionConfidenceNode
+├── BarStartCandidateCommitNode
+├── MeterAwareBeatGridNode
+└── Module3BarStartV2ExportRoot
+    ├── ClickSynthesisNode
+    ├── Module3BackingWithClickNode
+    ├── Module3BarStartV2SummaryNode
+    └── Module3OutputSummaryNode
+```
+
+Pass 105–116 已完成 v2 meter、evidence ladder、model registry、前端入口與 Click 增益。Pass 117 完成雙向 lookahead 第一版；無 lookahead 輸入時 graceful no-op，仍不替換既有 `module3`。
+
 ### Mermaid 圖
 
 ```mermaid
@@ -144,6 +182,7 @@ flowchart TD
     ReEntry["ReEntryReAnchoringNode"]
     BeatCheck["BeatValidationNode<br/>PASS/WARN/FAIL 品質檢查"]
     DownbeatRefine["DownbeatRefineNode<br/>保守補強 downbeat"]
+    FillGuard["DrumFillDetectionNode<br/>過門密集擊點排除區"]
     Phase["OnsetPhaseRealignmentNode"]
     Snap["MicroTimingTransientSnapNode"]
     LowFreq["KickBassDownbeatVerifierNode"]
@@ -165,7 +204,7 @@ flowchart TD
     BeatNetB --> Ensemble
     LibrosaB --> Ensemble
     Ensemble --> Fusion --> ReEntry --> BeatCheck --> DownbeatRefine
-    DownbeatRefine --> Phase --> Snap --> LowFreq --> Smooth --> Align
+    DownbeatRefine --> FillGuard --> Phase --> Snap --> LowFreq --> Smooth --> Align
     Align --> Music --> Export --> Package
 ```
 
@@ -187,6 +226,7 @@ flowchart TD
 | `ReEntryReAnchoringNode` | Guard / Action | 偵測無鼓到有鼓 re-entry，重錨 downbeat phase | 已實作 |
 | `BeatValidationNode` | Guard / Action | 檢查 beat 數量、timestamp、BPM 範圍、BPM 跳動、downbeat 標籤與變動小節長度 | 已實作 v1 |
 | `DownbeatRefineNode` | Action | 保留可信 downbeat；downbeat 不足時產生 4 拍候選並標記警告 | 已實作，會同步 `beats` 與 `refined_beats` |
+| `DrumFillDetectionNode` | Guard / Action | 偵測一拍內 kick/snare 密集過門區段，寫入 snap 排除區，避免 click 跟隨快速連打 | 已實作 |
 | `OnsetPhaseRealignmentNode` | Guard / Action | 在 onset strength ±35ms 內微調 beat timestamp | 已實作 |
 | `MicroTimingTransientSnapNode` | Guard / Action | 對 drums / 原曲 transient peak 做更細緻 snap | 已實作 |
 | `KickBassDownbeatVerifierNode` | Guard / Action | 以低頻能量檢查 downbeat 是否 180 度反相 | 已實作 |
@@ -197,6 +237,23 @@ flowchart TD
 | `KeyChordAnalysisNode` | Action | 估算調性與小節和弦 | 已實作基礎版本 |
 | `ClickSynthesisNode` | Action | 產生 click WAV 與原曲加 click 預聽檔 | 已實作 |
 | `MIDIExportNode` | Action | 產生 `tempo_map.mid` 與 `click_guide.mid` | 已優化為 DAW tempo map + MIDI click guide |
+| `MeterProfileNode` | Action | 依使用者拍號與臨時增減拍設定建立 `meter_profile` | v2 experimental 已實作 |
+| `ManualCommittedBarStartsSeedNode` | Action | Pass 105 測試用：從人工 bar starts 種入 `committed_bar_starts` | v2 experimental 已實作 |
+| `RollingProbeWindowNode` | Action | 從目前 committed bar start 建立下一輪搜尋窗，依上次結果用 ±1 秒更新窗長 | v2 experimental 已實作 |
+| `LocalModelRegistryNode` | Action | 記錄 Beat This!/BeatNet/Librosa/Demucs/Basic Pitch/chord model availability 與 license metadata，不載入模型權重 | v2 experimental 已實作 |
+| `DrumEvidenceBarSearchNode` | Action | 以 kick/snare/drum onset 建立 bar-start candidates，並對過門排除區降權 | v2 experimental 已實作 |
+| `DrumBassEvidenceBarSearchNode` | Action | 以 bass anchors/onsets 提升鼓候選可信度；無鼓候選時只產生低信心 bass-only candidate | v2 experimental 已實作 |
+| `ChordTrackPKNode` | Action | 建立 guitar/piano harmonic anchors，輸出 `chord_track_pk`，並以和聲錨點保守補強 bar-start candidates | v2 experimental 已實作 |
+| `MelodyTrackPKNode` | Action | 建立 vocal/piano/guitar melody anchors，輸出 `melody_track_pk`，並以 phrase/count evidence 保守補強 candidates | v2 experimental 已實作 |
+| `BeatThisCandidateAdapterNode` | Action | 將 optional Beat This! beat/downbeat candidates 轉入 bar-start evidence ladder；沒有候選時 graceful skip | v2 experimental 已實作 |
+| `ReliableBarAnchorNode` | Action | 收集高信心前後 bar anchors，不把一般 onset 直接當小節起點 | v2 experimental Pass 117 |
+| `LookaheadDrumAnchorSearchNode` | Action | 對下一個鼓點建立 offset candidates，不直接 reset/commit | v2 experimental Pass 117 |
+| `NoDrumPhaseCarryNode` | Action | 無鼓段沿用前一個 anchor 的 tempo/meter/phase，產生 provisional starts | v2 experimental Pass 117 |
+| `InterveningBarCountEstimatorNode` | Action | 以 anchor 時間差估計 N-1/N/N+1 小節候選 | v2 experimental Pass 117 |
+| `BidirectionalBarAlignmentNode` | Action | 比較 forward/backward projection 的 phase error，通過才建立 aligned candidates | v2 experimental Pass 117 |
+| `TransitionConfidenceNode` | Action | 進鼓後需連續觀測穩定小節，才提高 transition confidence | v2 experimental Pass 117 |
+| `BarStartCandidateCommitNode` | Action | 選出最高可信 bar-start candidate；達門檻才 commit，否則寫入 unresolved span | v2 experimental 已實作 |
+| `MeterAwareBeatGridNode` | Action | 由相鄰 `committed_bar_starts` 與 `meter_profile` 產生 `beats`、`click_grid`、`measure_map` | v2 experimental 已實作 |
 
 ## 目前 Blackboard 主要資料
 
@@ -231,8 +288,12 @@ flowchart TD
 | `downbeat_refine_status` | `DownbeatRefineNode` | `PASS`、`WARN` 或 `FAIL` |
 | `downbeat_refine_warnings` | `DownbeatRefineNode` | downbeat 補強警告 |
 | `downbeat_candidates` | `DownbeatRefineNode` | downbeat 候選位置 |
+| `drum_fill_regions` | `DrumFillDetectionNode` | 鼓過門密集擊點區段 |
+| `drum_fill_report` | `DrumFillDetectionNode` | 過門排除區偵測摘要 |
+| `snap_exclusion_zones` | `DrumFillDetectionNode` / `SyncopationClassificationNode` | 不允許 click snap 的 transient 區間 |
 | `phase_realignment_report` | `OnsetPhaseRealignmentNode` | onset 相位微調統計 |
 | `snap_offsets_ms` | `MicroTimingTransientSnapNode` | transient snap 偏移量 |
+| `snap_skip_report` | `MicroTimingTransientSnapNode` | 因過門/切分排除區而保留原拍點的統計 |
 | `downbeat_fix_report` | `KickBassDownbeatVerifierNode` | 低頻 downbeat 修正摘要 |
 | `smoothing_report` | `ViterbiTempoSmoothingNode` | interval outlier 平滑摘要 |
 | `beat_alignment_score` | `BeatAlignmentVerifierGuardNode` | section/kick anchor 閉環對齊分數 |

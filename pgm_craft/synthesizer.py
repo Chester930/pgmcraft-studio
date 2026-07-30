@@ -15,8 +15,21 @@ MIN_BPM = 30.0
 MAX_BPM = 300.0
 
 class PGMSynthesizer:
-    def synthesize_click(self, audio_path, beats, output_dir="outputs", prepend_count_in_bar=True):
-        """Synthesizes high/low click track and mixes with original audio (with 1-Bar Count-In Guard)."""
+    CLICK_GAIN_DB = 10.0
+
+    def synthesize_click(
+        self,
+        audio_path,
+        beats,
+        output_dir="outputs",
+        prepend_count_in_bar=True,
+        click_gain_db=CLICK_GAIN_DB,
+    ):
+        """Synthesize click and mix it with the original audio.
+
+        Click gain is applied before both click-only and mixed exports. Float WAV
+        preserves the requested boost instead of clipping it during PCM encoding.
+        """
         os.makedirs(output_dir, exist_ok=True)
         y, sr = librosa.load(audio_path, sr=22050, mono=True)
         total_samples = len(y)
@@ -40,10 +53,12 @@ class PGMSynthesizer:
             actual_len = end_idx - idx
             click_audio[idx:end_idx] += click_wave[:actual_len]
 
+        click_audio *= 10.0 ** (float(click_gain_db) / 20.0)
+
         click_path = os.path.join(output_dir, "click_track.wav")
         mix_path = os.path.join(output_dir, "mix_with_click.wav")
 
-        sf.write(click_path, click_audio, sr)
+        sf.write(click_path, click_audio, sr, subtype="FLOAT")
         mixed = 0.7 * y + 0.5 * click_audio
         # EBU R128 Peak & Loudness Guard: Limit Peak <= -1.0 dBFS (0.891)
         max_val = np.max(np.abs(mixed))
@@ -320,5 +335,4 @@ class VoiceCueSynthesizer:
         cue_path = os.path.join(output_dir, "voice_cue_guide.wav")
         sf.write(cue_path, audio, sr)
         return cue_path
-
 

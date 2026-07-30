@@ -41,6 +41,9 @@ class PGMCraftEngine:
         enable_stem=None,
         target_stage: str = "full",
         module3_candidate_sources=None,
+        manual_bar_starts=None,
+        user_meter_selection=None,
+        allow_temporary_bar_delta=None,
     ):
         os.makedirs(output_dir, exist_ok=True)
         if enable_stem is not None:
@@ -56,6 +59,9 @@ class PGMCraftEngine:
             validate_contracts=self.validate_contracts,
             target_stage=target_stage,
             module3_candidate_sources=module3_candidate_sources,
+            manual_bar_starts=manual_bar_starts,
+            user_meter_selection=user_meter_selection,
+            allow_temporary_bar_delta=allow_temporary_bar_delta,
         )
 
         original_beats_raw = blackboard.get_val("beats")
@@ -73,7 +79,8 @@ class PGMCraftEngine:
         workflow_status = blackboard.get_val("workflow_status", "UNKNOWN")
         workflow_trace = blackboard.get_val("workflow_trace", [])
         contract_validation = blackboard.get_val("contract_validation", [])
-        is_module3 = target_stage == "module3"
+        is_module3 = target_stage in ("module3", "module3_barstart_v2")
+        export_ready_stages = {"stage5", "stage6", "full"}
         project_dir = blackboard.get_val("project_dir") or output_dir
 
         quality_report = blackboard.get_val("quality_report", {})
@@ -150,9 +157,16 @@ class PGMCraftEngine:
                 "snap_offsets_ms": _float_list(blackboard.get_val("snap_offsets_ms", [])),
                 "downbeat_fix_report": blackboard.get_val("downbeat_fix_report", {}),
                 "smoothing_report": blackboard.get_val("smoothing_report", {}),
+                "beat_grid_repair_report": blackboard.get_val("beat_grid_repair_report", {}),
+                "tempo_oscillation_report": blackboard.get_val("tempo_oscillation_report", {}),
+                "downbeat_phase_report": blackboard.get_val("downbeat_phase_report", {}),
+                "kick_anchor_snap_report": blackboard.get_val("kick_anchor_snap_report", {}),
                 "beat_alignment_score": _float_or_none(blackboard.get_val("beat_alignment_score")),
                 "fallback_beat_recalculated": blackboard.get_val("fallback_beat_recalculated", False),
+                "fallback_beat_rejected": blackboard.get_val("fallback_beat_rejected", False),
+                "fallback_candidate_report": blackboard.get_val("fallback_candidate_report", {}),
             },
+            "commercial_beat_quality": blackboard.get_val("commercial_beat_quality", {}),
             "beat_validation": beat_validation,
             "downbeat_refinement": downbeat_refinement,
             "quality_report": quality_report,
@@ -193,6 +207,15 @@ class PGMCraftEngine:
             "beat_synthesis_report": blackboard.get_val("beat_synthesis_report", {}),
             "subdivision_grid": blackboard.get_val("subdivision_grid", []),
             "syncopation_events": blackboard.get_val("syncopation_events", []),
+            "barstart_v2_report": blackboard.get_val("barstart_v2_report", {}),
+            "bar_length_report": blackboard.get_val("bar_length_report", {}),
+            "committed_bar_starts": blackboard.get_val("committed_bar_starts", []),
+            "active_bar_probe_window": blackboard.get_val("active_bar_probe_window", {}),
+            "bar_probe_windows": blackboard.get_val("bar_probe_windows", []),
+            "bar_probe_policy": blackboard.get_val("bar_probe_policy", {}),
+            "drum_bar_evidence_report": blackboard.get_val("drum_bar_evidence_report", {}),
+            "bar_start_decision_report": blackboard.get_val("bar_start_decision_report", {}),
+            "unresolved_bar_spans": blackboard.get_val("unresolved_bar_spans", []),
         }
         if contract_validation:
             report["contract_validation"] = contract_validation
@@ -213,6 +236,14 @@ class PGMCraftEngine:
 
         if is_module3:
             report["project_package_status"] = "SKIPPED_MODULE3_TEST_PROJECT"
+            with open(json_report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+            return report
+
+        if target_stage not in export_ready_stages:
+            report["project_package_status"] = f"SKIPPED_{str(target_stage).upper()}_NO_EXPORT_ARTIFACTS"
+            report["outputs"]["project_package_dir"] = None
+            report["outputs"]["import_guide"] = None
             with open(json_report_path, "w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
             return report

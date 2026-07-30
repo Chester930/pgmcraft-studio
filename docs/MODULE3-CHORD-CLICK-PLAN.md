@@ -53,6 +53,598 @@ target_stage = "module3"
 
 `module3` 不走完整 Stage 5/6，而是使用模塊三專用 BT。節拍部分與完整全自動 Stage 3 共用同一系列節點；差異是模塊三會在 Stage 3 dual-track fusion 後插入四個節拍候選來源，按小節或段落標註哪一軌最可信，再合成唯一 `refined_beats` 給 click 輸出。
 
+## 新版流程討論稿：分軌優先的小節開頭決策
+
+狀態：**已開始 experimental SDD 落地；目前不替換既有 `module3`**。
+
+本段記錄新的大幅重構方向。現階段先以 `target_stage="module3_barstart_v2"` 獨立 experimental workflow 驗證，等 reference/manual 驗收達標後再評估是否替換現有 Module 3 BT。
+
+### 暫定分軌策略
+
+第一階段分軌：
+
+```text
+input audio
+-> drums
+-> bass
+-> guitar
+-> piano
+-> vocal
+```
+
+第二階段細分：
+
+```text
+drums
+-> kick
+-> snare
+-> hihat / cymbals
+-> tom / percussion
+
+guitar
+-> strumming / chord body
+-> melodic lead / riff
+
+piano
+-> chord comping
+-> melodic line
+```
+
+此方向的目的不是選出「哪一軌作為最終答案」，而是明確知道每段、每一軌、每一種音樂角色對 beat / downbeat / first bar anchor 的可信度。
+
+### 第一小節開頭定義
+
+新版流程要優先找出：
+
+```text
+第一個正式小節的開頭 = song grid 的 bar 1 beat 1
+```
+
+不能直接等同於：
+
+- 第一個鼓聲
+- 第一個最大 transient
+- 第一個人聲音節
+- 第一個和弦聲響
+- 第一個 BeatNet / Librosa 偵測到的 beat
+
+必須排除或降低權重：
+
+- 自由拍前奏
+- pickup / anacrusis 弱起
+- count-in / clap / spoken cue
+- 只有旋律或人聲的 phrase onset
+- 尾奏後殘留拍點
+- 鼓過門快速連打造成的裝飾性 transient
+
+暫定判斷式：
+
+```text
+first_bar_anchor =
+  高可信 downbeat candidate
+  + 後續 N 小節 metrical pattern 穩定
+  + kick / bass / chord body / section boundary 多來源支持
+  - pickup / free-time / fill / phrase-only penalty
+```
+
+### 相關文獻基礎
+
+| 文獻 / 方法 | 對新版流程的意義 |
+|-------------|------------------|
+| Böck, Krebs, Widmer 2016：Joint Beat and Downbeat Tracking with RNNs | 支持 beat 與 downbeat 應共同估計，再用全局時序模型整理小節相位，而不是只抓單點 transient |
+| Bar Pointer Model / DBN downbeat tracking | 將「目前位於小節中的哪個位置」建成 hidden state，適合處理 bar phase 與第一拍判斷 |
+| Davies & Plumbley 2006：Spectral Difference Downbeat Extraction | 支持在已知 beat sequence 上，用低頻與 beat-synchronous spectral change 判斷 downbeat |
+| Fuentes et al. 2019：Music Structure Informed Downbeat Tracking | 支持把段落結構納入 downbeat tracking，避免只用局部鼓點決定第一小節 |
+| London, Himberg, Cross 2009：Anacrusis perception | 支持 pickup / 弱起與真正小節第 1 拍可能不同，不能把旋律起點直接當 bar 1 |
+
+參考連結：
+
+- https://research.jku.at/de/publications/joint-beat-and-downbeat-tracking-with-recurrent-neural-networks/
+- https://tempobeatdownbeat.github.io/tutorial/ch3_going_deep/postprocessing.html
+- https://www.researchgate.net/publication/228898122_A_Spectral_Difference_Approach_to_Downbeat_Extraction_in_Musical_Audio
+- https://www.researchgate.net/publication/331589799_A_Music_Structure_Informed_Downbeat_Tracking_System_Using_Skip-Chain_Conditional_Random_Fields_and_Deep_Learning
+- https://online.ucpress.edu/mp/article-abstract/27/2/103/62413/The-Effect-of-Structural-and-Performance-Factors
+
+### 待討論問題
+
+- 第一階段與第二階段分軌要使用同一個模型系列，還是允許不同模型分工？
+- drums 細分是否需要 tom / percussion，或第一版只做 kick / snare / hihat-cymbal？
+- guitar / piano 的「和弦 vs 旋律」是否先用能量頻段與 onset density 估計，還是直接導入 polyphonic transcription？
+- first bar anchor 要先做單一候選，還是保留 top-k candidates 讓後續全曲 bar phase 驗證？
+- 清唱開頭是否只作 phrase boundary，不直接提供 downbeat anchor？
+- 評估資料要用人工 DAW grid、reference downbeat annotation，或兩者都保留？
+
+### Rolling 下一小節開頭搜尋流程
+
+已確認的新方向：
+
+```text
+bar_start 優先
+數拍作為輔助判斷與驗證
+beat grid 由相鄰 bar_start + meter profile 生成
+```
+
+流程不是先追逐每一拍 transient，而是從已確認的小節開頭往後滾動搜尋下一個小節開頭。
+
+```text
+current_bar_start = A_n
+probe_window = [A_n, A_n + adaptive_window_sec]
+目標 = 在 probe_window 內找出 A_{n+1}
+```
+
+初始窗口：
+
+```text
+adaptive_window_sec = 5.0
+window_step_sec = 1.0
+```
+
+5 秒只是前置粗切塊與搜尋範圍，不代表 `A_n + 5s` 就是下一小節開頭。
+
+窗口調整規則：
+
+```text
+若找不到下一小節開頭：
+  adaptive_window_sec += 1.0
+  下一輪往後推動搜尋窗，重跑相同分析迴圈
+
+若很快找到下一小節開頭：
+  adaptive_window_sec -= 1.0
+
+若在合理區間找到：
+  adaptive_window_sec 保持不變
+```
+
+此設計目標是讓每次搜尋範圍盡量只包含一個下一小節開頭候選，並讓 window 調整過程可解釋、可除錯。
+
+若某一窗找不到，但往後推 5 秒或更長後找到可信小節開頭，前段應標為 unresolved span，後續可再依 tempo / meter continuity 回推補小節；不應直接亂補或強制 commit。
+
+### 證據階梯
+
+在每個 rolling probe window 中，依序擴充證據來源：
+
+```text
+1. drums
+2. drums substems
+3. drums + bass
+4. drums + bass + primary chord track
+5. drums + bass + both chord tracks
+6. + primary melody track
+7. + secondary melody track
+8. + remaining melody track
+```
+
+drums substems 暫定包含：
+
+```text
+kick
+snare
+hihat / cymbals
+tom / percussion
+```
+
+和弦軌 PK：
+
+```text
+guitar_chord_track
+vs
+piano_chord_track
+```
+
+先加入主要和弦軌；若仍不確定，再加入另一個和弦軌。
+
+旋律軌 PK：
+
+```text
+vocal_melody_track
+vs
+piano_melody_track
+vs
+guitar_melody_track
+```
+
+先加入主要旋律軌；若仍不確定，依 PK 排名逐步加入次要與剩餘旋律軌。
+
+每一層搜尋都應輸出：
+
+```text
+bar_start_candidate_time
+confidence
+evidence_sources
+failure_reason / uncertainty_reason
+```
+
+### 數拍與最終 Click Grid 的角色分工
+
+數拍方法仍保留，但角色是輔助判斷：
+
+```text
+BeatCountingEvidenceNode
+-> beat_phase_trace
+-> counted_beat_candidates
+-> expected_next_bar_start
+-> count_confidence
+```
+
+數拍結果可用來判斷是否已到下一個小節，但不直接把每一拍 transient 寫成最終 click。
+
+最終 click grid 應由相鄰小節開頭與拍號 profile 產生：
+
+```text
+bar_start[n]
+bar_start[n+1]
+meter_profile
+-> beats / click_grid / measure_map
+```
+
+### 拍號與臨時增減拍
+
+不固定四等分。應依使用者選擇或自動推定的拍號，把相鄰小節開頭區間切成對應拍數。
+
+前端初版建議提供：
+
+```text
+拍號模式：
+- 自動判斷
+- 4/4
+- 3/4
+- 6/8
+- 5/4
+- 7/8
+```
+
+進階選項：
+
+```text
+允許臨時增減拍：
+- 關閉
+- 允許 +1 拍
+- 允許 +2 拍
+- 允許 -1 拍
+- 自動偵測
+```
+
+建議節點：
+
+```text
+MeterProfileNode
+-> meter_profile
+-> allowed_bar_lengths
+-> temporary_bar_policy
+
+MeterAwareBeatGridNode
+-> beats
+-> click_grid
+-> measure_map
+-> meter_changes
+-> bar_length_report
+```
+
+若使用者選 4/4 且不允許臨時增減拍：
+
+```json
+{
+  "base_meter": "4/4",
+  "beats_per_bar": 4,
+  "allowed_bar_lengths": [4],
+  "temporary_bar_policy": "fixed"
+}
+```
+
+若使用者選 4/4 且允許 +1 / +2：
+
+```json
+{
+  "base_meter": "4/4",
+  "beats_per_bar": 4,
+  "allowed_bar_lengths": [4, 5, 6],
+  "temporary_bar_policy": "allow_extensions"
+}
+```
+
+### Tempo Ramp Guard
+
+音色節奏不穩、提前、拖拍、切分、過門，原則上屬於 performance timing，不應拉動 click grid。
+
+但如果相鄰小節開頭本身呈現持續漸快或漸慢，應標記為 tempo ramp / rubato 風險：
+
+```text
+BarDurationStabilityGuard
+-> tempo_ramp_warning
+-> click_not_recommended_reason
+```
+
+嚴重漸快、漸慢或 rubato 素材，本來就不適合產生固定節拍器；流程應給出警告，而不是強行輸出看似精準的 click。
+
+### Stage 3 v2 BT 調整方向
+
+新版不應推倒原本 BT，而是把原本 Stage 3 的 beat-first 架構改造成 evidence / guard / fallback，主骨架改為 bar-start-first。
+
+原本思路：
+
+```text
+stem separation
+-> beat tracking
+-> downbeat refinement
+-> measure map
+-> click
+```
+
+新版思路：
+
+```text
+high-quality local stem separation
+-> role split + model candidates
+-> first bar anchor
+-> rolling next-bar-start search
+-> meter-aware beat grid
+-> click
+```
+
+建議新增一條獨立測試流程，先不要直接取代現有 `module3`：
+
+```text
+target_stage = "module3_barstart_v2"  # 暫定名稱，討論完成後再定
+```
+
+暫定 BT：
+
+```text
+Module3BarStartClickRoot [Sequence]
+├── InputAcquisitionRoot
+├── AudioQualityRoot
+├── LocalModelRegistryNode
+├── BestLocalStemSeparationRoot
+│   ├── BS-RoFormerSixStemNode
+│   ├── DemucsSixStemFallbackNode
+│   └── StemQualityScoringNode
+├── RoleSplitRoot
+│   ├── DrumSubstemSplitNode
+│   ├── GuitarChordMelodySplitNode
+│   └── PianoChordMelodySplitNode
+├── MeterProfileNode
+├── FirstBarAnchorRoot
+├── RollingBarStartTrackingRoot
+│   ├── RollingProbeWindowNode
+│   ├── DrumEvidenceBarSearchNode
+│   ├── DrumsOnlyBarSearchNode
+│   ├── DrumSubstemBarSearchNode
+│   ├── DrumBassBarSearchNode
+│   ├── ChordTrackPKNode
+│   ├── DrumBassChordBarSearchNode
+│   ├── MelodyTrackPKNode
+│   ├── MelodyAssistedBarSearchNode
+│   ├── BarStartCandidateCommitNode
+│   ├── BarStartDecisionNode
+│   └── AdaptiveWindowUpdateNode
+├── BarDurationStabilityGuard
+├── MeterAwareBeatGridNode
+├── ExistingStage3RefinementGuards
+├── MusicAnalysisRoot
+└── Module3ExportRoot
+```
+
+### 原本 BT 優點的整合方式
+
+| 原本節點 / 能力 | 新版角色 |
+|-----------------|----------|
+| `InputAcquisitionRoot` | 保留，仍負責輸入、專案資料夾與 source 落盤 |
+| `AudioQualityRoot` | 保留，仍提供 raw / normalized / denoised 版本與分析目標 |
+| `StemSeparationRoot` | 保留架構，但模型選擇升級為 best-local-model first |
+| `KickSnarePulseNode` | 改成 drum/substem evidence，輔助 bar start 與 beat counting |
+| `BeatNetSingleTrackNode` | 保留為 beat/downbeat candidate，不直接主導 final click |
+| `LibrosaSingleTrackNode` | 保留為 deterministic fallback 與 sanity check |
+| `BeatFusionArbitratorNode` | 改造為 N-source evidence scorer，不再只是 A/B 二選一 |
+| `SegmentSourceAttributionNode` | 保留概念，改為每個 probe window 的 evidence source report |
+| `DrumFillDetectionNode` | 保留，避免過門密集擊點影響 bar-start / snap |
+| `OnsetPhaseRealignmentNode` | 降級為小範圍校正 guard，只能校正已確認 grid，不可重寫結構 |
+| `MicroTimingTransientSnapNode` | 降級為小範圍 snap guard，必須尊重 `snap_exclusion_zones` |
+| `ViterbiTempoSmoothingNode` | 保留為異常檢查，不無條件拉直 rubato 或漸快/漸慢 |
+| `BeatAlignmentVerifierGuardNode` | 改造成 bar-start alignment verifier |
+| `MeasureMapNode` | 新版應改由 `committed_bar_starts + meter_profile` 產生 |
+| `MusicAnalysisRoot` | 保留，但和弦/段落分析應讀取新版 measure map |
+| `Module3ExportRoot` | 保留 click / mix / report 輸出，但 report 要加入 bar-start v2 診斷 |
+
+### 高品質本地模型整合方向
+
+模型不直接決定答案，只產生 candidates / evidence / confidence。
+
+建議優先順序：
+
+| 任務 | 優先本地模型 | Fallback |
+|------|--------------|----------|
+| 第一階段 6-stem 分軌 | BS-RoFormer-SW | `htdemucs_6s` |
+| 4-stem 穩定分軌 | `htdemucs_ft` | `htdemucs` / `mdx_extra` |
+| 鼓細分 | `drumsep` / MDX23C drums substem | 現有 DSP bandpass + onset peak |
+| beat / downbeat candidate | Beat This! | BeatNet -> Librosa |
+| 吉他 / 鋼琴 note events | Basic Pitch on isolated track | chroma / onset fallback |
+| 和弦辨識 | BTC 類 Transformer chord model，需檢查權重授權 | madmom DeepChroma+CRF / Chordino / librosa chroma template |
+
+建議新增：
+
+```text
+LocalModelRegistryNode
+-> local_model_registry
+-> model_availability_report
+-> model_license_report
+```
+
+每個模型輸出應統一格式：
+
+```json
+{
+  "source": "guitar_chord",
+  "model": "basic_pitch",
+  "candidate_type": "note_events",
+  "confidence": 0.82,
+  "path": "...",
+  "fallback_reason": null
+}
+```
+
+### 新版 Blackboard 核心 Key
+
+新版主資料不再只有 `beats`，而是先建立小節開頭序列。
+
+建議新增：
+
+```text
+local_model_registry
+model_availability_report
+model_license_report
+
+stem_quality_report
+role_split_tracks
+
+first_bar_anchor
+bar_probe_windows
+bar_start_candidates
+committed_bar_starts
+unresolved_bar_spans
+
+meter_profile
+allowed_bar_lengths
+temporary_bar_policy
+bar_duration_report
+tempo_ramp_warning
+click_not_recommended_reason
+
+beat_phase_trace
+counted_beat_candidates
+chord_track_pk
+melody_track_pk
+bar_start_decision_report
+
+beats
+click_grid
+measure_map
+meter_changes
+bar_length_report
+```
+
+最終資料流：
+
+```text
+committed_bar_starts
++ meter_profile
+-> MeterAwareBeatGridNode
+-> beats / click_grid / measure_map
+```
+
+### 實作落地順序
+
+此段只是後續 SDD 拆分參考，尚未開始執行。
+
+建議順序：
+
+1. 新增 `module3_barstart_v2` 任務入口與空 BT skeleton，不影響現有 `module3`。
+2. 實作 `MeterProfileNode` 與 `MeterAwareBeatGridNode`，先用人工提供的 `committed_bar_starts` 測試 grid 產生。
+3. 實作 `RollingProbeWindowNode` 與 `bar_probe_windows` 記錄。
+4. 實作 `bar_start_candidates` / `committed_bar_starts` 的資料格式與 report。
+5. 將現有 drums / kick / snare / bass evidence 接入 rolling search。
+6. 加入 `ChordTrackPKNode` 與 guitar/piano chord evidence。
+7. 加入 `MelodyTrackPKNode` 與 vocal/piano/guitar melody evidence。
+8. 接入 Beat This! 作為正式本地 beat/downbeat candidate。
+9. 接入 BS-RoFormer / Demucs 模型 registry 與 best-local-model 分軌策略。
+10. 最後才評估是否讓 v2 取代現有 `module3`。
+
+### SDD 拆分任務
+
+| SDD Pass | 目標 | 完成條件 |
+|----------|------|----------|
+| Pass 105 | `module3_barstart_v2` skeleton、`MeterProfileNode`、`MeterAwareBeatGridNode` | ✅ 已完成；可用人工 `committed_bar_starts` 依拍號產生 `beats`、`click_grid`、`measure_map`；不影響現有 `module3` |
+| Pass 106 | rolling probe window 基礎資料流 | ✅ 已完成；產出 `active_bar_probe_window` / `bar_probe_windows`，支援初始 5 秒、找不到後 +1 秒、很快找到後 -1 秒 |
+| Pass 107 | bar start candidate / commit 資料格式 | ✅ 已完成；建立 `bar_start_candidates`、`committed_bar_starts`、`unresolved_bar_spans`、`bar_start_decision_report`、`last_bar_probe_result` |
+| Pass 108 | drums / drum substem evidence | ✅ 已完成；接入 kick/snare/drum onset evidence，輸出候選與可信度，不直接寫 final click，且對 `drum_fill_regions` / `snap_exclusion_zones` 降權 |
+| Pass 109 | drums + bass bar search | ✅ 已完成；`DrumBassEvidenceBarSearchNode` 以 `bass_anchors` / `bass_onset_candidates` 提升鼓候選可信度，無鼓候選時只產生低信心 bass-only 候選，並輸出 `drum_bass_evidence_report` |
+| Pass 110 | chord track PK | ✅ 已完成；`ChordTrackPKNode` 建立 guitar/piano harmonic anchors 與 `chord_track_pk`，可補強既有 bar-start candidates；harmonic-only candidate 保持低信心 |
+| Pass 111 | melody track PK | ✅ 已完成；`MelodyTrackPKNode` 建立 vocal/piano/guitar melody PK 與 phrase/count evidence；melody-only candidate 保持低信心，不直接主導 click commit |
+| Pass 112 | Beat This! 本地候選 adapter | ✅ 已完成；`BeatThisCandidateAdapterNode` 將 optional `beat_this_beats` / `beat_this_downbeats` / `beat_this_candidates` 轉入 bar-start evidence ladder；沒有候選時 graceful skip，保留 BeatNet/Librosa fallback |
+| Pass 113 | 本地分軌模型 registry | ✅ 已完成；`LocalModelRegistryNode` 建立 Beat This! / BeatNet / Librosa / Demucs / Basic Pitch / chord model availability 與 license metadata report，不載入模型權重 |
+| Pass 114 | v2 前端測試入口 | ✅ 已完成；Gradio 新增隔離的 BarStart v2 入口，人工只選拍號與臨時小節拍數調整，小節起點交給模型/evidence ladder；不改動舊版 module3 |
+| Pass 115 | v2 替換門檻 | ✅ 閘門已完成；只有 reference/manual 都為 `pass` 且沒有 unresolved bar spans 才回傳 `PROMOTE_READY`；實際 reference/manual 驗收資料仍待執行 |
+| Pass 116 | Click 合成輸出增益 | ✅ 已完成；`ClickSynthesisNode` 預設將 click-only、mix 與 backing+click 使用的 Click 增益提高 `+10 dB`，原始音檔不增益 |
+| Pass 117 | 雙向小節錨定 lookahead | ✅ 已完成第一版；新增 lookahead candidate、跨無鼓段小節數估計、前後錨點驗證與 transition confidence，無 lookahead 輸入時 graceful no-op |
+
+### 暫停點紀錄（2026-07-29）
+
+目前已完成並驗證：
+
+- Pass 105：`module3_barstart_v2` skeleton、`MeterProfileNode`、`ManualCommittedBarStartsSeedNode`、`MeterAwareBeatGridNode`。
+- Pass 106：`RollingProbeWindowNode`，支援初始 5 秒搜尋窗與 ±1 秒調整。
+- Pass 107：`BarStartCandidateCommitNode`，統一候選 commit / unresolved span 資料格式。
+- Pass 108：`DrumEvidenceBarSearchNode`，以 kick/snare/drum onset 產生候選，並對過門排除區降權。
+- Pass 109：`DrumBassEvidenceBarSearchNode`，以 bass coincidence 支援 drum candidate；無鼓候選時產生低信心 bass-only 候選供後續 evidence ladder 或人工檢查。
+- Pass 110：`ChordTrackPKNode`，建立 guitar/piano chord anchor PK，並以 harmonic anchor support 保守補強 bar-start candidates。
+- Pass 111：`MelodyTrackPKNode`，建立 vocal/piano/guitar melody anchor PK，phrase/count evidence 只保守補強 candidates。
+- Pass 112：`BeatThisCandidateAdapterNode`，接入 optional Beat This! beat/downbeat candidates，無候選或未安裝時不阻斷既有 BeatNet/Librosa fallback。
+- Pass 113：`LocalModelRegistryNode`，記錄本地模型 availability、fallback 與 license metadata。
+- Pass 114：新增 `process_module3_barstart_v2_test` 與 Gradio BarStart v2 入口；前端只傳入拍號與臨時小節拍數調整，bar starts 由模型/evidence ladder 處理，並顯示 `barstart_v2_report`。
+- Pass 115：新增 `evaluate_barstart_v2_promotion_gate`；未取得雙重驗收與乾淨小節結果前，v2 維持 `EXPERIMENTAL_ONLY`，不自動替換現有 `module3`。
+- Pass 115 smoke：以 `sample_test.wav` 執行成功；結果為 `EXPERIMENTAL_ONLY`，含 provisional seed、1 個 unresolved bar span，未宣告升格。
+- Pass 116：`PGMSynthesizer.CLICK_GAIN_DB=10.0`，Click 以 float WAV 輸出避免 PCM 先削波；通過實際 RMS 增益測試與 pipeline 回歸測試。
+
+### Pass 117 SDD 任務：雙向小節錨定 lookahead
+
+#### 目標
+
+處理「有鼓 → 無鼓 → 接鼓」段落：無鼓期間沿用既有 tempo、拍號與小節相位，等下一個可靠鼓點出現後，反向估計中間小節數，再以雙向誤差驗證是否能提交新的 `committed_bar_starts`。
+
+#### 範圍
+
+- 新增 `ReliableBarAnchorNode`：整理高信心 drum / bass / Beat This! /既有 grid anchor。
+- 新增 `NoDrumPhaseCarryNode`：在無鼓段維持上一個可靠 anchor 的 tempo、meter 與 phase，產生 provisional bar starts。
+- 新增 `LookaheadDrumAnchorSearchNode`：對下一個鼓點建立前後半拍、一拍與 fill 結束候選，不直接 reset。
+- 新增 `InterveningBarCountEstimatorNode`：以 anchor 時間差與 bar duration 估計 `N-1/N/N+1` 小節候選。
+- 新增 `BidirectionalBarAlignmentNode`：比較 forward projection 與 backward projection 的 phase error。
+- 擴充 `TransitionConfidenceNode`：進鼓至少觀測 1 至 2 小節後，才提高 transition confidence。
+
+#### Blackboard 契約草案
+
+| Key | Producer | Consumer | 規則 |
+|-----|----------|----------|------|
+| `reliable_bar_anchors` | `ReliableBarAnchorNode` | lookahead / alignment | 只收錄高信心 anchor，包含 `time`、`source`、`confidence`、`meter`、`tempo` |
+| `provisional_bar_starts` | `NoDrumPhaseCarryNode` | bar-count / alignment | 無鼓段暫時推算，不得直接視為 committed |
+| `lookahead_bar_candidates` | `LookaheadDrumAnchorSearchNode` | bar-count / transition | 鼓點候選與 offset、source、confidence |
+| `intervening_bar_count_candidates` | `InterveningBarCountEstimatorNode` | alignment | 只允許 `N-1/N/N+1`，記錄 bar duration error |
+| `bidirectional_alignment_report` | `BidirectionalBarAlignmentNode` | commit / summary | 包含 forward/backward error、選定小節數與 status |
+| `transition_confidence_report` | `TransitionConfidenceNode` | commit / promotion gate | 進鼓穩定觀測前不得回報 high confidence |
+
+#### 降級規則
+
+- 下一個鼓點不足以形成可靠 anchor：維持前一段 phase，標記 `LOOKAHEAD_PENDING`。
+- `N-1/N/N+1` 都無法通過誤差門檻：不重設節拍，標記 `AMBIGUOUS_TRANSITION`。
+- 鼓點疑似 fill 或 pickup：只保留 candidate，不提交 `committed_bar_starts`。
+- 無鼓段沒有前一個可靠 anchor：沿用現有 provisional seed，但 promotion gate 必須阻擋升格。
+
+#### 驗收案例
+
+1. 有鼓 → 無鼓 → 有鼓，間隔正好 4 小節：中間 4 小節被正確補齊。
+2. 無鼓 → 進鼓前 pickup：pickup 不得直接成為新小節第一拍。
+3. 下一段鼓點落弱拍：維持原 phase，不能因第一個鼓聲跳拍。
+4. tempo 有小幅漂移：允許誤差內校正，但不得改變小節數。
+5. lookahead 不足：輸出 `LOOKAHEAD_PENDING`，流程仍成功且不產生錯誤 commit。
+
+#### Pass 117 完成條件與目前結果
+
+- 新增節點與既有 evidence ladder 皆可獨立測試。✅
+- 5 個驗收案例與 pipeline placement 均有自動化測試，並保留一個實際音檔 smoke case。✅（單元驗收完成；實際音檔 smoke 仍需人工聽測）
+- report 可區分 `provisional`、`candidate`、`committed` 三種狀態。
+- 現有 `module3` 與 v2 既有測試全部不回歸。✅
+
+最後已通過驗證：
+
+```text
+python -m pytest -q tests\test_sdd_pass114.py tests\test_sdd_pass113.py tests\test_sdd_pass112.py tests\test_sdd_pass111.py tests\test_sdd_pass110.py tests\test_sdd_pass109.py tests\test_sdd_pass108.py tests\test_sdd_pass107.py tests\test_sdd_pass106.py tests\test_sdd_pass105.py tests\test_sdd_pass104.py tests\test_module3_bt.py
+61 passed
+python -m py_compile app.py pgm_craft\workflow\module3_barstart_v2_bt.py pgm_craft\workflow\module3_bt.py pgm_craft\workflow\builder.py pgm_craft\pipeline.py
+git diff --check
+```
+
+下一步未完成項目：
+
+- Pass 115 實際 reference/manual 驗收：尚未執行；目前僅完成升格閘門與自動化契約測試。
+
 ## 建議 BT 結構
 
 ```text

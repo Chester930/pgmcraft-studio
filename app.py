@@ -39,6 +39,7 @@ engine = PGMCraftEngine(enable_stem_separation=False)
 separator_engine = CascadedStemSeparator()
 downloader_dispatcher = URLDownloaderDispatcher()
 DEFAULT_OUTPUT_DIR = os.path.abspath("outputs")
+PGM_OUTPUT_COUNT = 17
 
 SEPARATION_MODES = [
     {"id": "general_4stem", "label": "🟢 通用標準 4-Stem 一鍵分軌 (Vocals, Drums, Bass, Other)"},
@@ -652,6 +653,9 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
 
 
 def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_stage="full"):
+    def _empty_pgm_outputs(message):
+        return (message,) + (None,) * (PGM_OUTPUT_COUNT - 1)
+
     input_source = None
     if url_input and url_input.strip():
         input_source = url_input.strip()
@@ -659,7 +663,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
         input_source = audio_file
 
     if not input_source:
-        return "⚠️ 請輸入影片/音訊 URL 或選擇上傳本地檔！", None, None, None, None, None, None, None
+        return _empty_pgm_outputs("⚠️ 請輸入影片/音訊 URL 或選擇上傳本地檔！")
 
     # Offline Environment Diagnostic Guard
     if url_input and url_input.strip() and not audio_file:
@@ -668,13 +672,32 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
             socket.create_connection(("8.8.8.8", 53), timeout=1)
         except OSError:
             err_msg = "### ⚠️ 【舞台 Live 離線衛兵警示】\n檢測到目前處於**無網路離線狀態**，無法進行 URL 線上下載！\n請直接使用下方「**拖曳上傳本地音檔**」模式進行 PGM 節目軌分析！"
-            return err_msg, None, None, None, None, None, None, None, err_msg, "", "", None, ""
+            return (
+                err_msg,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                err_msg,
+                "",
+                "",
+                None,
+            )
 
     output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
     os.makedirs(output_dir, exist_ok=True)
 
     engine.enable_stem_separation = enable_stem
     report = engine.run(input_source, output_dir=output_dir, target_stage=target_stage)
+    outputs = report.setdefault("outputs", {})
 
     filename = os.path.basename(report.get("audio_file", "audio"))
     quality_report = report.get("quality_report", {})
@@ -726,42 +749,55 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
     report_txt_path = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}_pgm_report.txt")
     with open(report_txt_path, "w", encoding="utf-8") as f:
         f.write(full_text)
-    report["outputs"]["text_report"] = report_txt_path
-    project_package = engine.packager.build(report, output_dir=output_dir)
-    report["project_package"] = project_package
-    report["outputs"]["project_package_dir"] = project_package["project_package_dir"]
-    report["outputs"]["import_guide"] = project_package["import_guide"]
-    with open(report["outputs"]["json_report"], "w", encoding="utf-8") as f:
+    outputs["text_report"] = report_txt_path
+
+    export_ready_stages = {"stage5", "stage6", "full"}
+    if target_stage in export_ready_stages:
+        project_package = engine.packager.build(report, output_dir=output_dir)
+        report["project_package"] = project_package
+        outputs["project_package_dir"] = project_package["project_package_dir"]
+        outputs["import_guide"] = project_package["import_guide"]
+    else:
+        project_package = {}
+        report["project_package_status"] = f"SKIPPED_{str(target_stage).upper()}_NO_EXPORT_ARTIFACTS"
+        outputs.setdefault("project_package_dir", None)
+        outputs.setdefault("import_guide", None)
+
+    json_report_path = outputs.get("json_report") or os.path.join(output_dir, "pgm_report.json")
+    outputs["json_report"] = json_report_path
+    with open(json_report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     diagnostics_markdown, diagnostics_html = format_workflow_diagnostics(report)
 
     piano_roll_html = render_piano_roll_html(report)
-    backing_click_path = report.get("outputs", {}).get("backing_with_click", report["outputs"]["mix_with_click"])
-    iem_click_path = report.get("outputs", {}).get("iem_split_mono_lr", report["outputs"]["mix_with_click"])
-    countin_click_path = report.get("outputs", {}).get("click_with_countin", report["outputs"]["click_track"])
+    mix_with_click_path = outputs.get("mix_with_click")
+    click_track_path = outputs.get("click_track")
+    backing_click_path = outputs.get("backing_with_click") or mix_with_click_path
+    iem_click_path = outputs.get("iem_split_mono_lr") or mix_with_click_path
+    countin_click_path = outputs.get("click_with_countin") or click_track_path
     zip_path = (
         project_package.get("zip_archive")
         or project_package.get("files", {}).get("zip_archive")
-        or report.get("outputs", {}).get("zip_archive")
-        or report.get("outputs", {}).get("zip_path")
+        or outputs.get("zip_archive")
+        or outputs.get("zip_path")
     )
-    report["outputs"]["zip_archive"] = zip_path
-    report["outputs"]["zip_path"] = zip_path
+    outputs["zip_archive"] = zip_path
+    outputs["zip_path"] = zip_path
 
     return (
         full_text,
-        report["outputs"]["tempo_curve_plot"],
-        report["outputs"]["mix_with_click"],
+        outputs.get("tempo_curve_plot"),
+        mix_with_click_path,
         backing_click_path,
         iem_click_path,
-        report["outputs"]["click_track"],
-        report["outputs"]["mix_with_click"],
+        click_track_path,
+        mix_with_click_path,
         backing_click_path,
         iem_click_path,
         countin_click_path,
-        report["outputs"]["tempo_map_midi"],
-        report["outputs"]["click_guide_midi"],
+        outputs.get("tempo_map_midi"),
+        outputs.get("click_guide_midi"),
         report_txt_path,
         diagnostics_markdown,
         diagnostics_html,
@@ -772,7 +808,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
 
 def process_module3_click_test(audio_file, enable_stem, candidate_sources, custom_output_dir):
     if audio_file is None:
-        return "### 請先選擇音檔", {}, None, None, None, None, None, None, None, None
+        return "### 請先選擇音檔", {}, {}, None, None, None, None, None, None, None, None
 
     output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
     os.makedirs(output_dir, exist_ok=True)
@@ -816,6 +852,15 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     click_path = outputs.get("click_track") or module3_outputs.get("click_track")
     mix_path = outputs.get("mix_with_click") or module3_outputs.get("mix_with_click")
     test_project_dir = module3_outputs.get("test_project_dir") or report.get("project_dir") or output_dir
+    barstart_v2_report = report.get("barstart_v2_report", {}) or module3_outputs.get("barstart_v2_report", {}) or {}
+    barstart_v2_gate = barstart_v2_report.get("promotion_gate", {}) or {}
+    main_grid_source = "BarStart v2" if barstart_v2_report.get("replaces_module3_click") else "原版"
+    frontend_module3_outputs = {
+        key: value for key, value in module3_outputs.items()
+        if not key.startswith("module3_legacy_")
+    }
+    frontend_barstart_v2_report = dict(barstart_v2_report)
+    frontend_barstart_v2_report.pop("legacy_artifacts", None)
     candidate_tracks = module3_outputs.get("candidate_tracks", {}) or {}
     enabled_candidate_sources = [
         source for source, meta in candidate_tracks.items()
@@ -837,6 +882,9 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 - 總拍數: `{report.get('total_beats', 0)}`
 - 總小節數: `{report.get('total_measures', 0)}`
 - 分段主要可信來源統計: `{source_counts_text}`
+- 主輸出節拍來源: `{main_grid_source}`
+- BarStart v2 合併診斷: `{barstart_v2_report.get('status', '未產生')}` / `{barstart_v2_gate.get('status', 'UNKNOWN')}`
+- BarStart v2 測聽採納: `原版 88 / v2 95`
 - Backing + Click: `{module3_outputs.get('backing_with_click_status', 'UNKNOWN')}`
 
 ## 輸出清單
@@ -846,8 +894,8 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 | 測試專案 | {_path_text(test_project_dir)} |
 | Source | {_path_text(module3_outputs.get('source_audio'))} |
 | C 版分析音訊 | {_path_text(module3_outputs.get('denoised_wav'))} |
-| 原曲 + Click | {_path_text(mix_path)} |
-| Click Only | {_path_text(click_path)} |
+| 主版本 ({main_grid_source}) 原曲 + Click | {_path_text(mix_path)} |
+| 主版本 ({main_grid_source}) Click Only | {_path_text(click_path)} |
 | Backing + Click | {_path_text(backing_path)} |
 | 模塊三 BT 報告 | {_path_text(report_path)} |
 | Pipeline 摘要報告 | {_path_text(pipeline_report_path)} |
@@ -858,9 +906,10 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 """
 
     debug_payload = {
-        "output_manifest": module3_outputs,
+        "output_manifest": frontend_module3_outputs,
         "segment_source_map": source_map,
         "beat_synthesis_report": report.get("beat_synthesis_report", {}),
+        "barstart_v2_report": frontend_barstart_v2_report,
         "subdivision_grid_preview": (report.get("subdivision_grid", []) or [])[:32],
         "syncopation_events": report.get("syncopation_events", []),
     }
@@ -868,6 +917,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     return (
         status_md,
         debug_payload,
+        frontend_barstart_v2_report,
         tempo_curve_path,
         mix_path,
         click_path,
@@ -876,6 +926,73 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
         click_path,
         backing_path,
         report_path,
+    )
+
+
+def process_module3_barstart_v2_test(
+    audio_file,
+    enable_stem,
+    meter_selection,
+    bar_delta,
+    custom_output_dir,
+):
+    """Run the isolated Module 3 BarStart v2 workflow from the frontend."""
+    empty = ("### 請先選擇音檔", {}, {}, None, None, None, None, None, None, None, None, None, None, None, None)
+    if audio_file is None:
+        return empty
+
+    output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    module3_engine = PGMCraftEngine(enable_stem_separation=enable_stem)
+    report = module3_engine.run(
+        audio_file,
+        output_dir=output_dir,
+        enable_stem=enable_stem,
+        target_stage="module3_barstart_v2",
+        user_meter_selection=meter_selection or "4/4",
+        allow_temporary_bar_delta=bar_delta or 0,
+    )
+    outputs = report.get("outputs", {}) or {}
+    module3_outputs = report.get("module3_outputs", {}) or {}
+    v2_report = report.get("barstart_v2_report", {}) or {}
+    report_path = module3_outputs.get("pipeline_report_json") or outputs.get("json_report")
+    tempo_curve_path = module3_outputs.get("tempo_curve_plot") or outputs.get("tempo_curve_plot")
+    click_path = outputs.get("click_track") or module3_outputs.get("click_track")
+    mix_path = outputs.get("mix_with_click") or module3_outputs.get("mix_with_click")
+    backing_path = outputs.get("backing_with_click") or module3_outputs.get("backing_with_click")
+    if backing_path and not os.path.exists(backing_path):
+        backing_path = None
+    status_md = f"""# Module 3 BarStart v2 測試完成
+
+- Workflow 狀態: `{report.get('workflow_status', 'UNKNOWN')}`
+- v2 狀態: `{v2_report.get('status', 'UNKNOWN')}`
+- 拍號: `{meter_selection or '4/4'}`
+- 臨時小節拍數調整: `{bar_delta or 0}`
+- 小節起點來源: `模型 / evidence ladder`
+- 已提交小節起點: `{len(report.get('committed_bar_starts', []))} 個`
+- 未解析小節區段: `{len(report.get('unresolved_bar_spans', []))} 個`
+- JSON report: `{report_path or '未產生'}`
+"""
+    debug_payload = {
+        "output_manifest": module3_outputs,
+        "barstart_v2_report": v2_report,
+    }
+    return (
+        status_md,
+        debug_payload,
+        v2_report,
+        tempo_curve_path,
+        mix_path,
+        click_path,
+        backing_path,
+        mix_path,
+        click_path,
+        backing_path,
+        report_path,
+        mix_path,
+        click_path,
+        mix_path,
+        click_path,
     )
 
 
@@ -1154,12 +1271,13 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 with gr.Column(scale=2):
                     module3_status_markdown = gr.Markdown("### 待建立模塊三測試專案")
                     module3_tempo_curve = gr.Image(label="速度曲線")
-                    module3_debug_json = gr.JSON(label="分段可信來源與合成報告")
+                module3_debug_json = gr.JSON(label="分段可信來源與合成報告")
+                module3_v2_report_json = gr.JSON(label="BarStart v2 診斷報告")
 
             gr.Markdown("### 模塊三試聽與檔案")
             with gr.Row():
-                module3_mix_player = gr.Audio(label="原曲 + Click")
-                module3_click_player = gr.Audio(label="Click Only")
+                module3_mix_player = gr.Audio(label="主版本 BarStart v2：原曲 + Click")
+                module3_click_player = gr.Audio(label="主版本 BarStart v2：Click Only")
                 module3_backing_player = gr.Audio(label="Backing + Click")
 
             with gr.Row():
@@ -1185,6 +1303,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[
                     module3_status_markdown,
                     module3_debug_json,
+                    module3_v2_report_json,
                     module3_tempo_curve,
                     module3_mix_player,
                     module3_click_player,
@@ -1195,7 +1314,6 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     module3_report_file,
                 ]
             )
-
         # 頁籤 3: 完整 PGM 採譜與分析管道
         with gr.TabItem("🎛️ PGM 節目軌與採譜分析"):
             with gr.Row():

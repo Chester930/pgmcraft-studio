@@ -27,6 +27,148 @@ def _extract_peak_anchors(audio_path: str, threshold_ratio: float = 0.3, min_gap
     return filtered
 
 
+def _zone_bounds(zone) -> tuple:
+    if isinstance(zone, dict):
+        start = zone.get("start_time", zone.get("start", 0.0))
+        end = zone.get("end_time", zone.get("end", start))
+    elif isinstance(zone, (list, tuple)) and len(zone) >= 2:
+        start, end = zone[0], zone[1]
+    else:
+        return None
+    try:
+        start = float(start)
+        end = float(end)
+    except (TypeError, ValueError):
+        return None
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def _window_intersects_exclusion(start_time: float, end_time: float, zones) -> bool:
+    for zone in zones or []:
+        bounds = _zone_bounds(zone)
+        if bounds is None:
+            continue
+        zone_start, zone_end = bounds
+        if start_time <= zone_end and end_time >= zone_start:
+            return True
+    return False
+
+
+def _coerce_beat_matrix(beats):
+    if beats is None:
+        return np.empty((0, 2), dtype=float)
+    try:
+        arr = np.asarray(beats, dtype=float)
+    except (TypeError, ValueError):
+        return np.empty((0, 2), dtype=float)
+    if arr.size == 0:
+        return np.empty((0, 2), dtype=float)
+    if arr.ndim == 1:
+        return np.column_stack([arr, (np.arange(len(arr)) % 4) + 1]).astype(float)
+    if arr.ndim == 2 and arr.shape[1] >= 2:
+        return arr[:, :2].astype(float)
+    return np.empty((0, 2), dtype=float)
+
+
+def _score_beat_grid_quality(beats, kick_anchors=None, sections=None, alignment_score=None) -> dict:
+    arr = _coerce_beat_matrix(beats)
+    warnings = []
+    if len(arr) < 4:
+        return {
+            "score": 0.0,
+            "tempo_stability": 0.0,
+            "downbeat_consistency": 0.0,
+            "anchor_alignment": 0.0,
+            "alignment_score": 0.0,
+            "warnings": ["beat_count_too_low"],
+        }
+
+    times = arr[:, 0].astype(float)
+    labels = np.rint(arr[:, 1]).astype(int)
+    intervals = np.diff(times)
+    valid_intervals = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+    if len(valid_intervals) == 0 or len(valid_intervals) != len(intervals):
+        warnings.append("non_increasing_or_invalid_intervals")
+        tempo_stability = 0.0
+    else:
+        median_interval = float(np.median(valid_intervals))
+        median_deviation = float(np.median(np.abs(valid_intervals - median_interval)))
+        tempo_stability = max(0.0, 1.0 - (median_deviation / (median_interval + 1e-6)) * 4.0)
+        jump_ratio = float(np.max(np.abs(valid_intervals - median_interval)) / (median_interval + 1e-6))
+        if jump_ratio > 0.35:
+            warnings.append("large_tempo_jump")
+
+    downbeat_indexes = np.where(labels == 1)[0]
+    if len(downbeat_indexes) >= 2:
+        downbeat_steps = np.diff(downbeat_indexes)
+        common_step = int(np.median(downbeat_steps)) if len(downbeat_steps) else 4
+        expected_step = common_step if common_step > 0 else 4
+        consistent = np.mean(downbeat_steps == expected_step) if len(downbeat_steps) else 0.0
+        downbeat_consistency = float(np.clip(consistent, 0.0, 1.0))
+    else:
+        downbeat_consistency = 0.0
+        warnings.append("missing_downbeat_cycle")
+
+    anchor_scores = []
+    anchor_values = [] if kick_anchors is None else np.asarray(kick_anchors, dtype=float).reshape(-1)
+    for anchor in anchor_values:
+        try:
+            anchor_t = float(anchor)
+        except (TypeError, ValueError):
+            continue
+        nearest = float(np.min(np.abs(times - anchor_t))) if len(times) else 999.0
+        anchor_scores.append(max(0.0, 1.0 - nearest / 0.12))
+    anchor_alignment = float(np.mean(anchor_scores)) if anchor_scores else 0.75
+
+    section_scores = []
+    section_values = [] if sections is None else sections
+    for sec in section_values:
+        if not isinstance(sec, dict):
+            continue
+        try:
+            sec_t = float(sec.get("start_time", sec.get("start", 0.0)))
+        except (TypeError, ValueError):
+            continue
+        downbeat_times = arr[labels == 1, 0] if len(downbeat_indexes) else times
+        nearest = float(np.min(np.abs(downbeat_times - sec_t))) if len(downbeat_times) else 999.0
+        section_scores.append(max(0.0, 1.0 - nearest / 0.25))
+    section_alignment = float(np.mean(section_scores)) if section_scores else 0.8
+
+    if alignment_score is None:
+        combined_alignment = 0.55 * anchor_alignment + 0.45 * section_alignment
+    else:
+        combined_alignment = float(np.clip(float(alignment_score), 0.0, 1.0))
+
+    score = 100.0 * (
+        0.36 * tempo_stability
+        + 0.26 * downbeat_consistency
+        + 0.28 * combined_alignment
+        + 0.10 * min(1.0, len(arr) / 16.0)
+    )
+
+    return {
+        "score": round(float(np.clip(score, 0.0, 100.0)), 2),
+        "tempo_stability": round(float(tempo_stability), 4),
+        "downbeat_consistency": round(float(downbeat_consistency), 4),
+        "anchor_alignment": round(float(anchor_alignment), 4),
+        "section_alignment": round(float(section_alignment), 4),
+        "alignment_score": round(float(combined_alignment), 4),
+        "warnings": warnings,
+    }
+
+
+def _relabel_beat_numbers(beats, first_label: int = 1, beats_per_bar: int = 4):
+    arr = _coerce_beat_matrix(beats)
+    if len(arr) == 0:
+        return arr
+    first_label = int(np.clip(int(first_label), 1, beats_per_bar))
+    relabeled = arr.copy()
+    relabeled[:, 1] = ((np.arange(len(relabeled)) + first_label - 1) % beats_per_bar) + 1
+    return relabeled
+
+
 class KickSnarePulseNode(BaseNode):
     """
     【大鼓與小鼓獨立物理脈衝特徵提取衛兵】
@@ -611,6 +753,169 @@ class ReEntryReAnchoringNode(BaseNode):
                 result.append(t)
         return result
 
+
+class DrumFillDetectionNode(BaseNode):
+    """
+    【鼓過門密集擊點排除區偵測節點】
+    - 使用 kick/snare anchors 優先判斷一拍內過度密集的擊點
+    - 將鼓過門區段寫入 `drum_fill_regions` 與 `snap_exclusion_zones`
+    - 後續相位微調與 transient snap 不應在這些區段追逐裝飾性擊點
+    """
+    optional_keys = [
+        "beats",
+        "kick_anchors",
+        "snare_anchors",
+        "stems",
+        "extracted_stems",
+        "stems_dir",
+        "audio_path",
+        "snap_exclusion_zones",
+    ]
+    output_keys = ["drum_fill_regions", "snap_exclusion_zones", "drum_fill_report"]
+
+    def __init__(
+        self,
+        min_events_per_beat: int = 4,
+        density_interval_ratio: float = 0.36,
+        padding_sec: float = 0.06,
+    ):
+        super().__init__("DrumFillDetectionNode")
+        self.min_events_per_beat = min_events_per_beat
+        self.density_interval_ratio = density_interval_ratio
+        self.padding_sec = padding_sec
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats")
+        beat_matrix = self._normalize_beats(beats)
+        existing_zones = list(blackboard.get_val("snap_exclusion_zones", []) or [])
+
+        if len(beat_matrix) < 3:
+            self._write_report(blackboard, [], existing_zones, "SKIPPED_NOT_ENOUGH_BEATS", 0, 0.0)
+            return NodeStatus.SUCCESS
+
+        beat_times = np.sort(beat_matrix[:, 0].astype(float))
+        intervals = np.diff(beat_times)
+        intervals = intervals[intervals > 0.05]
+        median_interval = float(np.median(intervals)) if len(intervals) else 0.5
+
+        event_times = self._collect_event_times(blackboard)
+        if not event_times:
+            self._write_report(blackboard, [], existing_zones, "NO_DRUM_EVENTS", 0, median_interval)
+            return NodeStatus.SUCCESS
+
+        regions = self._detect_regions(beat_times, event_times, median_interval)
+        merged = self._merge_regions(regions, merge_gap=median_interval * 0.5)
+        fill_zones = [
+            {
+                "start_time": round(max(0.0, start - self.padding_sec), 6),
+                "end_time": round(end + self.padding_sec, 6),
+                "reason": "drum_fill_dense_subdivision",
+            }
+            for start, end in merged
+        ]
+
+        combined_zones = existing_zones + fill_zones
+        self._write_report(
+            blackboard,
+            fill_zones,
+            combined_zones,
+            "DETECTED" if fill_zones else "PASS_NO_DENSE_FILL",
+            len(event_times),
+            median_interval,
+        )
+        print(f"[{self.name}] 🥁 鼓過門排除區偵測完成：{len(fill_zones)} 段，後續 click snap 將避開這些密集擊點。")
+        return NodeStatus.SUCCESS
+
+    def _normalize_beats(self, beats):
+        if beats is None:
+            return np.empty((0, 2))
+        arr = np.asarray(beats, dtype=float)
+        if arr.ndim != 2 or arr.shape[1] < 2:
+            return np.empty((0, 2))
+        return arr[:, :2]
+
+    def _collect_event_times(self, blackboard: Blackboard) -> list:
+        events = []
+        for key in ("kick_anchors", "snare_anchors"):
+            anchors = blackboard.get_val(key, [])
+            try:
+                events.extend(float(t) for t in np.asarray(anchors).flatten() if float(t) >= 0.0)
+            except (TypeError, ValueError):
+                continue
+
+        if events:
+            return sorted(set(round(t, 6) for t in events))
+
+        drum_path = self._resolve_drums_path(blackboard)
+        if drum_path and os.path.exists(drum_path):
+            try:
+                return _extract_peak_anchors(drum_path, threshold_ratio=0.45, min_gap_sec=0.05)
+            except Exception as exc:
+                print(f"[{self.name} Warning] 鼓過門 transient 降級提取失敗: {exc}")
+        return []
+
+    def _resolve_drums_path(self, blackboard: Blackboard) -> str:
+        stems = blackboard.get_val("stems", {}) or {}
+        extracted_stems = blackboard.get_val("extracted_stems", {}) or {}
+        drums_path = stems.get("drums") or extracted_stems.get("drums")
+        if isinstance(drums_path, dict):
+            drums_path = drums_path.get("path")
+        if drums_path:
+            return drums_path
+
+        stems_dir = blackboard.get_val("stems_dir", "")
+        if stems_dir:
+            candidate = os.path.join(stems_dir, "drums", "drums.wav")
+            if os.path.exists(candidate):
+                return candidate
+        return blackboard.get_val("audio_path", "")
+
+    def _detect_regions(self, beat_times: np.ndarray, event_times: list, median_interval: float) -> list:
+        regions = []
+        events = np.asarray(event_times, dtype=float)
+        dense_gap_sec = median_interval * self.density_interval_ratio
+
+        for idx, start in enumerate(beat_times):
+            end = beat_times[idx + 1] if idx + 1 < len(beat_times) else start + median_interval
+            if end <= start:
+                continue
+            local = events[(events >= start) & (events < end)]
+            if len(local) == 0:
+                continue
+            gaps = np.diff(local)
+            min_gap = float(np.min(gaps)) if len(gaps) else median_interval
+            is_dense_count = len(local) >= self.min_events_per_beat
+            is_fast_cluster = len(local) >= 3 and min_gap <= dense_gap_sec
+            if is_dense_count or is_fast_cluster:
+                regions.append((float(start), float(end)))
+        return regions
+
+    def _merge_regions(self, regions: list, merge_gap: float) -> list:
+        if not regions:
+            return []
+        ordered = sorted(regions)
+        merged = [list(ordered[0])]
+        for start, end in ordered[1:]:
+            if start <= merged[-1][1] + merge_gap:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        return [(float(start), float(end)) for start, end in merged]
+
+    def _write_report(self, blackboard, fill_zones, combined_zones, status, event_count, median_interval):
+        blackboard.set_val("drum_fill_regions", fill_zones)
+        blackboard.set_val("snap_exclusion_zones", combined_zones)
+        blackboard.set_val("drum_fill_report", {
+            "status": status,
+            "region_count": len(fill_zones),
+            "event_count": event_count,
+            "median_beat_interval_sec": round(float(median_interval), 6),
+            "min_events_per_beat": self.min_events_per_beat,
+            "density_interval_ratio": self.density_interval_ratio,
+            "regions": fill_zones,
+        })
+
+
 class OnsetPhaseRealignmentNode(BaseNode):
     """
     【基於 Ellis (2007) 論文：微秒級 Onset Peak 相位微調衛兵】
@@ -619,6 +924,7 @@ class OnsetPhaseRealignmentNode(BaseNode):
     - 消除神經網路與 FFT 濾波器的 15-40ms 系統延遲偏移
     """
     required_keys = ["beats", "y", "sr"]
+    optional_keys = ["snap_exclusion_zones", "drum_fill_regions"]
     output_keys = ["beats", "phase_realignment_report"]
 
     def __init__(self, search_window_ms: float = 35.0):
@@ -635,6 +941,7 @@ class OnsetPhaseRealignmentNode(BaseNode):
             return NodeStatus.SUCCESS
 
         try:
+            beats = np.asarray(beats, dtype=float)
             if y.ndim > 1:
                 y = y.mean(axis=0)
 
@@ -644,9 +951,17 @@ class OnsetPhaseRealignmentNode(BaseNode):
             search_win_sec = self.search_window_ms / 1000.0
             realigned_beats = beats.copy()
             adjusted_count = 0
+            skipped_exclusion_count = 0
+            exclusion_zones = (
+                list(blackboard.get_val("snap_exclusion_zones", []) or [])
+                + list(blackboard.get_val("drum_fill_regions", []) or [])
+            )
 
             for i in range(len(beats)):
                 t = beats[i, 0]
+                if _window_intersects_exclusion(t - search_win_sec, t + search_win_sec, exclusion_zones):
+                    skipped_exclusion_count += 1
+                    continue
                 mask = (times >= (t - search_win_sec)) & (times <= (t + search_win_sec))
                 if np.any(mask):
                     idx_range = np.where(mask)[0]
@@ -660,7 +975,8 @@ class OnsetPhaseRealignmentNode(BaseNode):
             blackboard.set_val("refined_beats", realigned_beats)
             blackboard.set_val("phase_realignment_report", {
                 "total_beats": len(beats),
-                "realigned_count": adjusted_count
+                "realigned_count": adjusted_count,
+                "skipped_exclusion_count": skipped_exclusion_count,
             })
             print(f"[{self.name}] 🎯 [Ellis 2007 Phase Alignment] 成功微米級精確校準 {adjusted_count}/{len(beats)} 個 Click 時間點相位！")
             return NodeStatus.SUCCESS
@@ -777,6 +1093,471 @@ class ViterbiTempoSmoothingNode(BaseNode):
             return NodeStatus.SUCCESS
 
 
+class BeatGridContinuityRepairNode(BaseNode):
+    """
+    Repair obvious beat grid discontinuities after local timing corrections.
+
+    The node is conservative: it only inserts beats for gaps close to integer
+    multiples of the median inter-beat interval, and only removes near-duplicate
+    beats that are far below the expected transition interval.
+    """
+    required_keys = ["beats"]
+    output_keys = ["beats", "beat_grid_repair_report"]
+
+    def __init__(
+        self,
+        insert_gap_ratio: float = 1.55,
+        duplicate_gap_ratio: float = 0.42,
+        max_insertions_per_gap: int = 3,
+    ):
+        super().__init__("BeatGridContinuityRepairNode")
+        self.insert_gap_ratio = insert_gap_ratio
+        self.duplicate_gap_ratio = duplicate_gap_ratio
+        self.max_insertions_per_gap = max_insertions_per_gap
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = _coerce_beat_matrix(blackboard.get_val("beats"))
+        if len(beats) < 4:
+            return NodeStatus.SUCCESS
+
+        try:
+            order = np.argsort(beats[:, 0])
+            beats = beats[order]
+            intervals = np.diff(beats[:, 0])
+            valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+            if len(valid) == 0:
+                return NodeStatus.SUCCESS
+
+            median_interval = float(np.median(valid))
+            repaired = [beats[0].copy()]
+            inserted_count = 0
+            removed_count = 0
+
+            for row in beats[1:]:
+                prev = repaired[-1]
+                gap = float(row[0] - prev[0])
+                if gap <= median_interval * self.duplicate_gap_ratio:
+                    removed_count += 1
+                    continue
+
+                if gap >= median_interval * self.insert_gap_ratio:
+                    expected_steps = int(round(gap / median_interval))
+                    insertions = max(0, expected_steps - 1)
+                    if 0 < insertions <= self.max_insertions_per_gap:
+                        for step in range(1, insertions + 1):
+                            inserted = prev.copy()
+                            inserted[0] = prev[0] + median_interval * step
+                            repaired.append(inserted)
+                            inserted_count += 1
+
+                repaired.append(row.copy())
+
+            repaired_arr = np.asarray(repaired, dtype=float)
+            first_label = int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1
+            repaired_arr = _relabel_beat_numbers(repaired_arr, first_label=first_label)
+
+            blackboard.set_val("beat_grid_repair_report", {
+                "total_beats_before": int(len(beats)),
+                "total_beats_after": int(len(repaired_arr)),
+                "inserted_count": int(inserted_count),
+                "removed_count": int(removed_count),
+                "median_interval_sec": round(median_interval, 6),
+                "status": "REPAIRED" if inserted_count or removed_count else "PASS",
+            })
+
+            if inserted_count or removed_count:
+                blackboard.set_val("beats", repaired_arr)
+                blackboard.set_val("refined_beats", repaired_arr)
+                print(f"[{self.name}] 修復節拍網格：補 {inserted_count} 拍、移除 {removed_count} 個近重複拍。")
+
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] 節拍網格連續性修復異常: {e}")
+            return NodeStatus.SUCCESS
+
+
+class TempoOscillationDampingNode(BaseNode):
+    """
+    Damp impossible fast/slow tempo oscillations while preserving real ramps.
+
+    A musical accel/rit usually changes interval direction consistently. A
+    tracker error often appears as one very short interval followed by one very
+    long interval, or the reverse. This node only corrects that alternating
+    pattern, and skips opening/ending beats plus dense transition zones.
+    """
+    required_keys = ["beats"]
+    optional_keys = ["snap_exclusion_zones", "drum_fill_regions"]
+    output_keys = ["beats", "tempo_oscillation_report"]
+
+    def __init__(
+        self,
+        oscillation_ratio: float = 0.30,
+        pair_sum_tolerance: float = 0.45,
+        edge_beat_guard: int = 4,
+        min_quality_improvement: float = 1.0,
+    ):
+        super().__init__("TempoOscillationDampingNode")
+        self.oscillation_ratio = oscillation_ratio
+        self.pair_sum_tolerance = pair_sum_tolerance
+        self.edge_beat_guard = edge_beat_guard
+        self.min_quality_improvement = min_quality_improvement
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = _coerce_beat_matrix(blackboard.get_val("beats"))
+        if len(beats) < 7:
+            return NodeStatus.SUCCESS
+
+        try:
+            beats = beats[np.argsort(beats[:, 0])]
+            intervals = np.diff(beats[:, 0])
+            valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+            if len(valid) == 0:
+                return NodeStatus.SUCCESS
+
+            median_interval = float(np.median(valid))
+            candidate = beats.copy()
+            corrected_indexes = []
+            skipped_edge_count = 0
+            skipped_exclusion_count = 0
+            exclusion_zones = (
+                list(blackboard.get_val("snap_exclusion_zones", []) or [])
+                + list(blackboard.get_val("drum_fill_regions", []) or [])
+            )
+
+            for beat_index in range(1, len(beats) - 1):
+                left = float(beats[beat_index, 0] - beats[beat_index - 1, 0])
+                right = float(beats[beat_index + 1, 0] - beats[beat_index, 0])
+                if left <= 0.05 or right <= 0.05:
+                    continue
+
+                if beat_index < self.edge_beat_guard or beat_index >= len(beats) - self.edge_beat_guard:
+                    if self._is_oscillation_pair(left, right, median_interval):
+                        skipped_edge_count += 1
+                    continue
+
+                window_start = float(beats[beat_index - 1, 0])
+                window_end = float(beats[beat_index + 1, 0])
+                if _window_intersects_exclusion(window_start, window_end, exclusion_zones):
+                    if self._is_oscillation_pair(left, right, median_interval):
+                        skipped_exclusion_count += 1
+                    continue
+
+                if not self._is_oscillation_pair(left, right, median_interval):
+                    continue
+
+                proposed_time = (float(beats[beat_index - 1, 0]) + float(beats[beat_index + 1, 0])) / 2.0
+                if abs(proposed_time - float(beats[beat_index, 0])) < 0.012:
+                    continue
+                candidate[beat_index, 0] = proposed_time
+                corrected_indexes.append(beat_index)
+
+            if not corrected_indexes:
+                self._write_report(
+                    blackboard,
+                    "PASS",
+                    median_interval,
+                    [],
+                    skipped_edge_count,
+                    skipped_exclusion_count,
+                    current_score=None,
+                    candidate_score=None,
+                )
+                return NodeStatus.SUCCESS
+
+            candidate = _relabel_beat_numbers(
+                candidate,
+                first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1,
+            )
+            current_quality = _score_beat_grid_quality(beats)
+            candidate_quality = _score_beat_grid_quality(candidate)
+            current_oscillation_count = self._count_oscillation_pairs(beats, median_interval)
+            candidate_oscillation_count = self._count_oscillation_pairs(candidate, median_interval)
+            accepted = (
+                candidate_quality["score"] >= current_quality["score"] + self.min_quality_improvement
+                or candidate_oscillation_count < current_oscillation_count
+            )
+            status = "DAMPED" if accepted else "REJECTED"
+
+            self._write_report(
+                blackboard,
+                status,
+                median_interval,
+                corrected_indexes,
+                skipped_edge_count,
+                skipped_exclusion_count,
+                current_score=current_quality["score"],
+                candidate_score=candidate_quality["score"],
+                current_oscillation_count=current_oscillation_count,
+                candidate_oscillation_count=candidate_oscillation_count,
+            )
+
+            if accepted:
+                blackboard.set_val("beats", candidate)
+                blackboard.set_val("refined_beats", candidate)
+                print(
+                    f"[{self.name}] 抑制 tempo 快慢震盪：修正 {len(corrected_indexes)} 拍，"
+                    f"score {current_quality['score']:.1f} -> {candidate_quality['score']:.1f}"
+                )
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] tempo 震盪抑制異常: {e}")
+            return NodeStatus.SUCCESS
+
+    def _is_oscillation_pair(self, left: float, right: float, median_interval: float) -> bool:
+        short_limit = median_interval * (1.0 - self.oscillation_ratio)
+        long_limit = median_interval * (1.0 + self.oscillation_ratio)
+        is_fast_slow = left <= short_limit and right >= long_limit
+        is_slow_fast = left >= long_limit and right <= short_limit
+        if not (is_fast_slow or is_slow_fast):
+            return False
+        pair_sum = left + right
+        expected_sum = 2.0 * median_interval
+        return abs(pair_sum - expected_sum) / (expected_sum + 1e-6) <= self.pair_sum_tolerance
+
+    def _count_oscillation_pairs(self, beats, median_interval: float) -> int:
+        intervals = np.diff(beats[:, 0])
+        count = 0
+        for left, right in zip(intervals[:-1], intervals[1:]):
+            if self._is_oscillation_pair(float(left), float(right), median_interval):
+                count += 1
+        return count
+
+    def _write_report(
+        self,
+        blackboard,
+        status,
+        median_interval,
+        corrected_indexes,
+        skipped_edge_count,
+        skipped_exclusion_count,
+        current_score,
+        candidate_score,
+        current_oscillation_count=None,
+        candidate_oscillation_count=None,
+    ):
+        blackboard.set_val("tempo_oscillation_report", {
+            "status": status,
+            "corrected_count": int(len(corrected_indexes)),
+            "corrected_indexes": [int(i) for i in corrected_indexes],
+            "skipped_edge_count": int(skipped_edge_count),
+            "skipped_exclusion_count": int(skipped_exclusion_count),
+            "median_interval_sec": round(float(median_interval), 6),
+            "oscillation_ratio": self.oscillation_ratio,
+            "edge_beat_guard": self.edge_beat_guard,
+            "current_score": current_score,
+            "candidate_score": candidate_score,
+            "current_oscillation_count": current_oscillation_count,
+            "candidate_oscillation_count": candidate_oscillation_count,
+            "min_quality_improvement": self.min_quality_improvement,
+        })
+
+
+class DownbeatPhaseConsistencyNode(BaseNode):
+    """
+    Choose the most plausible 4/4 bar phase from section starts and kick anchors.
+
+    This mirrors DBN/HMM bar-position tracking at a lightweight level: every
+    candidate phase is scored as a coherent beat-position sequence, then the
+    best phase is adopted only when it clearly improves external alignment.
+    """
+    required_keys = ["beats"]
+    optional_keys = ["sections", "kick_anchors"]
+    output_keys = ["beats", "downbeat_phase_report"]
+
+    def __init__(self, beats_per_bar: int = 4, min_improvement: float = 0.08):
+        super().__init__("DownbeatPhaseConsistencyNode")
+        self.beats_per_bar = beats_per_bar
+        self.min_improvement = min_improvement
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = _coerce_beat_matrix(blackboard.get_val("beats"))
+        if len(beats) < self.beats_per_bar:
+            return NodeStatus.SUCCESS
+
+        try:
+            sections = blackboard.get_val("sections", []) or []
+            kick_anchors = blackboard.get_val("kick_anchors", [])
+            current_labels = np.rint(beats[:, 1]).astype(int)
+            current_first = int(current_labels[0]) if 1 <= int(current_labels[0]) <= self.beats_per_bar else 1
+            current_score = self._phase_score(beats, current_first, sections, kick_anchors)
+
+            candidates = []
+            for first_label in range(1, self.beats_per_bar + 1):
+                score = self._phase_score(beats, first_label, sections, kick_anchors)
+                candidates.append((score, first_label))
+            best_score, best_first = max(candidates, key=lambda item: item[0])
+
+            relabeled = _relabel_beat_numbers(beats, first_label=best_first, beats_per_bar=self.beats_per_bar)
+            changed = best_first != current_first and best_score >= current_score + self.min_improvement
+            if changed:
+                blackboard.set_val("beats", relabeled)
+                blackboard.set_val("refined_beats", relabeled)
+
+            blackboard.set_val("downbeat_phase_report", {
+                "status": "RELABELED" if changed else "PASS",
+                "current_first_label": int(current_first),
+                "selected_first_label": int(best_first),
+                "current_score": round(float(current_score), 4),
+                "selected_score": round(float(best_score), 4),
+                "min_improvement": self.min_improvement,
+            })
+
+            if changed:
+                print(f"[{self.name}] 小節相位重標：first_label {current_first} -> {best_first}，score {current_score:.2f} -> {best_score:.2f}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] 小節相位一致化異常: {e}")
+            return NodeStatus.SUCCESS
+
+    def _phase_score(self, beats, first_label: int, sections, kick_anchors) -> float:
+        candidate = _relabel_beat_numbers(beats, first_label=first_label, beats_per_bar=self.beats_per_bar)
+        downbeat_times = candidate[candidate[:, 1] == 1, 0]
+        if len(downbeat_times) == 0:
+            return 0.0
+
+        section_scores = []
+        for sec in sections:
+            if not isinstance(sec, dict):
+                continue
+            try:
+                sec_t = float(sec.get("start_time", sec.get("start", 0.0)))
+            except (TypeError, ValueError):
+                continue
+            nearest = float(np.min(np.abs(downbeat_times - sec_t)))
+            section_scores.append(max(0.0, 1.0 - nearest / 0.35))
+        section_score = float(np.mean(section_scores)) if section_scores else 0.5
+
+        anchor_scores = []
+        try:
+            anchors = np.asarray(kick_anchors, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            anchors = np.asarray([], dtype=float)
+        for anchor in anchors:
+            nearest = float(np.min(np.abs(downbeat_times - float(anchor))))
+            anchor_scores.append(max(0.0, 1.0 - nearest / 0.18))
+        anchor_score = float(np.mean(anchor_scores)) if len(anchor_scores) else 0.5
+
+        return 0.68 * section_score + 0.32 * anchor_score
+
+
+class KickAnchorConsensusSnapNode(BaseNode):
+    """
+    Snap beat times to nearby kick anchors only when the full grid improves.
+
+    This is intentionally quality-gated because kick tracks often contain
+    syncopation and fills. A candidate grid is built from nearby anchors, scored
+    against tempo continuity and anchor alignment, and adopted only if it wins.
+    """
+    required_keys = ["beats"]
+    optional_keys = ["kick_anchors", "sections", "snap_exclusion_zones", "drum_fill_regions"]
+    output_keys = ["beats", "kick_anchor_snap_report"]
+
+    def __init__(self, max_snap_ms: float = 90.0, min_quality_improvement: float = 2.0):
+        super().__init__("KickAnchorConsensusSnapNode")
+        self.max_snap_ms = max_snap_ms
+        self.min_quality_improvement = min_quality_improvement
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = _coerce_beat_matrix(blackboard.get_val("beats"))
+        if len(beats) < 4:
+            return NodeStatus.SUCCESS
+
+        try:
+            anchors = np.asarray(blackboard.get_val("kick_anchors", []), dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            anchors = np.asarray([], dtype=float)
+        anchors = anchors[np.isfinite(anchors)]
+        if len(anchors) == 0:
+            return NodeStatus.SUCCESS
+
+        try:
+            intervals = np.diff(beats[:, 0])
+            valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+            if len(valid) == 0:
+                return NodeStatus.SUCCESS
+            median_interval = float(np.median(valid))
+            max_snap_sec = min(self.max_snap_ms / 1000.0, median_interval * 0.22)
+            exclusion_zones = (
+                list(blackboard.get_val("snap_exclusion_zones", []) or [])
+                + list(blackboard.get_val("drum_fill_regions", []) or [])
+            )
+
+            candidate = beats.copy()
+            snapped_count = 0
+            used_anchor_indexes = set()
+            for idx, row in enumerate(beats):
+                t = float(row[0])
+                if _window_intersects_exclusion(t - max_snap_sec, t + max_snap_sec, exclusion_zones):
+                    continue
+                nearest_index = int(np.argmin(np.abs(anchors - t)))
+                if nearest_index in used_anchor_indexes:
+                    continue
+                nearest_anchor = float(anchors[nearest_index])
+                offset = abs(nearest_anchor - t)
+                if 0.012 <= offset <= max_snap_sec:
+                    candidate[idx, 0] = nearest_anchor
+                    used_anchor_indexes.add(nearest_index)
+                    snapped_count += 1
+
+            if snapped_count == 0:
+                return NodeStatus.SUCCESS
+
+            candidate = candidate[np.argsort(candidate[:, 0])]
+            candidate = _relabel_beat_numbers(candidate, first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1)
+            candidate_intervals = np.diff(candidate[:, 0])
+            if np.any(candidate_intervals <= median_interval * 0.45):
+                self._write_report(blackboard, beats, candidate, snapped_count, accepted=False, reason="candidate_interval_collision")
+                return NodeStatus.SUCCESS
+
+            sections = blackboard.get_val("sections", []) or []
+            current_quality = _score_beat_grid_quality(beats, kick_anchors=anchors, sections=sections)
+            candidate_quality = _score_beat_grid_quality(candidate, kick_anchors=anchors, sections=sections)
+            accepted = candidate_quality["score"] >= current_quality["score"] + self.min_quality_improvement
+
+            self._write_report(
+                blackboard,
+                beats,
+                candidate,
+                snapped_count,
+                accepted=accepted,
+                reason="quality_improved" if accepted else "quality_not_better",
+                current_quality=current_quality,
+                candidate_quality=candidate_quality,
+            )
+            if accepted:
+                blackboard.set_val("beats", candidate)
+                blackboard.set_val("refined_beats", candidate)
+                print(f"[{self.name}] kick anchor 共識吸附：{snapped_count} 拍，score {current_quality['score']:.1f} -> {candidate_quality['score']:.1f}")
+
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] kick anchor 共識吸附異常: {e}")
+            return NodeStatus.SUCCESS
+
+    def _write_report(
+        self,
+        blackboard,
+        beats,
+        candidate,
+        snapped_count,
+        accepted,
+        reason,
+        current_quality=None,
+        candidate_quality=None,
+    ):
+        current_quality = current_quality or _score_beat_grid_quality(beats)
+        candidate_quality = candidate_quality or _score_beat_grid_quality(candidate)
+        blackboard.set_val("kick_anchor_snap_report", {
+            "status": "APPLIED" if accepted else "REJECTED",
+            "reason": reason,
+            "snapped_count": int(snapped_count),
+            "current_score": current_quality.get("score", 0.0),
+            "candidate_score": candidate_quality.get("score", 0.0),
+            "min_quality_improvement": self.min_quality_improvement,
+            "max_snap_ms": self.max_snap_ms,
+        })
+
+
 class BeatAlignmentVerifierGuardNode(BaseNode):
     """
     【節拍與段落對齊閉環驗證衛兵 (Closed-Loop Beat & Section Alignment Verifier Guard)】
@@ -848,14 +1629,16 @@ class DrumsKickBeatFallbackNode(BaseNode):
     optional_keys = ["stems", "rhythm_track_path", "audio_path", "kick_anchors"]
     output_keys = ["beats", "fallback_beat_recalculated"]
 
-    def __init__(self):
+    def __init__(self, min_quality_improvement: float = 4.0):
         super().__init__("DrumsKickBeatFallbackNode")
+        self.min_quality_improvement = min_quality_improvement
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         import librosa
         stems = blackboard.get_val("stems", {})
         drums_path = stems.get("drums") or stems.get("kick") or blackboard.get_val("rhythm_track_path")
         audio_path = blackboard.get_val("audio_path")
+        existing_beats = blackboard.get_val("beats")
 
         target_path = drums_path if (drums_path and os.path.exists(drums_path)) else audio_path
         if not target_path or not os.path.exists(target_path):
@@ -869,12 +1652,18 @@ class DrumsKickBeatFallbackNode(BaseNode):
             bpm, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
             beat_times = librosa.frames_to_time(beat_frames, sr=sr)
 
-            if len(beat_times) == 0:
-                kick_anchors = blackboard.get_val("kick_anchors", [])
-                if len(kick_anchors) > 0:
-                    beat_times = kick_anchors
+            if len(beat_times) < 4:
+                kick_anchors = np.asarray(blackboard.get_val("kick_anchors", []), dtype=float).reshape(-1)
+                duration = len(y) / sr
+                if len(kick_anchors) >= 2:
+                    anchor_diffs = np.diff(np.sort(kick_anchors))
+                    beat_interval = float(np.median(anchor_diffs[anchor_diffs > 0.05])) if np.any(anchor_diffs > 0.05) else 0.5
+                    if beat_interval > 1.2:
+                        beat_interval = beat_interval / 4.0
+                    beat_times = np.arange(float(np.min(kick_anchors)), max(duration, float(np.max(kick_anchors)) + beat_interval), beat_interval)
+                elif len(kick_anchors) == 1:
+                    beat_times = np.arange(float(kick_anchors[0]), duration, 0.5)
                 else:
-                    duration = len(y) / sr
                     beat_times = np.arange(0, duration, 0.5)
                 bpm = 120.0
 
@@ -885,14 +1674,159 @@ class DrumsKickBeatFallbackNode(BaseNode):
 
             bpm_val = float(np.atleast_1d(bpm)[0]) if hasattr(bpm, "__len__") else float(bpm)
             beats_arr = np.array(beats)
+
+            existing_quality = _score_beat_grid_quality(
+                existing_beats,
+                kick_anchors=blackboard.get_val("kick_anchors", []),
+                sections=blackboard.get_val("sections", []),
+                alignment_score=blackboard.get_val("beat_alignment_score"),
+            )
+            candidate_quality = _score_beat_grid_quality(
+                beats_arr,
+                kick_anchors=blackboard.get_val("kick_anchors", []),
+                sections=blackboard.get_val("sections", []),
+            )
+            report = {
+                "existing_score": existing_quality["score"],
+                "candidate_score": candidate_quality["score"],
+                "min_quality_improvement": self.min_quality_improvement,
+                "candidate_bpm": round(bpm_val, 3),
+                "candidate_count": int(len(beats_arr)),
+                "existing_count": int(len(_coerce_beat_matrix(existing_beats))),
+            }
+            blackboard.set_val("fallback_candidate_report", report)
+
+            if len(_coerce_beat_matrix(existing_beats)) >= 4 and candidate_quality["score"] < existing_quality["score"] + self.min_quality_improvement:
+                blackboard.set_val("fallback_beat_recalculated", False)
+                blackboard.set_val("fallback_beat_rejected", True)
+                blackboard.set_val("fallback_rejection_reason", "candidate_quality_not_better")
+                print(
+                    f"[{self.name}] 保留原融合節拍。Fallback 候選分數 {candidate_quality['score']:.1f} "
+                    f"未明顯高於原分數 {existing_quality['score']:.1f}。"
+                )
+                return NodeStatus.SUCCESS
+
             blackboard.set_val("beats", beats_arr)
             blackboard.set_val("refined_beats", beats_arr)
             blackboard.set_val("fallback_beat_recalculated", True)
+            blackboard.set_val("fallback_beat_rejected", False)
             print(f"[{self.name}] 🔄 鼓組降級重算成功！重新校正產出 {len(beats)} 個拍點 (BPM: {bpm_val:.1f})")
             return NodeStatus.SUCCESS
         except Exception as e:
             print(f"[{self.name} Warning] 鼓軌降級重算失敗: {e}")
             return NodeStatus.FAILURE
+
+
+class CommercialBeatQualityNode(BaseNode):
+    """
+    Final non-blocking commercial readiness audit for beat/click quality.
+
+    This node does not claim the output is commercially releasable. It writes a
+    conservative 0-100 diagnostic score so listening tests can be compared with
+    measurable rhythm risks.
+    """
+    required_keys = ["beats"]
+    optional_keys = [
+        "refined_beats",
+        "beat_validation",
+        "beat_alignment_score",
+        "phase_realignment_report",
+        "snap_offsets_ms",
+        "smoothing_report",
+        "tempo_oscillation_report",
+        "fallback_beat_recalculated",
+        "fallback_beat_rejected",
+        "kick_anchors",
+        "sections",
+    ]
+    output_keys = ["commercial_beat_quality"]
+
+    def __init__(self, commercial_threshold: float = 98.0):
+        super().__init__("CommercialBeatQualityNode")
+        self.commercial_threshold = commercial_threshold
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
+        base = _score_beat_grid_quality(
+            beats,
+            kick_anchors=blackboard.get_val("kick_anchors", []),
+            sections=blackboard.get_val("sections", []),
+            alignment_score=blackboard.get_val("beat_alignment_score"),
+        )
+
+        score = float(base["score"])
+        warnings = list(base.get("warnings", []))
+
+        beat_validation = blackboard.get_val("beat_validation", {}) or {}
+        if beat_validation.get("status") == "WARN":
+            score -= 4.0
+            warnings.extend(beat_validation.get("warnings", []))
+        elif beat_validation.get("status") == "FAIL":
+            score -= 18.0
+            warnings.extend(beat_validation.get("errors", []))
+
+        smoothing = blackboard.get_val("smoothing_report", {}) or {}
+        outliers = int(smoothing.get("outlier_count", 0) or 0)
+        if outliers:
+            score -= min(12.0, outliers * 2.0)
+            warnings.append(f"tempo_smoothing_outliers={outliers}")
+
+        oscillation_report = blackboard.get_val("tempo_oscillation_report", {}) or {}
+        oscillation_count = int(oscillation_report.get("current_oscillation_count", 0) or 0)
+        if oscillation_report.get("status") == "REJECTED" and oscillation_count:
+            score -= min(10.0, oscillation_count * 3.0)
+            warnings.append(f"unresolved_tempo_oscillation_count={oscillation_count}")
+        elif oscillation_report.get("status") == "DAMPED":
+            corrected = int(oscillation_report.get("corrected_count", 0) or 0)
+            if corrected:
+                warnings.append(f"tempo_oscillation_damped={corrected}")
+
+        snap_offsets = blackboard.get_val("snap_offsets_ms", []) or []
+        if snap_offsets:
+            abs_offsets = np.abs(np.asarray(snap_offsets, dtype=float))
+            p95 = float(np.percentile(abs_offsets, 95))
+            if p95 > 25.0:
+                score -= min(10.0, (p95 - 25.0) / 3.0)
+                warnings.append(f"snap_p95_ms={p95:.1f}")
+        else:
+            p95 = None
+
+        phase_report = blackboard.get_val("phase_realignment_report", {}) or {}
+        total_beats = int(phase_report.get("total_beats", 0) or 0)
+        adjusted_count = int(phase_report.get("adjusted_count", 0) or 0)
+        phase_adjust_ratio = (adjusted_count / total_beats) if total_beats else 0.0
+        if phase_adjust_ratio > 0.65 and (p95 is None or p95 > 10.0):
+            score -= 4.0
+            warnings.append("large_phase_realignment_ratio")
+
+        if blackboard.get_val("fallback_beat_recalculated", False):
+            score -= 6.0
+            warnings.append("fallback_recalculated_final_grid")
+
+        if blackboard.get_val("fallback_beat_rejected", False):
+            warnings.append("fallback_candidate_rejected_to_preserve_grid")
+
+        score = round(float(np.clip(score, 0.0, 100.0)), 2)
+        if score >= self.commercial_threshold:
+            status = "COMMERCIAL_READY"
+        elif score >= 85.0:
+            status = "REVIEW_REQUIRED"
+        else:
+            status = "NEEDS_MANUAL_EDIT"
+
+        report = {
+            **base,
+            "score": score,
+            "status": status,
+            "commercial_threshold": self.commercial_threshold,
+            "snap_p95_ms": round(p95, 3) if p95 is not None else None,
+            "phase_adjust_ratio": round(float(phase_adjust_ratio), 4),
+            "warnings": list(dict.fromkeys(warnings)),
+        }
+        blackboard.set_val("commercial_beat_quality", report)
+        print(f"[{self.name}] 商用品質節奏分數: {score:.1f}/100 ({status})")
+        return NodeStatus.SUCCESS
+
 
 class MultiModelBeatEnsembleNode(BaseNode):
     """
@@ -978,8 +1912,16 @@ class MicroTimingTransientSnapNode(BaseNode):
     - 將 Click 觸發時間戳強行磁吸 (Snap) 至 0 毫秒極致真實對齊點
     """
     required_keys = ["beats"]
-    optional_keys = ["stems", "extracted_stems", "audio_path", "sr", "y"]
-    output_keys = ["refined_beats", "snap_offsets_ms"]
+    optional_keys = [
+        "stems",
+        "extracted_stems",
+        "audio_path",
+        "sr",
+        "y",
+        "snap_exclusion_zones",
+        "drum_fill_regions",
+    ]
+    output_keys = ["refined_beats", "snap_offsets_ms", "snap_skip_report"]
 
     def __init__(self, search_window_ms: float = 35.0):
         super().__init__("MicroTimingTransientSnapNode")
@@ -990,6 +1932,7 @@ class MicroTimingTransientSnapNode(BaseNode):
         beats = blackboard.get_val("beats")
         if beats is None or len(beats) == 0:
             return NodeStatus.SUCCESS
+        beats = np.asarray(beats, dtype=float)
 
         stems = blackboard.get_val("stems", {})
         extracted_stems = blackboard.get_val("extracted_stems", {})
@@ -1035,6 +1978,11 @@ class MicroTimingTransientSnapNode(BaseNode):
         # 3. 逐拍在 ±35ms 視窗內磁吸至 Peak Transient
         refined_rows = []
         offsets_ms = []
+        skipped_exclusion_count = 0
+        exclusion_zones = (
+            list(blackboard.get_val("snap_exclusion_zones", []) or [])
+            + list(blackboard.get_val("drum_fill_regions", []) or [])
+        )
 
         total_samples = len(audio_target)
         win_samples = int(self.window_sec * sr)
@@ -1050,6 +1998,10 @@ class MicroTimingTransientSnapNode(BaseNode):
 
             left_idx = max(0, center_idx - win_samples)
             right_idx = min(total_samples, center_idx + win_samples)
+            if _window_intersects_exclusion(left_idx / float(sr), right_idx / float(sr), exclusion_zones):
+                refined_rows.append([t_sec, b_num])
+                skipped_exclusion_count += 1
+                continue
 
             search_region = envelope[left_idx:right_idx]
             if len(search_region) > 0:
@@ -1068,8 +2020,12 @@ class MicroTimingTransientSnapNode(BaseNode):
         blackboard.set_val("refined_beats", refined_matrix)
         blackboard.set_val("beats", refined_matrix)
         blackboard.set_val("snap_offsets_ms", offsets_ms)
+        blackboard.set_val("snap_skip_report", {
+            "skipped_exclusion_count": skipped_exclusion_count,
+            "exclusion_zone_count": len(exclusion_zones),
+        })
 
-        print(f"[{self.name}] 🧲 0ms 聲學瞬態 Peak 磁吸完成！校正 {len(refined_matrix)} 個拍點，平均偏移調整: {avg_offset:.2f} ms")
+        print(f"[{self.name}] 🧲 0ms 聲學瞬態 Peak 磁吸完成！校正 {len(refined_matrix)} 個拍點，平均偏移調整: {avg_offset:.2f} ms，避開 {skipped_exclusion_count} 個過門/切分區。")
         return NodeStatus.SUCCESS
 
 
@@ -1117,14 +2073,20 @@ def build_beat_refinement_nodes() -> list:
         ReEntryReAnchoringNode(),
         BeatValidationNode(),
         DownbeatRefineNode(),
+        DrumFillDetectionNode(),
         OnsetPhaseRealignmentNode(),
         MicroTimingTransientSnapNode(search_window_ms=35.0),
         KickBassDownbeatVerifierNode(),
         ViterbiTempoSmoothingNode(),
+        BeatGridContinuityRepairNode(),
+        TempoOscillationDampingNode(),
+        DownbeatPhaseConsistencyNode(),
+        KickAnchorConsensusSnapNode(),
         FallbackNode("BeatAlignmentVerificationAndFallback", [
             BeatAlignmentVerifierGuardNode(confidence_threshold=0.70),
             DrumsKickBeatFallbackNode(),
-        ])
+        ]),
+        CommercialBeatQualityNode(),
     ]
 
 

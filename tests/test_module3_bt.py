@@ -1,4 +1,7 @@
+import os
+
 import numpy as np
+import soundfile as sf
 
 from pgm_craft.pipeline import PGMCraftEngine
 from pgm_craft.workflow.audio_nodes import MeasureMapNode, SectionStructureNode
@@ -7,6 +10,7 @@ from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_bt import (
     BeatGridSynthesisNode,
     CandidateTrackBuildNode,
+    Module3BarStartV2MergeNode,
     Module3OutputSummaryNode,
     PerTrackBeatAnalysisNode,
     PerSegmentConfidenceNode,
@@ -64,6 +68,7 @@ def test_module3_tree_is_narrow_click_workflow():
     assert "MicroTimingTransientSnapNode" in names
     assert "ViterbiTempoSmoothingNode" in names
     assert "SubdivisionGridNode" in names
+    assert "Module3BarStartV2MergeNode" in names
     assert "Module3ExportRoot" in names
     assert "Module3BackingWithClickNode" in names
 
@@ -71,6 +76,69 @@ def test_module3_tree_is_narrow_click_workflow():
     assert "PodcastSpeechNode" not in names
     assert "VoiceSplitMIDIExportNode" not in names
     assert "PackageRoot" not in names
+
+
+def test_module3_barstart_v2_merge_node_promotes_v2_grid_and_preserves_legacy_artifacts(tmp_path):
+    audio_path = tmp_path / "source.wav"
+    sf.write(audio_path, np.zeros(22050 * 4, dtype=np.float32), 22050)
+
+    bb = Blackboard()
+    beats = np.array([
+        [0.0, 1],
+        [0.5, 2],
+        [1.0, 3],
+        [1.5, 4],
+        [2.0, 1],
+        [2.5, 2],
+        [3.0, 3],
+        [3.5, 4],
+    ], dtype=float)
+    bb.set_val("beats", beats.copy())
+    bb.set_val("refined_beats", beats.copy())
+    bb.set_val("measure_map", [
+        {"measure": 1, "start_time": 0.0, "end_time": 2.0},
+        {"measure": 2, "start_time": 2.0, "end_time": 4.0},
+    ])
+    bb.set_val("click_track", "main_click.wav")
+    bb.set_val("audio_path", str(audio_path))
+    bb.set_val("project_dir", str(tmp_path))
+
+    assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
+
+    expected_v2_beats = np.array([
+        [0.0, 1],
+        [0.5, 2],
+        [1.0, 3],
+        [1.5, 4],
+        [2.0, 1],
+        [2.5, 2],
+        [3.0, 3],
+        [3.5, 4],
+    ], dtype=float)
+    np.testing.assert_array_equal(bb.get_val("beats"), expected_v2_beats)
+    np.testing.assert_array_equal(bb.get_val("refined_beats"), expected_v2_beats)
+    np.testing.assert_array_equal(bb.get_val("module3_legacy_beats"), beats)
+    assert bb.get_val("click_track") == "main_click.wav"
+    assert bb.get_val("barstart_v2_promoted_to_main") is True
+    assert bb.get_val("barstart_v2_click_track").endswith("barstart_v2_click_track.wav")
+    assert bb.get_val("barstart_v2_mix_with_click").endswith("barstart_v2_mix_with_click.wav")
+    assert bb.get_val("module3_legacy_click_track").endswith("legacy_click_track.wav")
+    assert bb.get_val("module3_legacy_mix_with_click").endswith("legacy_mix_with_click.wav")
+    assert os.path.exists(bb.get_val("barstart_v2_click_track"))
+    assert os.path.exists(bb.get_val("barstart_v2_mix_with_click"))
+    assert os.path.exists(bb.get_val("module3_legacy_click_track"))
+    assert os.path.exists(bb.get_val("module3_legacy_mix_with_click"))
+    assert bb.get_val("committed_bar_starts") == [0.0, 2.0]
+    assert bb.get_val("bar_grid_boundaries") == [0.0, 2.0, 4.0]
+    report = bb.get_val("barstart_v2_report")
+    assert report["status"] == "PROMOTED_TO_MODULE3_DEFAULT"
+    assert report["replaces_module3_click"] is True
+    assert report["does_not_replace_module3_click"] is False
+    assert report["manual_listening_evaluation"]["original_score"] == 88
+    assert report["manual_listening_evaluation"]["barstart_v2_score"] == 95
+    assert report["comparison_artifacts"]["status"] == "EXPORTED"
+    assert report["legacy_artifacts"]["status"] == "EXPORTED"
+    assert report["promotion_gate"]["status"] == "EXPERIMENTAL_ONLY"
 
 
 def test_module3_uses_shared_stage3_nodes_in_module3_composition():
@@ -90,6 +158,7 @@ def test_module3_uses_shared_stage3_nodes_in_module3_composition():
         "ReEntryReAnchoringNode",
         "BeatValidationNode",
         "DownbeatRefineNode",
+        "DrumFillDetectionNode",
         "OnsetPhaseRealignmentNode",
         "MicroTimingTransientSnapNode",
         "KickBassDownbeatVerifierNode",

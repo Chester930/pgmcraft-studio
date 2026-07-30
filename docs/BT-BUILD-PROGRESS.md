@@ -1,6 +1,6 @@
 # BT 建構進度同步紀錄
 
-**最後更新：** 2026-07-27
+**最後更新：** 2026-07-29
 
 本文件是 PGMCraft Studio 全自動音訊工作流 BT 的**實作進度活文件**。
 每次討論與實作完成後同步更新，避免重複討論或重建相同決策。
@@ -326,6 +326,17 @@ Sequence [StemSeparationRoot]
 | **Pass 100** | **🎉 100 大滿貫！Scenario Registry 狀態機工作流命名與聯動選單一致性對齊** | 1 | ✅ 2026-07-27 |
 | **Pass 101** | **全自動 BT 總控 (FullAutoDemixingBTEngine) 純伴奏合成 (SynthesizeFullAutoBackingNode ➔ backing.wav / backing_with_click.wav)** | 2 | ✅ 2026-07-27 |
 | **Pass 102** | **閉環驗證與自動重試 (BeatAlignmentVerifierGuardNode & DrumsKickBeatFallbackNode ➔ 段落對齊與鼓軌重算)** | 3 | ✅ 2026-07-27 |
+| **Pass 103** | **Stage 3 多模型 Ensemble 與 MicroTimingTransientSnapNode 共用 refinement 串接** | 3 | ✅ 2026-07-29 |
+| **Pass 104** | **鼓過門密集擊點排除區 (DrumFillDetectionNode) 與 click snap 防追逐 guard** | 4 | ✅ 2026-07-29 |
+| **Pass 105** | **Module 3 BarStart v2 skeleton 與 meter-aware grid 基礎節點** | 3 | ✅ 2026-07-29 |
+| **Pass 106** | **Module 3 BarStart v2 rolling probe window 與 ±1 秒自適應策略** | 4 | ✅ 2026-07-29 |
+| **Pass 107** | **Module 3 BarStart v2 candidate / commit contract 與 unresolved span 記錄** | 4 | ✅ 2026-07-29 |
+| **Pass 108** | **Module 3 BarStart v2 drums / drum-substem evidence 候選產生** | 4 | ✅ 2026-07-29 |
+| **Pass 109** | **Module 3 BarStart v2 drums + bass bar search 候選補強** | 6 | ✅ 2026-07-29 |
+| **Pass 110** | **Module 3 BarStart v2 chord track PK 與 harmonic anchor evidence** | 6 | ✅ 2026-07-29 |
+| **Pass 111** | **Module 3 BarStart v2 melody track PK 與 phrase/count evidence** | 6 | ✅ 2026-07-29 |
+| **Pass 112** | **Module 3 BarStart v2 Beat This! optional beat/downbeat candidate adapter** | 6 | ✅ 2026-07-29 |
+| **Pass 113** | **Module 3 BarStart v2 本地模型 registry 與 license metadata report** | 4 | ✅ 2026-07-29 |
 | **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Pass 88~102 百大 SDD 滿貫總驗證** | **263** | ✅ **100% 通過** |
 
 ---
@@ -395,6 +406,16 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-07-29 | 完成 **Pass 113: Module 3 BarStart v2 本地模型 registry 與 license metadata report**：<br>1. **`LocalModelRegistryNode`**：記錄 Beat This!、BeatNet、Librosa、Demucs、Basic Pitch、chord model 的 availability / fallback / license metadata<br>2. 支援 `local_model_overrides` 供後續 installer 或 GUI 手動覆寫；節點不載入模型權重，也不下載依賴<br>3. `barstart_v2_report` / `module3_beat_click_report.json` 寫入 registry 診斷，通過 SDD Pass 113 單元測試 (`tests/test_sdd_pass113.py`, 4 passed) |
+| 2026-07-29 | 完成 **Pass 112: Module 3 BarStart v2 Beat This! optional beat/downbeat candidate adapter**：<br>1. **`BeatThisCandidateAdapterNode`**：將 optional `beat_this_beats`、`beat_this_downbeats`、`beat_this_candidates` 轉入 `bar_start_candidates`<br>2. 可用 Beat This! downbeat support 補強既有 candidates；沒有候選或未接模型時 graceful skip，保留 BeatNet/Librosa fallback<br>3. `barstart_v2_report` / `module3_beat_click_report.json` 寫入 `beat_this_candidate_report`，通過 SDD Pass 112 單元測試 (`tests/test_sdd_pass112.py`, 6 passed) |
+| 2026-07-29 | 完成 **Pass 111: Module 3 BarStart v2 melody track PK 與 phrase/count evidence**：<br>1. **`MelodyTrackPKNode`**：讀取 `vocal_melody_anchors`、`piano_melody_anchors`、`guitar_melody_anchors` 與 `count_in_events`，輸出 `melody_track_pk` 與 `phrase_anchor_evidence_report`<br>2. phrase/count evidence 可保守補強既有 candidates；若只有旋律 evidence，僅產生低信心 phrase-only candidate，不直接 commit<br>3. `barstart_v2_report` / `module3_beat_click_report.json` 寫入 melody PK 診斷，通過 SDD Pass 111 單元測試 (`tests/test_sdd_pass111.py`, 6 passed) |
+| 2026-07-29 | 完成 **Pass 110: Module 3 BarStart v2 chord track PK 與 harmonic anchor evidence**：<br>1. **`ChordTrackPKNode`**：讀取 `guitar_chord_anchors`、`piano_chord_anchors` 與既有 `chord_progression`，輸出 `chord_track_pk` 與 `harmonic_anchor_evidence_report`<br>2. harmonic anchor 可對 drum/bass candidates 加入 `harmonic_anchor_support` 並提升可信度；若只有和聲 evidence，僅產生低信心 harmonic-only candidate，不直接 commit<br>3. `barstart_v2_report` / `module3_beat_click_report.json` 寫入 chord PK 診斷，通過 SDD Pass 110 單元測試 (`tests/test_sdd_pass110.py`, 6 passed) |
+| 2026-07-29 | 完成 **Pass 109: Module 3 BarStart v2 drums + bass bar search 候選補強**：<br>1. **`DrumBassEvidenceBarSearchNode`**：以 `bass_anchors` / `bass_onset_candidates` 對 drum candidate 加入 `bass_coincidence_support` 並提升可信度<br>2. 無鼓候選時只產生低信心 bass-only candidate，保留 `bass_only_requires_other_support`，避免單一 bass evidence 直接 commit<br>3. `barstart_v2_report` / `module3_beat_click_report.json` 寫入 `drum_bass_evidence_report`，通過 SDD Pass 109 單元測試 (`tests/test_sdd_pass109.py`, 6 passed) |
+| 2026-07-29 | 完成 **Pass 108: Module 3 BarStart v2 drums / drum-substem evidence 候選產生**：<br>1. 新增 `DrumEvidenceBarSearchNode`，從 `kick_anchors`、`snare_anchors`、`drum_onset_candidates` 產生 `bar_start_candidates`<br>2. 依 expected bar interval、snare support 與 `drum_fill_regions` / `snap_exclusion_zones` 計算信心；過門區只降權，不直接 commit<br>3. 通過 SDD Pass 108 單元測試 (`tests/test_sdd_pass108.py`, 4 passed) |
+| 2026-07-29 | 完成 **Pass 107: Module 3 BarStart v2 candidate / commit contract 與 unresolved span 記錄**：<br>1. 新增 `BarStartCandidateCommitNode`，統一 `bar_start_candidates` 格式並依 confidence threshold 決定是否 commit<br>2. 達門檻才追加 `committed_bar_starts`；未達門檻或無候選時寫入 `unresolved_bar_spans` 與 `last_bar_probe_result`<br>3. 通過 SDD Pass 107 單元測試 (`tests/test_sdd_pass107.py`, 4 passed) |
+| 2026-07-29 | 完成 **Pass 106: Module 3 BarStart v2 rolling probe window 與 ±1 秒自適應策略**：<br>1. 新增 `RollingProbeWindowNode`，從最後一個 `committed_bar_starts` 建立 `active_bar_probe_window` 與累積 `bar_probe_windows`<br>2. 找不到下一小節開頭時窗長 +1 秒並往後推；很快找到時窗長 -1 秒並從 candidate time 繼續<br>3. 通過 SDD Pass 106 單元測試 (`tests/test_sdd_pass106.py`, 4 passed) |
+| 2026-07-29 | 完成 **Pass 105: Module 3 BarStart v2 skeleton 與 meter-aware grid 基礎節點**：<br>1. 新增 `target_stage="module3_barstart_v2"` 獨立測試入口，不替換既有 `module3`<br>2. 新增 `MeterProfileNode`、`ManualCommittedBarStartsSeedNode`、`MeterAwareBeatGridNode`，可用人工 `committed_bar_starts` 依拍號產生 `beats`、`click_grid`、`measure_map`<br>3. `PGMCraftEngine` / `BTWorkflowEngine` 支援 `manual_bar_starts`、`user_meter_selection`、`allow_temporary_bar_delta` 參數，通過 SDD Pass 105 單元測試 (`tests/test_sdd_pass105.py`, 3 passed) |
+| 2026-07-29 | 完成 **Pass 104: 鼓過門密集擊點排除區與 click snap 防追逐 guard**：<br>1. **`DrumFillDetectionNode`**：以 kick/snare anchors 偵測一拍內密集擊點，輸出 `drum_fill_regions` 與 `snap_exclusion_zones`<br>2. **Stage 3 refinement 串接**：`OnsetPhaseRealignmentNode` 與 `MicroTimingTransientSnapNode` 會跳過過門/切分排除區，避免 click 被快速連打吸走<br>3. 通過 SDD Pass 104 單元測試 (`tests/test_sdd_pass104.py`, 4 passed) |
 | 2026-07-27 | 📦 **Pass 92: 全 DAW 專案檔一鍵預設包 (daw_presets_pack.zip)**：<br>1. **`DAWPresetsPackagerNode`**：彙整 Ableton (.als)、REAPER (.rpp)、Cubase (.csv) 與 MIDI 檔，自動產生一鍵獨立壓縮檔<br>2. **大滿貫完成**：Pass 88 ~ Pass 92 五大高價值專業優化全數竣工<br>3. 通過 SDD Pass 92 單元測試 (`tests/test_sdd_pass92.py`, 1 passed) |
 | 2026-07-27 | 📐 **Pass 91: 動態變拍號 (Meter Change Detection) 與 3/4, 6/8 拍號自動切換衛兵**：<br>1. **`DynamicMeterChangeGuardNode`**：採樣強拍週期，自動檢測樂曲內部 4/4、3/4 與 6/8 拍號轉換點<br>2. **MIDI 標籤連動**：匯出 `meter_changes` 清單供 MIDI TimeSignature 訊息精確定位<br>3. 通過 SDD Pass 91 單元測試 (`tests/test_sdd_pass91.py`, 1 passed) |
 | 2026-07-27 | 🎛️ **Pass 90: HTML5 互動式 Web Audio API 多軌視聽同播與 Mute/Solo 控制器**：<br>1. **`WebAudioMultitrackPlayer`**：在 `live_dashboard.html` 中嵌入 4 軌聲音（Mix/Backing/IEM/Click）同步控台<br>2. **Mute/Solo 動態交互**：支援點擊 Solo 自動切換其餘音軌 Mute 與時間軸同步<br>3. 通過 SDD Pass 90 單元測試 (`tests/test_sdd_pass90.py`, 1 passed) |
@@ -458,4 +479,31 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 | 2026-07-25 | Stage 1 加入 `CrowdNoiseRemovalNode` 人群現場噪聲清洗壓制節點 |
 | 2026-07-25 | Stage 1 加入 `WriteNormalizedWAVNode` 寫入優化音檔至專案 `source/` 目錄 |
 | 2026-07-25 | 建立本文件，同步全自動工作流 BT 狀態 |
+### Pass 114：Module 3 BarStart v2 前端測試入口
 
+- 完成：Gradio 新增隔離的 `module3_barstart_v2` 測試入口。
+- 完成：人工只提供拍號（支援 4/4、3/4、6/8 等）與臨時小節拍數調整；小節起點交給模型/evidence ladder，並顯示 v2 report。
+- 保持：舊版 `module3` 入口與輸出契約不變。
+- 測試：`tests/test_sdd_pass114.py`，共 4 項契約測試。
+
+### Pass 115：Module 3 BarStart v2 升格閘門
+
+- 完成：新增 `evaluate_barstart_v2_promotion_gate`。
+- 規則：reference/manual 驗收皆為 `pass` 且沒有 unresolved bar spans，才回傳 `PROMOTE_READY`。
+- 保持：未完成實際 reference/manual 驗收前，v2 維持 `EXPERIMENTAL_ONLY`，不替換現有 `module3`。
+- 測試：`tests/test_sdd_pass115.py`，共 5 項契約測試。
+- Smoke：`sample_test.wav` workflow 成功；升格閘門回報 `EXPERIMENTAL_ONLY`，含 1 個 unresolved bar span。
+
+### Pass 116：Click 合成輸出 +10 dB
+
+- 完成：`PGMSynthesizer` 對 Click-only 與所有 Click 混音輸出套用預設 `+10 dB`。
+- 保持：原始音檔不增益；Click WAV 使用 float subtype，避免增益後被 PCM 編碼削波。
+- 測試：`tests/test_sdd_pass116.py` 與 pipeline 回歸，共 114 項通過。
+
+### Pass 117：雙向小節錨定 lookahead
+
+- 目標：改善「有鼓 → 無鼓 → 接鼓」段落的小節相位延續與重新對齊。
+- 設計：以可靠前錨點維持 phase，觀測下一個鼓點後估計中間 `N-1/N/N+1` 小節，再做 forward/backward alignment。
+- 新增規劃節點：`ReliableBarAnchorNode`、`NoDrumPhaseCarryNode`、`LookaheadDrumAnchorSearchNode`、`InterveningBarCountEstimatorNode`、`BidirectionalBarAlignmentNode`、`TransitionConfidenceNode`。
+- 驗收：4 小節無鼓段、pickup、弱拍進鼓、tempo 漂移、lookahead pending 五組案例。
+- 狀態：第一版已實作並通過 6 項 SDD 測試；仍維持 v2 experimental，不替換既有 `module3`。

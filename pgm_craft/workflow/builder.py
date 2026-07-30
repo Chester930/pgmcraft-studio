@@ -11,6 +11,7 @@ from pgm_craft.workflow.music_analysis_bt import build_music_analysis_tree
 from pgm_craft.workflow.export_bt import build_export_tree
 from pgm_craft.workflow.package_bt import build_package_tree
 from pgm_craft.workflow.module3_bt import build_module3_pipeline_tree
+from pgm_craft.workflow.module3_barstart_v2_bt import build_module3_barstart_v2_pipeline_tree
 
 from pgm_craft.workflow.audio_nodes import (
     BasicPitchNode,
@@ -58,10 +59,12 @@ def build_full_pipeline_tree():
 def build_master_pipeline_tree(target_stage: str = "full"):
     """
     Constructs the Master Behavior Tree dynamically truncating at target_stage.
-    target_stage options: 'stage1', 'stage2', 'stage3', 'stage4', 'stage5', 'stage6', 'module3', 'full'
+    target_stage options: 'stage1', 'stage2', 'stage3', 'stage4', 'stage5', 'stage6', 'module3', 'module3_barstart_v2', 'full'
     """
     if target_stage == "module3":
         return build_module3_pipeline_tree()
+    if target_stage == "module3_barstart_v2":
+        return build_module3_barstart_v2_pipeline_tree()
 
     stage_nodes = [
         build_input_acquisition_tree(), # Stage 0
@@ -122,6 +125,9 @@ class BTWorkflowEngine:
         validate_contracts=False,
         target_stage: str = None,
         module3_candidate_sources=None,
+        manual_bar_starts=None,
+        user_meter_selection=None,
+        allow_temporary_bar_delta=None,
     ):
         if target_stage is not None and target_stage != self.target_stage:
             self.target_stage = target_stage
@@ -136,6 +142,12 @@ class BTWorkflowEngine:
         blackboard.set_val("target_stage", self.target_stage)
         if module3_candidate_sources is not None:
             blackboard.set_val("module3_candidate_sources", module3_candidate_sources)
+        if manual_bar_starts is not None:
+            blackboard.set_val("manual_bar_starts", manual_bar_starts)
+        if user_meter_selection is not None:
+            blackboard.set_val("user_meter_selection", user_meter_selection)
+        if allow_temporary_bar_delta is not None:
+            blackboard.set_val("allow_temporary_bar_delta", allow_temporary_bar_delta)
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow (Target: {self.target_stage}) for {audio_path} ===")
         status = self.tree.run(blackboard)

@@ -791,8 +791,8 @@ class KeyChordAnalysisNode(BaseNode):
 
 class ClickSynthesisNode(BaseNode):
     required_keys = ["audio_path", "beats"]
-    optional_keys = ["refined_beats", "output_dir", "project_dir"]
-    output_keys = ["click_track", "mix_with_click"]
+    optional_keys = ["refined_beats", "output_dir", "project_dir", "click_gain_db"]
+    output_keys = ["click_track", "mix_with_click", "click_gain_db"]
 
     def __init__(self):
         super().__init__("ClickSynthesisNode")
@@ -805,9 +805,16 @@ class ClickSynthesisNode(BaseNode):
         click_dir = os.path.join(target_dir, "click") if os.path.basename(target_dir) != "click" else target_dir
         os.makedirs(click_dir, exist_ok=True)
 
-        click_path, mix_path = self.synthesizer.synthesize_click(audio_path, beats, output_dir=click_dir)
+        click_gain_db = float(blackboard.get_val("click_gain_db", PGMSynthesizer.CLICK_GAIN_DB))
+        click_path, mix_path = self.synthesizer.synthesize_click(
+            audio_path,
+            beats,
+            output_dir=click_dir,
+            click_gain_db=click_gain_db,
+        )
         blackboard.set_val("click_track", click_path)
         blackboard.set_val("mix_with_click", mix_path)
+        blackboard.set_val("click_gain_db", click_gain_db)
         print(f"[BT Node: {self.name}] Synthesized click WAV & mixed audio to {click_dir}.")
         return NodeStatus.SUCCESS
 
@@ -1446,7 +1453,6 @@ class VoiceSplitMIDIExportNode(BaseNode):
 
         blackboard.set_val("voice_split_midis", split_midis)
         return NodeStatus.SUCCESS
-
 
 
 
