@@ -2133,15 +2133,14 @@ class MeterAwareBeatGridNode(BaseNode):
 
 
 class BarStartV2QualityScoreNode(BaseNode):
-    """Quantified 0-100 quality score for the v2 grid, as an auxiliary metric
-    next to the pass/fail `promotion_gate`.
+    """Quantified 0-100 quality score for the v2 grid, reported alongside
+    `promotion_gate` (see `evaluate_barstart_v2_completeness`) purely for
+    reference -- it no longer gates whether v2 is adopted.
 
     Reuses Stage 3's `_score_beat_grid_quality` on the final beat matrix, then
     layers v2-specific penalties on top of it: unresolved bar probe spans, a
     structurally repaired bar grid, and a downbeat rotation triggered by the
-    low-frequency verifier. This does not replace `evaluate_barstart_v2_promotion_gate`'s
-    blocker logic -- it gives reference/manual reviewers an objective number to
-    compare runs against while they decide pass/fail.
+    low-frequency verifier.
     """
 
     required_keys = ["beats"]
@@ -2244,7 +2243,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         outputs = dict(blackboard.get_val("module3_outputs", {}) or {})
         report = {
-            "status": "EXPERIMENTAL_PASS_129",
+            "status": "DEFAULT_ACTIVE_PASS_142",
             "meter_profile": blackboard.get_val("meter_profile", {}),
             "bar_length_report": blackboard.get_val("bar_length_report", {}),
             "bar_start_seed_report": blackboard.get_val("bar_start_seed_report", {}),
@@ -2278,9 +2277,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "bar_grid_repair_report": blackboard.get_val("bar_grid_repair_report", {}),
             "quality_score": blackboard.get_val("barstart_v2_quality_score", {}),
             "downbeat_fix_report": blackboard.get_val("downbeat_fix_report", {}),
-            "promotion_gate": evaluate_barstart_v2_promotion_gate(
-                reference_acceptance=blackboard.get_val("reference_acceptance", {}),
-                manual_acceptance=blackboard.get_val("manual_acceptance", {}),
+            "promotion_gate": evaluate_barstart_v2_completeness(
                 unresolved_bar_spans=blackboard.get_val("unresolved_bar_spans", []),
             ),
         }
@@ -2291,29 +2288,27 @@ class Module3BarStartV2SummaryNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
-def evaluate_barstart_v2_promotion_gate(
-    *,
-    reference_acceptance=None,
-    manual_acceptance=None,
-    unresolved_bar_spans=None,
-):
-    """Return an explicit promotion decision; never auto-replaces Module 3."""
-    reference_ok = str((reference_acceptance or {}).get("status", "")).lower() == "pass"
-    manual_ok = str((manual_acceptance or {}).get("status", "")).lower() == "pass"
+def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None):
+    """Return whether v2's grid is complete enough to adopt as the main
+    output.
+
+    Earlier versions gated v2 behind either a strict human-acceptance
+    promotion gate (evaluate_barstart_v2_promotion_gate) or an automatic
+    v1-vs-v2 quality-score comparison (evaluate_barstart_v2_auto_promotion_gate).
+    Both were retired once real listening tests confirmed v2 consistently
+    sounds better than v1 -- v2 is now the default output everywhere, so
+    there is nothing left to compare or get human sign-off on. The only
+    thing that can still legitimately block adoption is v2 itself failing
+    to finish: if the evidence ladder leaves unresolved bar spans, that
+    portion of the song has no real v2 answer and falling back to v1 is
+    safer than shipping a grid with known gaps.
+    """
     unresolved_count = len(unresolved_bar_spans or [])
-    blockers = []
-    if not reference_ok:
-        blockers.append("REFERENCE_ACCEPTANCE_REQUIRED")
-    if not manual_ok:
-        blockers.append("MANUAL_ACCEPTANCE_REQUIRED")
-    if unresolved_count:
-        blockers.append("UNRESOLVED_BAR_SPANS_PRESENT")
+    blockers = ["UNRESOLVED_BAR_SPANS_PRESENT"] if unresolved_count else []
     return {
-        "promotable": not blockers,
-        "status": "PROMOTE_READY" if not blockers else "EXPERIMENTAL_ONLY",
+        "adoptable": not blockers,
+        "status": "V2_READY" if not blockers else "V2_INCOMPLETE",
         "blockers": blockers,
-        "reference_acceptance": reference_acceptance or {},
-        "manual_acceptance": manual_acceptance or {},
         "unresolved_bar_span_count": unresolved_count,
     }
 

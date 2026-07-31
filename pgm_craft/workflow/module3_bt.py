@@ -881,26 +881,121 @@ class Module3OutputSummaryNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+def _run_barstart_v2_comparison(blackboard: Blackboard):
+    """Run the real v2 evidence-ladder engine on an isolated copy of
+    blackboard and score both v1's existing grid and v2's grid with the same
+    metric. Shared by Module3BarStartV2MergeNode (strict human-acceptance
+    gate, used by the isolated 節奏定位 tab) and BarStartV2AutoMergeNode
+    (automatic score-only gate, used by the main pipeline) so the two
+    callers never run two different implementations of "what does v2
+    produce and how good is it" -- only the promotion *decision* differs.
+
+    Returns None if there is no v1 grid to compare against. Otherwise
+    returns a dict with success=False (v2 produced nothing usable) or
+    success=True plus the raw beat grids/scores callers need.
+    """
+    original_beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
+    original_beat_grid = (
+        np.asarray(original_beats, dtype=float)
+        if original_beats is not None
+        else np.empty((0, 2), dtype=float)
+    )
+    if len(original_beat_grid) == 0:
+        return None
+
+    from pgm_craft.workflow.module3_barstart_v2_bt import (
+        BarGridContinuityRepairNode,
+        BarStartV2QualityScoreNode,
+        FullSongBarStartLoopNode,
+        ManualCommittedBarStartsSeedNode,
+        MeterAwareBeatGridNode,
+        MeterProfileNode,
+    )
+
+    # Run the real v2 engine on an isolated blackboard copy so it cannot
+    # clobber v1's own grid while we are still deciding whether to adopt
+    # it -- v2's evidence-ladder writes many of the same key names v1
+    # already produced (beats/committed_bar_starts/...).
+    v2_blackboard = Blackboard(blackboard)
+    # NOTE: manual_bar_starts is intentionally *not* cleared -- it is the
+    # legitimate mechanism for a caller to seed v2's starting point (e.g.
+    # a reference-verified bar list), and popping it here would silently
+    # discard that input every time.
+    for key in (
+        "committed_bar_starts", "beats", "refined_beats",
+        "bar_start_candidates", "unresolved_bar_spans", "provisional_bar_starts",
+    ):
+        v2_blackboard.pop(key, None)
+
+    # Pass 128: no per-beat onset snapping here either -- same reasoning
+    # as build_module3_barstart_v2_export_tree() in module3_barstart_v2_bt.py.
+    v2_core = SequenceNode("BarStartV2CoreChain", [
+        MeterProfileNode(),
+        ManualCommittedBarStartsSeedNode(),
+        FullSongBarStartLoopNode(),
+        BarGridContinuityRepairNode(),
+        MeterAwareBeatGridNode(),
+        KickBassDownbeatVerifierNode(),
+        BarStartV2QualityScoreNode(),
+    ])
+    core_status = v2_core.run(v2_blackboard, parent="BarStartV2CoreChain")
+    v2_beats = v2_blackboard.get_val("refined_beats", v2_blackboard.get_val("beats"))
+    v2_beat_grid = (
+        np.asarray(v2_beats, dtype=float)
+        if v2_beats is not None
+        else np.empty((0, 2), dtype=float)
+    )
+    full_song_loop_report = v2_blackboard.get_val("full_song_loop_report", {})
+
+    if core_status != NodeStatus.SUCCESS or len(v2_beat_grid) == 0:
+        return {"success": False, "full_song_loop_report": full_song_loop_report}
+
+    # Same scoring function, same (empty) optional args on both sides --
+    # v2 additionally carries its own penalties (unresolved spans, grid
+    # repairs, downbeat rotation) that v1 is never charged for, so this is
+    # a deliberately conservative comparison biased against over-promoting v2.
+    original_quality = _score_beat_grid_quality(original_beat_grid)
+    v2_quality = v2_blackboard.get_val("barstart_v2_quality_score") or {
+        "score": _score_beat_grid_quality(v2_beat_grid)["score"]
+    }
+    unresolved_spans = v2_blackboard.get_val("unresolved_bar_spans", []) or []
+    committed_bar_starts = ManualCommittedBarStartsSeedNode()._normalize_times(
+        v2_blackboard.get_val("committed_bar_starts")
+    )
+
+    return {
+        "success": True,
+        "original_beat_grid": original_beat_grid,
+        "v2_beat_grid": v2_beat_grid,
+        "original_quality": original_quality,
+        "v2_quality": v2_quality,
+        "unresolved_spans": unresolved_spans,
+        "committed_bar_starts": committed_bar_starts,
+        "full_song_loop_report": full_song_loop_report,
+    }
+
+
 class Module3BarStartV2MergeNode(BaseNode):
     """
-    Runs the real BarStart v2 engine alongside Module 3 v1's own result and
-    honestly compares them. v2 only replaces v1's click grid when
-    `evaluate_barstart_v2_promotion_gate()` says it is promotable (reference
-    and manual acceptance both recorded as pass, no unresolved bar spans) AND
-    v2's own quantified quality score actually beats v1's on the same metric.
+    Runs the real BarStart v2 engine and adopts its grid as the 節奏定位 tab's
+    main output whenever v2 completes cleanly (no unresolved bar spans) --
+    see `evaluate_barstart_v2_completeness()`. v1's own grid is kept as a
+    fallback for whatever portion of the song v2 could not resolve, and its
+    click/mix are still exported as `module3_legacy_*` artifacts for
+    reference, but it is no longer compared against v2 on a quality score:
+    real listening tests confirmed v2 consistently sounds better, so v2 is
+    now the default rather than something that has to win a comparison.
 
     An earlier version of this node re-derived "v2" from v1's own
-    measure_map/beat labels, ignored the promotion gate's verdict, and wrote a
-    hardcoded 88-vs-95 "listening test" score -- it never ran the real v2
-    evidence-ladder engine at all. This version does.
+    measure_map/beat labels and wrote a hardcoded 88-vs-95 "listening test"
+    score -- it never ran the real v2 evidence-ladder engine at all. This
+    version does.
     """
 
     optional_keys = [
         "barstart_v2_report",
         "beats",
         "refined_beats",
-        "barstart_v2_reference_acceptance",
-        "barstart_v2_manual_acceptance",
         "audio_path",
         "project_dir",
         "output_dir",
@@ -928,13 +1023,8 @@ class Module3BarStartV2MergeNode(BaseNode):
         if blackboard.get_val("barstart_v2_report"):
             return NodeStatus.SUCCESS
 
-        original_beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        original_beat_grid = (
-            np.asarray(original_beats, dtype=float)
-            if original_beats is not None
-            else np.empty((0, 2), dtype=float)
-        )
-        if len(original_beat_grid) == 0:
+        comparison = _run_barstart_v2_comparison(blackboard)
+        if comparison is None:
             blackboard.set_val("barstart_v2_report", {
                 "status": "MERGED_DIAGNOSTIC_SKIPPED",
                 "reason": "no_module3_beats_to_compare",
@@ -942,85 +1032,35 @@ class Module3BarStartV2MergeNode(BaseNode):
             })
             return NodeStatus.SUCCESS
 
-        from pgm_craft.workflow.module3_barstart_v2_bt import (
-            BarGridContinuityRepairNode,
-            BarStartV2QualityScoreNode,
-            FullSongBarStartLoopNode,
-            ManualCommittedBarStartsSeedNode,
-            MeterAwareBeatGridNode,
-            MeterProfileNode,
-            evaluate_barstart_v2_promotion_gate,
-        )
-
-        # Run the real v2 engine on an isolated blackboard copy so it cannot
-        # clobber v1's own grid while we are still deciding whether to adopt
-        # it -- v2's evidence-ladder writes many of the same key names v1
-        # already produced (beats/committed_bar_starts/...).
-        v2_blackboard = Blackboard(blackboard)
-        # NOTE: manual_bar_starts is intentionally *not* cleared -- it is the
-        # legitimate mechanism for a caller to seed v2's starting point (e.g.
-        # a reference-verified bar list), and popping it here would silently
-        # discard that input every time.
-        for key in (
-            "committed_bar_starts", "beats", "refined_beats",
-            "bar_start_candidates", "unresolved_bar_spans", "provisional_bar_starts",
-        ):
-            v2_blackboard.pop(key, None)
-
-        # Pass 128: no per-beat onset snapping here either -- same reasoning
-        # as build_module3_barstart_v2_export_tree() in module3_barstart_v2_bt.py.
-        v2_core = SequenceNode("BarStartV2CoreChain", [
-            MeterProfileNode(),
-            ManualCommittedBarStartsSeedNode(),
-            FullSongBarStartLoopNode(),
-            BarGridContinuityRepairNode(),
-            MeterAwareBeatGridNode(),
-            KickBassDownbeatVerifierNode(),
-            BarStartV2QualityScoreNode(),
-        ])
-        core_status = v2_core.run(v2_blackboard, parent=self.name)
-        v2_beats = v2_blackboard.get_val("refined_beats", v2_blackboard.get_val("beats"))
-        v2_beat_grid = (
-            np.asarray(v2_beats, dtype=float)
-            if v2_beats is not None
-            else np.empty((0, 2), dtype=float)
-        )
-        full_song_loop_report = v2_blackboard.get_val("full_song_loop_report", {})
-
-        if core_status != NodeStatus.SUCCESS or len(v2_beat_grid) == 0:
+        if not comparison["success"]:
             blackboard.set_val("barstart_v2_report", {
                 "status": "MERGED_DIAGNOSTIC_SKIPPED",
                 "reason": "v2_engine_produced_no_grid",
                 "replaces_module3_click": False,
-                "full_song_loop_report": full_song_loop_report,
+                "full_song_loop_report": comparison["full_song_loop_report"],
             })
             return NodeStatus.SUCCESS
 
-        # Same scoring function, same (empty) optional args on both sides --
-        # v2 additionally carries its own penalties (unresolved spans, grid
-        # repairs, downbeat rotation) that v1 is never charged for, so this is
-        # a deliberately conservative comparison biased against over-promoting v2.
-        original_quality = _score_beat_grid_quality(original_beat_grid)
-        v2_quality = v2_blackboard.get_val("barstart_v2_quality_score") or {
-            "score": _score_beat_grid_quality(v2_beat_grid)["score"]
-        }
+        from pgm_craft.workflow.module3_barstart_v2_bt import evaluate_barstart_v2_completeness
 
-        unresolved_spans = v2_blackboard.get_val("unresolved_bar_spans", []) or []
-        promotion_gate = evaluate_barstart_v2_promotion_gate(
-            reference_acceptance=blackboard.get_val("barstart_v2_reference_acceptance"),
-            manual_acceptance=blackboard.get_val("barstart_v2_manual_acceptance"),
-            unresolved_bar_spans=unresolved_spans,
-        )
+        original_beat_grid = comparison["original_beat_grid"]
+        v2_beat_grid = comparison["v2_beat_grid"]
+        original_quality = comparison["original_quality"]
+        v2_quality = comparison["v2_quality"]
+        unresolved_spans = comparison["unresolved_spans"]
+        full_song_loop_report = comparison["full_song_loop_report"]
+
+        completeness = evaluate_barstart_v2_completeness(unresolved_bar_spans=unresolved_spans)
+        # Informational only -- kept in the report for reference, no longer
+        # used to decide whether v2 is adopted.
         quality_comparison = {
             "original_score": original_quality["score"],
             "barstart_v2_score": v2_quality["score"],
             "v2_scores_higher": v2_quality["score"] > original_quality["score"],
         }
-        promoted = bool(promotion_gate["promotable"]) and quality_comparison["v2_scores_higher"]
+        promoted = bool(completeness["adoptable"])
 
-        committed_bar_starts = ManualCommittedBarStartsSeedNode()._normalize_times(
-            v2_blackboard.get_val("committed_bar_starts")
-        )
+        committed_bar_starts = comparison["committed_bar_starts"]
         legacy_artifacts = self._write_legacy_artifacts(blackboard, original_beat_grid)
         comparison_artifacts = self._write_barstart_v2_artifacts(blackboard, v2_beat_grid, committed_bar_starts)
         blackboard.set_val("module3_legacy_beats", original_beat_grid.copy())
@@ -1039,12 +1079,14 @@ class Module3BarStartV2MergeNode(BaseNode):
             "unresolved_bar_span_count": len(unresolved_spans),
             "comparison_artifacts": comparison_artifacts,
             "legacy_artifacts": legacy_artifacts,
-            "promotion_gate": promotion_gate,
+            "promotion_gate": completeness,
             "quality_comparison": quality_comparison,
             "notes": [
-                "BarStart v2 replaces the Module 3 click grid only when the "
-                "promotion gate is satisfied and v2's quality score is higher.",
-                "Legacy Module 3 click artifacts are preserved for controlled A/B comparison.",
+                "BarStart v2 is the default click grid whenever it completes "
+                "with no unresolved bar spans -- confirmed via real listening "
+                "tests to consistently sound better than v1, so it is no "
+                "longer compared on a quality score before being adopted.",
+                "Legacy Module 3 click artifacts are preserved for reference.",
             ],
         }
         blackboard.set_val("barstart_v2_report", report)
@@ -1130,6 +1172,88 @@ class Module3BarStartV2MergeNode(BaseNode):
         blackboard.set_val(target_keys["mix"], final_mix_path)
         blackboard.set_val(target_keys["report"], report)
         return report
+
+
+class BarStartV2AutoMergeNode(BaseNode):
+    """
+    Main-pipeline counterpart to Module3BarStartV2MergeNode.
+
+    Runs the exact same v1-vs-v2 comparison (via `_run_barstart_v2_comparison`)
+    and adopts v2's grid whenever `evaluate_barstart_v2_completeness()` says
+    it finished cleanly (no unresolved bar spans) -- v2 is the default
+    output everywhere now that real listening tests confirmed it
+    consistently sounds better than v1, so there is no quality-score
+    comparison or human-acceptance step left to gate on. It does not write
+    the legacy/comparison A/B audio artifacts Module3BarStartV2MergeNode
+    produces for manual review -- the main pipeline only needs the final
+    grid, not a side-by-side comparison file nobody asked to see.
+    """
+
+    optional_keys = [
+        "barstart_v2_auto_report",
+        "beats",
+        "refined_beats",
+    ]
+    output_keys = [
+        "barstart_v2_auto_report",
+        "refined_beats",
+        "beats",
+    ]
+
+    def __init__(self):
+        super().__init__("BarStartV2AutoMergeNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if blackboard.get_val("barstart_v2_auto_report"):
+            return NodeStatus.SUCCESS
+
+        comparison = _run_barstart_v2_comparison(blackboard)
+        if comparison is None:
+            blackboard.set_val("barstart_v2_auto_report", {
+                "status": "AUTO_MERGE_SKIPPED",
+                "reason": "no_v1_beats_to_compare",
+                "promoted": False,
+            })
+            return NodeStatus.SUCCESS
+
+        if not comparison["success"]:
+            blackboard.set_val("barstart_v2_auto_report", {
+                "status": "AUTO_MERGE_SKIPPED",
+                "reason": "v2_engine_produced_no_grid",
+                "promoted": False,
+                "full_song_loop_report": comparison["full_song_loop_report"],
+            })
+            return NodeStatus.SUCCESS
+
+        from pgm_craft.workflow.module3_barstart_v2_bt import evaluate_barstart_v2_completeness
+
+        original_quality = comparison["original_quality"]
+        v2_quality = comparison["v2_quality"]
+        # Informational only -- kept in the report for reference, no longer
+        # used to decide whether v2 is adopted.
+        quality_comparison = {
+            "original_score": original_quality["score"],
+            "barstart_v2_score": v2_quality["score"],
+            "v2_scores_higher": v2_quality["score"] > original_quality["score"],
+        }
+        completeness = evaluate_barstart_v2_completeness(
+            unresolved_bar_spans=comparison["unresolved_spans"],
+        )
+        promoted = bool(completeness["adoptable"])
+        if promoted:
+            blackboard.set_val("refined_beats", comparison["v2_beat_grid"])
+            blackboard.set_val("beats", comparison["v2_beat_grid"])
+
+        blackboard.set_val("barstart_v2_auto_report", {
+            "status": "AUTO_PROMOTED" if promoted else "AUTO_COMPARED_NOT_PROMOTED",
+            "promoted": promoted,
+            "auto_promotion_gate": completeness,
+            "quality_comparison": quality_comparison,
+            "bar_count": max(0, len(comparison["committed_bar_starts"]) - 1),
+            "unresolved_bar_span_count": len(comparison["unresolved_spans"]),
+            "full_song_loop_report": comparison["full_song_loop_report"],
+        })
+        return NodeStatus.SUCCESS
 
 
 class Module3BackingWithClickNode(BaseNode):

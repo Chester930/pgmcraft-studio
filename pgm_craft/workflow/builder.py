@@ -10,7 +10,7 @@ from pgm_craft.workflow.beat_tracking_bt import build_beat_tracking_tree
 from pgm_craft.workflow.music_analysis_bt import build_music_analysis_tree
 from pgm_craft.workflow.export_bt import build_export_tree
 from pgm_craft.workflow.package_bt import build_package_tree
-from pgm_craft.workflow.module3_bt import build_module3_pipeline_tree
+from pgm_craft.workflow.module3_bt import build_module3_pipeline_tree, BarStartV2AutoMergeNode
 from pgm_craft.workflow.module3_barstart_v2_bt import build_module3_barstart_v2_pipeline_tree
 
 from pgm_craft.workflow.audio_nodes import (
@@ -45,6 +45,7 @@ def build_full_pipeline_tree():
         build_audio_quality_tree(),     # Stage 1: 載入 + 11項品質評估 + 去雜訊人群 + 正規化
         build_stem_separation_tree(),   # Stage 2: 需求驅動樂器分軌
         build_beat_tracking_tree(),      # Stage 3: 雙軌併行節拍分析與動態融合
+        BarStartV2AutoMergeNode(),       # 誠實 v1/v2 自動分數閘門合併（無需人工驗收）
         build_music_analysis_tree(),     # Stage 4: 和聲專屬 Sub-mix 與調性/和弦/段落分析
         build_export_tree(),             # Stage 5: Click, MIDI, DAW Section Markers 素材導出
         ai_parallel_group,
@@ -82,6 +83,7 @@ def build_master_pipeline_tree(target_stage: str = "full"):
     if target_stage == "stage3":
         return SequenceNode("MasterPGMPipelineRoot_Stage3", stage_nodes)
 
+    stage_nodes.append(BarStartV2AutoMergeNode())  # 誠實 v1/v2 自動分數閘門合併（無需人工驗收）
     stage_nodes.append(build_music_analysis_tree()) # Stage 4
     if target_stage == "stage4":
         return SequenceNode("MasterPGMPipelineRoot_Stage4", stage_nodes)

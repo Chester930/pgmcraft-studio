@@ -78,10 +78,13 @@ def test_module3_tree_is_narrow_click_workflow():
     assert "PackageRoot" not in names
 
 
-def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_without_acceptance(tmp_path):
-    """Without recorded reference/manual acceptance, the gate must stay
-    EXPERIMENTAL_ONLY and v1's own beats must survive untouched -- regardless
-    of what score the real v2 engine happens to produce."""
+def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_when_v2_incomplete(tmp_path):
+    """Pass 142: v2 no longer needs human reference/manual acceptance nor to
+    outscore v1 -- it is adopted whenever it completes cleanly. But when the
+    real v2 engine (given a silent audio fixture and no manual bar-start
+    seed) genuinely cannot resolve the whole song, it must leave
+    unresolved_bar_spans and v1's own beats must survive untouched rather
+    than shipping a grid with known gaps."""
     audio_path = tmp_path / "source.wav"
     sf.write(audio_path, np.zeros(22050 * 4, dtype=np.float32), 22050)
 
@@ -128,8 +131,9 @@ def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_without_ac
     report = bb.get_val("barstart_v2_report")
     assert report["status"] == "COMPARED_NOT_PROMOTED"
     assert report["replaces_module3_click"] is False
-    assert report["promotion_gate"]["status"] == "EXPERIMENTAL_ONLY"
-    assert "REFERENCE_ACCEPTANCE_REQUIRED" in report["promotion_gate"]["blockers"]
+    assert report["promotion_gate"]["status"] == "V2_INCOMPLETE"
+    assert "UNRESOLVED_BAR_SPANS_PRESENT" in report["promotion_gate"]["blockers"]
+    assert report["unresolved_bar_span_count"] > 0
     assert report["comparison_artifacts"]["status"] == "EXPORTED"
     assert report["legacy_artifacts"]["status"] == "EXPORTED"
     assert "original_score" in report["quality_comparison"]
@@ -137,11 +141,11 @@ def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_without_ac
     assert "manual_listening_evaluation" not in report
 
 
-def test_module3_barstart_v2_merge_node_promotes_when_gate_passes_and_v2_scores_higher(tmp_path):
-    """When reference/manual acceptance are both recorded as pass and the
-    manually-seeded v2 grid is regular enough to leave zero unresolved bar
-    spans, a v2 grid that genuinely outscores a deliberately poor v1 grid
-    must actually replace beats/refined_beats."""
+def test_module3_barstart_v2_merge_node_promotes_when_v2_completes_cleanly(tmp_path):
+    """Pass 142: v2 replaces v1's grid whenever it completes with zero
+    unresolved bar spans -- no reference/manual acceptance fields needed at
+    all (real listening tests already confirmed v2 sounds better than v1,
+    so there is nothing left to gate on beyond "did v2 actually finish")."""
     audio_path = tmp_path / "source.wav"
     sf.write(audio_path, np.zeros(22050 * 4, dtype=np.float32), 22050)
 
@@ -166,13 +170,13 @@ def test_module3_barstart_v2_merge_node_promotes_when_gate_passes_and_v2_scores_
     # stops before spending a single probe tick, so zero unresolved spans
     # accumulate -- this is what a real reference-verified grid looks like.
     bb.set_val("manual_bar_starts", [0.0, 1.0, 2.0, 3.0, 4.0])
-    bb.set_val("barstart_v2_reference_acceptance", {"status": "pass"})
-    bb.set_val("barstart_v2_manual_acceptance", {"status": "pass"})
+    # No barstart_v2_reference_acceptance / barstart_v2_manual_acceptance
+    # set -- Pass 142 retired that requirement entirely.
 
     assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
 
     report = bb.get_val("barstart_v2_report")
-    assert report["promotion_gate"]["status"] == "PROMOTE_READY"
+    assert report["promotion_gate"]["status"] == "V2_READY"
     assert report["unresolved_bar_span_count"] == 0
     assert report["quality_comparison"]["v2_scores_higher"] is True
     assert report["status"] == "PROMOTED_TO_MODULE3_DEFAULT"
