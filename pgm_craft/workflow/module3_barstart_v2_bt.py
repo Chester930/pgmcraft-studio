@@ -546,6 +546,68 @@ class NoDrumPhaseCarryNode(BaseNode):
             return 0.0
 
 
+class LookaheadDrumEventScanNode(BaseNode):
+    """Scans kick/snare anchors ahead of the current position into
+    `lookahead_drum_events` for `LookaheadDrumAnchorSearchNode` to consume.
+
+    `kick_anchors`/`snare_anchors` (Stage 3's `KickSnarePulseNode`, shared
+    into v2's blackboard when running through `Module3BarStartV2MergeNode`)
+    are a full-song array computed once upfront. Nothing ever filtered them
+    down into `lookahead_drum_events`, so the bidirectional re-anchoring
+    across no-drum spans (Pass 116-117) never had real data to work with in
+    production -- only in unit tests that set the key by hand. This is what
+    was missing.
+    """
+
+    optional_keys = ["kick_anchors", "snare_anchors", "committed_bar_starts", "lookahead_horizon_sec"]
+    output_keys = ["lookahead_drum_events"]
+
+    def __init__(self, horizon_sec: float = 30.0, dedupe_tolerance_sec: float = 0.05):
+        super().__init__("LookaheadDrumEventScanNode")
+        self.horizon_sec = float(horizon_sec)
+        self.dedupe_tolerance_sec = float(dedupe_tolerance_sec)
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        committed = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
+        previous = committed[-1] if committed else 0.0
+        horizon = self._horizon(blackboard)
+
+        events = []
+        for key, base_confidence in (("kick_anchors", 0.75), ("snare_anchors", 0.6)):
+            for t in self._normalize_anchor_times(blackboard.get_val(key)):
+                if t <= previous or t > previous + horizon:
+                    continue
+                events.append({"time": round(t, 6), "confidence": base_confidence})
+
+        blackboard.set_val("lookahead_drum_events", self._dedupe(events))
+        return NodeStatus.SUCCESS
+
+    def _horizon(self, blackboard: Blackboard) -> float:
+        try:
+            value = float(blackboard.get_val("lookahead_horizon_sec"))
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+        return self.horizon_sec
+
+    def _normalize_anchor_times(self, raw) -> list[float]:
+        if raw is None:
+            return []
+        try:
+            arr = np.asarray(raw, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            return []
+        return sorted(float(t) for t in arr if np.isfinite(t) and t >= 0.0)
+
+    def _dedupe(self, events: list[dict]) -> list[dict]:
+        out = []
+        for event in sorted(events, key=lambda item: (-item["confidence"], item["time"])):
+            if all(abs(event["time"] - existing["time"]) > self.dedupe_tolerance_sec for existing in out):
+                out.append(event)
+        return sorted(out, key=lambda item: item["time"])
+
+
 class LookaheadDrumAnchorSearchNode(BaseNode):
     """Turn future drum evidence into candidates with offsets, never direct commits."""
 
@@ -2182,7 +2244,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         outputs = dict(blackboard.get_val("module3_outputs", {}) or {})
         report = {
-            "status": "EXPERIMENTAL_PASS_128",
+            "status": "EXPERIMENTAL_PASS_129",
             "meter_profile": blackboard.get_val("meter_profile", {}),
             "bar_length_report": blackboard.get_val("bar_length_report", {}),
             "bar_start_seed_report": blackboard.get_val("bar_start_seed_report", {}),
@@ -2301,6 +2363,10 @@ def build_module3_barstart_v2_probe_tick_tree() -> SequenceNode:
         MelodyTrackPKNode(),
         BeatThisCandidateAdapterNode(),
         ReliableBarAnchorNode(),
+        # Pass 129: populates lookahead_drum_events from real kick/snare
+        # anchors so LookaheadDrumAnchorSearchNode has actual future evidence
+        # to search, instead of always finding none in production.
+        LookaheadDrumEventScanNode(),
         LookaheadDrumAnchorSearchNode(),
         NoDrumPhaseCarryNode(),
         InterveningBarCountEstimatorNode(),

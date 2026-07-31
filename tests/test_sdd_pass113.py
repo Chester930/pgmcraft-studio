@@ -62,7 +62,7 @@ def test_module3_barstart_v2_summary_includes_model_registry_reports():
     assert Module3BarStartV2SummaryNode().execute(bb) == NodeStatus.SUCCESS
 
     report = bb.get_val("barstart_v2_report")
-    assert report["status"] == "EXPERIMENTAL_PASS_128"
+    assert report["status"] == "EXPERIMENTAL_PASS_129"
     assert report["local_model_registry"]["beat_this"]["available"] is False
     assert report["model_availability_report"]["available_count"] == 0
     assert report["model_license_report"]["licenses"]["beat_this"] == "MIT"
