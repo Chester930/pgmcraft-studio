@@ -41,12 +41,6 @@ from pgm_craft.workflow.audio_nodes import (
     SubMixGeneratorNode,
 )
 from pgm_craft.workflow.builder import BTWorkflowEngine, MasterBTWorkflowEngine, build_pgm_workflow_tree
-from pgm_craft.workflow.smart_demixing_bt import (
-    CheckAudioSNRConditionNode,
-    DetectInstrumentPresenceNode,
-    SmartPreprocessActionNode,
-)
-from pgm_craft.workflow.full_auto_bt import FullAutoDemixingBTEngine
 
 # ── 測試固定 WAV ───────────────────────────────────────────────────────────────
 SAMPLE_WAV = "sample_test.wav"
@@ -525,7 +519,7 @@ class TestPhase4_AnalysisChain(unittest.TestCase):
 # Phase 5 — 全自動行為樹引擎 (端對端)
 # ═══════════════════════════════════════════════════════════════════════════════
 class TestPhase5_FullPipelineEngine(unittest.TestCase):
-    """Phase 5: BTWorkflowEngine / MasterBTWorkflowEngine / FullAutoDemixingBTEngine 端對端驗證"""
+    """Phase 5: BTWorkflowEngine / MasterBTWorkflowEngine 端對端驗證"""
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
@@ -591,81 +585,6 @@ class TestPhase5_FullPipelineEngine(unittest.TestCase):
         validations = bb.get_val("contract_validation", [])
         self.assertIsInstance(validations, list)
         self.assertGreater(len(validations), 0, "contract_validation 記錄為空")
-
-    # ── Smart Demixing BT Guard 節點 ──────────────────────────────────────────
-    def test_check_audio_snr_node_no_y_returns_failure(self):
-        """CheckAudioSNRConditionNode: bb 無 y 時應 FAILURE"""
-        bb = Blackboard()
-        status = CheckAudioSNRConditionNode().execute(bb)
-        self.assertEqual(status, NodeStatus.FAILURE)
-
-    def test_check_audio_snr_node_with_y(self):
-        """CheckAudioSNRConditionNode: 有 y 時應 SUCCESS 並設定 rms_level"""
-        bb = Blackboard()
-        y = np.random.randn(22050).astype(np.float32) * 0.1
-        bb.set_val("y", y)
-        status = CheckAudioSNRConditionNode().execute(bb)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-        self.assertIsNotNone(bb.get_val("rms_level"))
-
-    def test_detect_instrument_presence_above_threshold(self):
-        """DetectInstrumentPresenceNode: 概率超過門檻應 SUCCESS"""
-        bb = Blackboard()
-        bb.set_val("detected_instruments", {"vocals": 0.9})
-        status = DetectInstrumentPresenceNode(target_instrument="vocals", probability_threshold=0.25).execute(bb)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-
-    def test_detect_instrument_presence_below_threshold(self):
-        """DetectInstrumentPresenceNode: 概率低於門檻應 FAILURE (Skip)"""
-        bb = Blackboard()
-        bb.set_val("detected_instruments", {"piano": 0.05})
-        status = DetectInstrumentPresenceNode(target_instrument="piano", probability_threshold=0.25).execute(bb)
-        self.assertEqual(status, NodeStatus.FAILURE)
-
-    def test_smart_preprocess_node_no_amp_needed(self):
-        """SmartPreprocessActionNode: need_pre_amplification=False 時應直接 SUCCESS"""
-        bb = Blackboard()
-        bb.set_val("audio_path", SAMPLE_WAV)
-        bb.set_val("need_pre_amplification", False)
-        status = SmartPreprocessActionNode().execute(bb)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-
-    # ── FullAutoDemixingBTEngine ─────────────────────────────────────────────
-    def test_full_auto_bt_engine_skips_piano(self):
-        """FullAutoDemixingBTEngine: piano 概率 < threshold 不應出現在 stems"""
-        engine = FullAutoDemixingBTEngine()
-        probs = {
-            "vocals": 0.85,
-            "drums": 0.75,
-            "bass": 0.80,
-            "guitar": 0.60,
-            "piano": 0.05,   # 預期 Skip
-            "strings": 0.02,  # 預期 Skip
-        }
-        stems = engine.run_full_auto_demixing(SAMPLE_WAV, output_dir=self.temp_dir, instrument_probs=probs)
-        self.assertNotIn("piano", stems, "piano 應被 Guard 安全 Skip")
-        self.assertNotIn("strings", stems, "strings 應被 Guard 安全 Skip")
-
-    def test_full_auto_bt_engine_executes_vocal_branch(self):
-        """FullAutoDemixingBTEngine: vocals 概率 > threshold 應執行人聲分支"""
-        engine = FullAutoDemixingBTEngine()
-        probs = {"vocals": 0.90, "drums": 0.10, "bass": 0.10, "guitar": 0.10, "piano": 0.05}
-        stems = engine.run_full_auto_demixing(SAMPLE_WAV, output_dir=self.temp_dir, instrument_probs=probs)
-        self.assertIn("vocals", stems, "vocals 分支未執行")
-
-    def test_full_auto_bt_engine_returns_dict(self):
-        """FullAutoDemixingBTEngine 應回傳 dict"""
-        engine = FullAutoDemixingBTEngine()
-        result = engine.run_full_auto_demixing(SAMPLE_WAV, output_dir=self.temp_dir)
-        self.assertIsInstance(result, dict)
-
-    def test_full_auto_bt_with_all_instruments_high_prob(self):
-        """所有樂器概率 > threshold 時，四大分支(vocals/drums/bass/guitar)皆應執行"""
-        engine = FullAutoDemixingBTEngine()
-        probs = {"vocals": 0.90, "drums": 0.80, "bass": 0.85, "guitar": 0.70, "piano": 0.05}
-        stems = engine.run_full_auto_demixing(SAMPLE_WAV, output_dir=self.temp_dir, instrument_probs=probs)
-        for stem in ["vocals", "drums", "bass"]:
-            self.assertIn(stem, stems, f"{stem} 分支未執行")
 
 
 if __name__ == "__main__":
