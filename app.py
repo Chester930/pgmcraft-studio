@@ -895,7 +895,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     def _path_text(path):
         return f"`{path}`" if path else "`未產生`"
 
-    status_md = f"""# 自動節拍器：節拍辨識完成
+    status_md = f"""# 節奏定位：小節與拍子偵測完成
 
 - 輸入音檔: `{os.path.basename(audio_file)}`
 - 測試專案資料夾: `{test_project_dir}`
@@ -922,7 +922,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 | 主版本 ({main_grid_source}) 原曲 + Click | {_path_text(mix_path)} |
 | 主版本 ({main_grid_source}) Click Only | {_path_text(click_path)} |
 | Backing + Click | {_path_text(backing_path)} |
-| 自動節拍器 BT 報告 | {_path_text(report_path)} |
+| 節奏定位 BT 報告 | {_path_text(report_path)} |
 | Pipeline 摘要報告 | {_path_text(pipeline_report_path)} |
 | 速度曲線 | {_path_text(tempo_curve_path)} |
 
@@ -1072,6 +1072,9 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             | **⚡ 一鍵生成（譜+PGM分軌）** | 零設定一鍵完成下載、AI 分軌、節拍分析與 DAW 素材包打包 | 快速產出、舞台 PGM |
             | **📥 影音下載** | 輸入網址，一鍵下載原品質 MP4 影片、WAV 與 MP3 音檔 | 預先備料、線上記錄素材下載 |
             | **🎛️ 音色分軌** | 支援 4-Stem、6-Stem、人聲/鼓組/貝斯/吉他/鋼琴分離與去殘響防呆處理 | 音軌分離、採譜練習素材 |
+            | **🎯 節奏定位** | 偵測小節開頭與拍子網格，產出 Click 音檔——後續譜面與 DAW 產出的座標基礎 | 節拍/小節校正、練團對時 |
+            | **🎵 和弦簡譜** *(開發中)* | 以節奏定位為座標，分析調性/和弦進行/樂段結構 | 樂手練團看譜 |
+            | **📦 DAW 素材包** *(開發中)* | 整合節奏定位、和弦簡譜與各音軌轉譜結果，產出完整 DAW 可匯入包 | 匯入 DAW 進行正式製作 |
             | **🎛️ PGM 節目軌與採譜分析** | 核心分析引擎：自動算節拍 (Beat/Downbeat)、BPM 曲線、生成 MIDI 軌 | Live 練團、DAW 工程建置 |
             | **🔍 Workflow 執行與診斷** | 檢視 Behavior Tree 節點執行軌跡、執行耗時與 Blackboard key 契約驗證 | 系統診斷、效能與狀態檢查 |
             | **🎹 MIDI 鋼琴卷軸預覽** | 視覺化瀏覽樂曲和弦與主唱/旋律音高卷軸 (Piano Roll) | 快速確認和弦與樂曲段落結構 |
@@ -1251,8 +1254,8 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[stem_status_markdown, file_stem_vocal, file_stem_drums, file_stem_bass, file_stem_extra]
             )
 
-        # 頁籤 3: 自動節拍器（節拍辨識與 Click 產生）
-        with gr.TabItem("🎯 自動節拍器"):
+        # 頁籤 3: 節奏定位（小節與拍子偵測 + Click 產生）—— 四塊敘事 Block 1
+        with gr.TabItem("🎯 節奏定位"):
             with gr.Row():
                 with gr.Column(scale=1):
                     module3_audio_input = gr.File(
@@ -1330,6 +1333,29 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     module3_report_file,
                 ]
             )
+
+        # 四塊敘事 Block 2：和弦簡譜（吃 Block 1 的小節/拍子，產出調性/和弦進行/樂段結構）
+        # 尚未接上後端，先建立分頁骨架。
+        with gr.TabItem("🎵 和弦簡譜"):
+            gr.Markdown("""
+            ### 🎵 和弦簡譜
+            以「🎯 節奏定位」產出的小節與拍子為座標，分析調性、和弦進行與樂段結構，
+            產出可讀的和弦簡譜（不是完整五線譜旋律記譜）。
+
+            🚧 開發中，尚未接上後端。
+            """)
+
+        # 四塊敘事 Block 3：DAW 素材包（整合 Block 1 節奏骨架 + Block 2 和弦簡譜 +
+        # 各音軌轉譜結果，產出完整可匯入 DAW 的工程包）。尚未接上後端，先建立分頁骨架。
+        with gr.TabItem("📦 DAW 素材包"):
+            gr.Markdown("""
+            ### 📦 DAW 素材包
+            整合「🎯 節奏定位」的節奏骨架、「🎵 和弦簡譜」的和弦內容，
+            與各音軌轉譜（MIDI）結果，產出完整、可直接匯入 DAW 的工程包。
+
+            🚧 開發中，尚未接上後端。
+            """)
+
         # 頁籤 3: 完整 PGM 採譜與分析管道
         with gr.TabItem("🎛️ PGM 節目軌與採譜分析"):
             with gr.Row():

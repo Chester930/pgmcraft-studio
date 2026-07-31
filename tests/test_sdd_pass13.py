@@ -45,7 +45,7 @@ def test_app_exposes_module3_stage_choice():
     with open("app.py", "r", encoding="utf-8") as f:
         source = f.read()
 
-    assert 'with gr.TabItem("🎯 自動節拍器")' in source
+    assert 'with gr.TabItem("🎯 節奏定位")' in source
     assert "def process_module3_click_test" in source
     assert "module3_start_btn.click" in source
     assert "module3_candidate_sources_chk" in source
