@@ -138,11 +138,18 @@ class IsLocalFileConditionNode(BaseNode):
 class URLDownloadToTempNode(BaseNode):
     """Download URL via URLDownloaderDispatcher into a temp subfolder.
 
-    Writes: raw_wav_path, media_title, source_type="url", original_url
+    Writes: raw_wav_path, media_title, source_type="url", original_url,
+    plus raw_mp3_path/raw_mp4_path when the handler produced them (the main
+    pipeline only consumes raw_wav_path; the extra formats exist so this
+    single node can also serve the standalone download tab, which needs
+    all three -- see app.py's standalone_download()).
     """
     required_keys = ["audio_path", "project_root"]
     optional_keys = []
-    output_keys = ["raw_wav_path", "media_title", "source_type", "original_url"]
+    output_keys = [
+        "raw_wav_path", "raw_mp3_path", "raw_mp4_path",
+        "media_title", "source_type", "original_url",
+    ]
 
     def __init__(self):
         super().__init__("URLDownloadToTempNode")
@@ -162,6 +169,8 @@ class URLDownloadToTempNode(BaseNode):
             return NodeStatus.FAILURE
 
         wav_path = result.get("wav")
+        mp3_path = result.get("mp3")
+        mp4_path = result.get("mp4")
         title = result.get("title", "untitled")
 
         if not wav_path or not os.path.exists(wav_path):
@@ -169,6 +178,8 @@ class URLDownloadToTempNode(BaseNode):
             return NodeStatus.FAILURE
 
         blackboard.set_val("raw_wav_path", wav_path)
+        blackboard.set_val("raw_mp3_path", mp3_path if mp3_path and os.path.exists(mp3_path) else None)
+        blackboard.set_val("raw_mp4_path", mp4_path if mp4_path and os.path.exists(mp4_path) else None)
         blackboard.set_val("media_title", title)
         blackboard.set_val("source_type", "url")
         blackboard.set_val("original_url", url)

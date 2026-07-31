@@ -14,7 +14,6 @@ from tkinter import filedialog
 import gradio as gr
 from pgm_craft.pipeline import PGMCraftEngine
 from pgm_craft.separator import CascadedStemSeparator
-from pgm_craft.workflow.downloaders import URLDownloaderDispatcher
 from pgm_craft.bt_visualizer import build_tree_schema, render_bt_html
 from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow_report import WorkflowReportExporter
@@ -37,7 +36,6 @@ except RuntimeError:
 
 engine = PGMCraftEngine(enable_stem_separation=False)
 separator_engine = CascadedStemSeparator()
-downloader_dispatcher = URLDownloaderDispatcher()
 DEFAULT_OUTPUT_DIR = os.path.abspath("outputs")
 PGM_OUTPUT_COUNT = 17
 
@@ -252,20 +250,33 @@ DOWNLOAD_QUALITY_FORMATS = {
 
 
 def standalone_download(url_input, output_dir, quality_choice="無損 WAV (44.1kHz 24bit)"):
-    """P58: 獨立影音下載處理 (帶 Audio Previewer 預聽與 ID3 Tag 標籤護航)"""
+    """P58: 獨立影音下載處理 (帶 Audio Previewer 預聽與 ID3 Tag 標籤護航)
+
+    共用 Stage 0 的 URLDownloadToTempNode（input_acquisition_bt.py）執行實際
+    下載，而不是另外直接呼叫 URLDownloaderDispatcher——這樣全自動主管線與這個
+    獨立下載分頁只維護同一套「下載一個網址」節點邏輯。副作用：檔案會落在
+    `{output_dir}/_pgmcraft_temp_downloads/{title}/` 底下（主管線的暫存資料夾
+    慣例），而不是直接在 `{output_dir}/{title}/`。
+    """
     if not url_input or not url_input.strip():
         return "❌ 請先輸入有效的影音或社群網址！", None, None, None, None
 
+    from pgm_craft.workflow.input_acquisition_bt import URLDownloadToTempNode
+    from pgm_craft.workflow.nodes import Blackboard, NodeStatus
+
     try:
-        res = downloader_dispatcher.dispatch_and_download(url_input.strip(), output_dir)
-        if not res:
+        blackboard = Blackboard()
+        blackboard.set_val("audio_path", url_input.strip())
+        blackboard.set_val("project_root", output_dir)
+        status = URLDownloadToTempNode().execute(blackboard)
+        if status != NodeStatus.SUCCESS:
             return "❌ 下載失敗，不支援的網址格式或網路存取失敗！", None, None, None, None
 
         keep_formats = DOWNLOAD_QUALITY_FORMATS.get(quality_choice, {"wav", "mp3", "mp4"})
-        mp4_path = res.get("mp4") if "mp4" in keep_formats else None
-        wav_path = res.get("wav") if "wav" in keep_formats else None
-        mp3_path = res.get("mp3") if "mp3" in keep_formats else None
-        title = res.get("title", "PGM Track")
+        mp4_path = blackboard.get_val("raw_mp4_path") if "mp4" in keep_formats else None
+        wav_path = blackboard.get_val("raw_wav_path") if "wav" in keep_formats else None
+        mp3_path = blackboard.get_val("raw_mp3_path") if "mp3" in keep_formats else None
+        title = blackboard.get_val("media_title", "PGM Track")
 
         # 優先選用 Previewer 音訊檔
         preview_audio = wav_path if os.path.exists(wav_path or "") else mp3_path
