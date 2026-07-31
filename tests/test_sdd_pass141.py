@@ -21,16 +21,24 @@ UI 路徑可以設定這兩個欄位——若直接把這個節點原封不動�
 都會多跑一次完整的 v2 引擎（增加處理時間），但 promotable 永遠是 False，v2
 的改進永遠不會被真正採用。
 
-使用者確認方向：主管線改用「自動分數閘門」（evaluate_barstart_v2_auto_promotion_gate），
-不需要人工驗收，只要 v2 沒有 unresolved_bar_spans 且品質分數確實高於 v1 就自動採用。
-節奏定位分頁維持原本嚴格的人工驗收 gate 不變。
+使用者確認方向（本 Pass 當時的結論）：主管線改用「自動分數閘門」
+（evaluate_barstart_v2_auto_promotion_gate），不需要人工驗收，只要 v2 沒有
+unresolved_bar_spans 且品質分數確實高於 v1 就自動採用。節奏定位分頁維持原本
+嚴格的人工驗收 gate 不變。
+
+**後續更新（Pass 142）**：使用者實測後確認 v2 品質穩定優於 v1，要求「全部都
+改用 v2、不再做 v1/v2 比對」。`evaluate_barstart_v2_auto_promotion_gate()` 與
+節奏定位分頁的嚴格 `evaluate_barstart_v2_promotion_gate()` 都已被
+`evaluate_barstart_v2_completeness()` 取代（見 tests/test_sdd_pass142.py）——
+本檔案裡原本針對自動分數閘門的專屬測試（TestAutoPromotionGate）已隨函式刪除
+一併移除；仍然有效的部分（BarStartV2AutoMergeNode 的基本行為、管線組裝正確性）
+維持不動，只更新了跟著閘門欄位改名的斷言（`promotable` → `adoptable`）。
 
 本測試驗證：
-A. evaluate_barstart_v2_auto_promotion_gate() 的閘門邏輯本身。
-B. BarStartV2AutoMergeNode：沒有變動時維持 v1 網格不變；v2 確實較優且無
-   unresolved span 時自動採用，不需要任何 reference/manual acceptance 欄位；
-   且不寫出 legacy/comparison A/B 音檔（那是節奏定位分頁專屬的診斷輸出）。
-C. build_master_pipeline_tree("full") 與 target_stage="stage4"/"stage5"/"stage6"
+A. BarStartV2AutoMergeNode：沒有 v1 網格時安全跳過；v2 完整且無 unresolved
+   span 時自動採用，不需要任何 reference/manual acceptance 欄位；且不寫出
+   legacy/comparison A/B 音檔（那是節奏定位分頁專屬的診斷輸出）；冪等。
+B. build_master_pipeline_tree("full") 與 target_stage="stage4"/"stage5"/"stage6"
    的樹裡確實包含 BarStartV2AutoMergeNode；target_stage="stage3" 的樹不包含
    （維持 Stage 3 純粹輸出，方便單獨診斷）；build_full_pipeline_tree() 同步更新。
 """
@@ -40,7 +48,6 @@ import soundfile as sf
 
 from pgm_craft.workflow.builder import build_master_pipeline_tree, build_full_pipeline_tree
 from pgm_craft.workflow.module3_bt import BarStartV2AutoMergeNode, Module3BarStartV2MergeNode
-from pgm_craft.workflow.module3_barstart_v2_bt import evaluate_barstart_v2_auto_promotion_gate
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
 
@@ -52,49 +59,7 @@ def _node_names(node):
 
 
 # ---------------------------------------------------------------------------
-# A. evaluate_barstart_v2_auto_promotion_gate()
-# ---------------------------------------------------------------------------
-
-class TestAutoPromotionGate:
-
-    def test_blocks_when_v2_score_not_higher(self):
-        gate = evaluate_barstart_v2_auto_promotion_gate(
-            unresolved_bar_spans=[], v2_score=80.0, original_score=85.0,
-        )
-        assert gate["promotable"] is False
-        assert "V2_SCORE_NOT_HIGHER" in gate["blockers"]
-
-    def test_blocks_on_unresolved_bar_spans_even_if_v2_scores_higher(self):
-        gate = evaluate_barstart_v2_auto_promotion_gate(
-            unresolved_bar_spans=[{"reason": "no_evidence"}], v2_score=95.0, original_score=80.0,
-        )
-        assert gate["promotable"] is False
-        assert "UNRESOLVED_BAR_SPANS_PRESENT" in gate["blockers"]
-
-    def test_blocks_when_scores_unavailable(self):
-        gate = evaluate_barstart_v2_auto_promotion_gate(unresolved_bar_spans=[])
-        assert gate["promotable"] is False
-        assert "QUALITY_SCORES_UNAVAILABLE" in gate["blockers"]
-
-    def test_promotes_when_v2_scores_higher_and_no_unresolved_spans(self):
-        gate = evaluate_barstart_v2_auto_promotion_gate(
-            unresolved_bar_spans=[], v2_score=95.0, original_score=80.0,
-        )
-        assert gate["promotable"] is True
-        assert gate["status"] == "AUTO_PROMOTE_READY"
-        assert gate["blockers"] == []
-
-    def test_does_not_require_reference_or_manual_acceptance_params(self):
-        """Unlike evaluate_barstart_v2_promotion_gate, this gate has no
-        reference_acceptance/manual_acceptance keyword at all."""
-        import inspect
-        sig = inspect.signature(evaluate_barstart_v2_auto_promotion_gate)
-        assert "reference_acceptance" not in sig.parameters
-        assert "manual_acceptance" not in sig.parameters
-
-
-# ---------------------------------------------------------------------------
-# B. BarStartV2AutoMergeNode
+# A. BarStartV2AutoMergeNode
 # ---------------------------------------------------------------------------
 
 class TestBarStartV2AutoMergeNode:
@@ -134,7 +99,7 @@ class TestBarStartV2AutoMergeNode:
         report = bb.get_val("barstart_v2_auto_report")
         assert report["status"] == "AUTO_PROMOTED"
         assert report["promoted"] is True
-        assert report["auto_promotion_gate"]["promotable"] is True
+        assert report["auto_promotion_gate"]["adoptable"] is True
         assert report["quality_comparison"]["v2_scores_higher"] is True
         assert report["unresolved_bar_span_count"] == 0
 
@@ -179,7 +144,7 @@ class TestBarStartV2AutoMergeNode:
 
 
 # ---------------------------------------------------------------------------
-# C. Pipeline wiring
+# B. Pipeline wiring
 # ---------------------------------------------------------------------------
 
 class TestMainPipelineWiring:
