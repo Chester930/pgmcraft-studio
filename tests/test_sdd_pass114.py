@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 APP_SOURCE = Path("app.py").read_text(encoding="utf-8")
-MODULE3_UI_SOURCE = APP_SOURCE[APP_SOURCE.index("with gr.TabItem(\"🎯 自動節拍器\")"):APP_SOURCE.index("# 頁籤 3: 完整 PGM")]
+MODULE3_UI_SOURCE = APP_SOURCE[APP_SOURCE.index("with gr.TabItem(\"🎯 節奏定位\")"):APP_SOURCE.index("# 頁籤 3: 完整 PGM")]
 LAUNCH_SOURCE = Path("launch_app_7860.py").read_text(encoding="utf-8")
 
 
