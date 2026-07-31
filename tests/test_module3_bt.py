@@ -78,7 +78,10 @@ def test_module3_tree_is_narrow_click_workflow():
     assert "PackageRoot" not in names
 
 
-def test_module3_barstart_v2_merge_node_promotes_v2_grid_and_preserves_legacy_artifacts(tmp_path):
+def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_without_acceptance(tmp_path):
+    """Without recorded reference/manual acceptance, the gate must stay
+    EXPERIMENTAL_ONLY and v1's own beats must survive untouched -- regardless
+    of what score the real v2 engine happens to produce."""
     audio_path = tmp_path / "source.wav"
     sf.write(audio_path, np.zeros(22050 * 4, dtype=np.float32), 22050)
 
@@ -95,31 +98,24 @@ def test_module3_barstart_v2_merge_node_promotes_v2_grid_and_preserves_legacy_ar
     ], dtype=float)
     bb.set_val("beats", beats.copy())
     bb.set_val("refined_beats", beats.copy())
-    bb.set_val("measure_map", [
-        {"measure": 1, "start_time": 0.0, "end_time": 2.0},
-        {"measure": 2, "start_time": 2.0, "end_time": 4.0},
-    ])
+    bb.set_val("audio_duration_sec", 4.0)  # keeps the real v2 walk bounded/fast
     bb.set_val("click_track", "main_click.wav")
     bb.set_val("audio_path", str(audio_path))
     bb.set_val("project_dir", str(tmp_path))
 
     assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
 
-    expected_v2_beats = np.array([
-        [0.0, 1],
-        [0.5, 2],
-        [1.0, 3],
-        [1.5, 4],
-        [2.0, 1],
-        [2.5, 2],
-        [3.0, 3],
-        [3.5, 4],
-    ], dtype=float)
-    np.testing.assert_array_equal(bb.get_val("beats"), expected_v2_beats)
-    np.testing.assert_array_equal(bb.get_val("refined_beats"), expected_v2_beats)
+    # v1's own grid must be completely untouched: no reference/manual
+    # acceptance was ever recorded, so promotion_gate can never be satisfied.
+    np.testing.assert_array_equal(bb.get_val("beats"), beats)
+    np.testing.assert_array_equal(bb.get_val("refined_beats"), beats)
     np.testing.assert_array_equal(bb.get_val("module3_legacy_beats"), beats)
     assert bb.get_val("click_track") == "main_click.wav"
-    assert bb.get_val("barstart_v2_promoted_to_main") is True
+    assert bb.get_val("barstart_v2_promoted_to_main") is False
+
+    v2_grid = bb.get_val("barstart_v2_grid_beats")
+    assert v2_grid is not None and len(v2_grid) > 0
+
     assert bb.get_val("barstart_v2_click_track").endswith("barstart_v2_click_track.wav")
     assert bb.get_val("barstart_v2_mix_with_click").endswith("barstart_v2_mix_with_click.wav")
     assert bb.get_val("module3_legacy_click_track").endswith("legacy_click_track.wav")
@@ -128,17 +124,64 @@ def test_module3_barstart_v2_merge_node_promotes_v2_grid_and_preserves_legacy_ar
     assert os.path.exists(bb.get_val("barstart_v2_mix_with_click"))
     assert os.path.exists(bb.get_val("module3_legacy_click_track"))
     assert os.path.exists(bb.get_val("module3_legacy_mix_with_click"))
-    assert bb.get_val("committed_bar_starts") == [0.0, 2.0]
-    assert bb.get_val("bar_grid_boundaries") == [0.0, 2.0, 4.0]
+
     report = bb.get_val("barstart_v2_report")
-    assert report["status"] == "PROMOTED_TO_MODULE3_DEFAULT"
-    assert report["replaces_module3_click"] is True
-    assert report["does_not_replace_module3_click"] is False
-    assert report["manual_listening_evaluation"]["original_score"] == 88
-    assert report["manual_listening_evaluation"]["barstart_v2_score"] == 95
+    assert report["status"] == "COMPARED_NOT_PROMOTED"
+    assert report["replaces_module3_click"] is False
+    assert report["promotion_gate"]["status"] == "EXPERIMENTAL_ONLY"
+    assert "REFERENCE_ACCEPTANCE_REQUIRED" in report["promotion_gate"]["blockers"]
     assert report["comparison_artifacts"]["status"] == "EXPORTED"
     assert report["legacy_artifacts"]["status"] == "EXPORTED"
-    assert report["promotion_gate"]["status"] == "EXPERIMENTAL_ONLY"
+    assert "original_score" in report["quality_comparison"]
+    assert "barstart_v2_score" in report["quality_comparison"]
+    assert "manual_listening_evaluation" not in report
+
+
+def test_module3_barstart_v2_merge_node_promotes_when_gate_passes_and_v2_scores_higher(tmp_path):
+    """When reference/manual acceptance are both recorded as pass and the
+    manually-seeded v2 grid is regular enough to leave zero unresolved bar
+    spans, a v2 grid that genuinely outscores a deliberately poor v1 grid
+    must actually replace beats/refined_beats."""
+    audio_path = tmp_path / "source.wav"
+    sf.write(audio_path, np.zeros(22050 * 4, dtype=np.float32), 22050)
+
+    bb = Blackboard()
+    # deliberately irregular v1 grid: wildly inconsistent inter-beat spacing
+    bad_beats = np.array([
+        [0.0, 1],
+        [0.05, 2],
+        [3.0, 3],
+        [3.02, 4],
+        [3.5, 1],
+        [8.0, 2],
+        [8.01, 3],
+        [8.5, 4],
+    ], dtype=float)
+    bb.set_val("beats", bad_beats.copy())
+    bb.set_val("refined_beats", bad_beats.copy())
+    bb.set_val("audio_path", str(audio_path))
+    bb.set_val("project_dir", str(tmp_path))
+    bb.set_val("audio_duration_sec", 4.0)
+    # pre-seeding the whole song as manual_bar_starts means the walking loop
+    # stops before spending a single probe tick, so zero unresolved spans
+    # accumulate -- this is what a real reference-verified grid looks like.
+    bb.set_val("manual_bar_starts", [0.0, 1.0, 2.0, 3.0, 4.0])
+    bb.set_val("barstart_v2_reference_acceptance", {"status": "pass"})
+    bb.set_val("barstart_v2_manual_acceptance", {"status": "pass"})
+
+    assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
+
+    report = bb.get_val("barstart_v2_report")
+    assert report["promotion_gate"]["status"] == "PROMOTE_READY"
+    assert report["unresolved_bar_span_count"] == 0
+    assert report["quality_comparison"]["v2_scores_higher"] is True
+    assert report["status"] == "PROMOTED_TO_MODULE3_DEFAULT"
+    assert report["replaces_module3_click"] is True
+
+    assert bb.get_val("barstart_v2_promoted_to_main") is True
+    np.testing.assert_array_equal(bb.get_val("beats"), bb.get_val("barstart_v2_grid_beats"))
+    np.testing.assert_array_equal(bb.get_val("refined_beats"), bb.get_val("barstart_v2_grid_beats"))
+    np.testing.assert_array_equal(bb.get_val("module3_legacy_beats"), bad_beats)
 
 
 def test_module3_uses_shared_stage3_nodes_in_module3_composition():

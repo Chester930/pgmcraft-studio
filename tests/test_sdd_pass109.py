@@ -120,6 +120,6 @@ def test_module3_barstart_v2_summary_includes_drum_bass_report():
     assert Module3BarStartV2SummaryNode().execute(bb) == NodeStatus.SUCCESS
 
     report = bb.get_val("barstart_v2_report")
-    assert report["status"] == "EXPERIMENTAL_PASS_125"
+    assert report["status"] == "EXPERIMENTAL_PASS_126"
     assert report["drum_bass_evidence_report"]["boosted_candidate_count"] == 1
     assert bb.get_val("module3_outputs")["barstart_v2_report"]["drum_bass_evidence_report"]["status"] == "UPDATED"

@@ -2177,6 +2177,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
         "bar_grid_repair_report",
         "barstart_v2_quality_score",
         "syncopation_report",
+        "full_song_loop_report",
     ]
     output_keys = ["module3_outputs", "barstart_v2_report"]
 
@@ -2186,7 +2187,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         outputs = dict(blackboard.get_val("module3_outputs", {}) or {})
         report = {
-            "status": "EXPERIMENTAL_PASS_125",
+            "status": "EXPERIMENTAL_PASS_126",
             "meter_profile": blackboard.get_val("meter_profile", {}),
             "bar_length_report": blackboard.get_val("bar_length_report", {}),
             "bar_start_seed_report": blackboard.get_val("bar_start_seed_report", {}),
@@ -2216,6 +2217,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "transition_confidence_report": blackboard.get_val("transition_confidence_report", {}),
             "bar_start_decision_report": blackboard.get_val("bar_start_decision_report", {}),
             "unresolved_bar_spans": blackboard.get_val("unresolved_bar_spans", []),
+            "full_song_loop_report": blackboard.get_val("full_song_loop_report", {}),
             "bar_grid_repair_report": blackboard.get_val("bar_grid_repair_report", {}),
             "quality_score": blackboard.get_val("barstart_v2_quality_score", {}),
             "syncopation_report": blackboard.get_val("syncopation_report", {}),
@@ -2289,13 +2291,17 @@ def build_module3_barstart_v2_export_tree() -> SequenceNode:
     ])
 
 
-def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
-    return SequenceNode("Module3BarStartClickRoot", [
-        build_input_acquisition_tree(),
-        build_audio_quality_tree(),
-        OptionalStemSeparationNode(),
-        MeterProfileNode(),
-        ManualCommittedBarStartsSeedNode(),
+def build_module3_barstart_v2_probe_tick_tree() -> SequenceNode:
+    """One probe-and-commit tick: search a single rolling window for the next
+    bar start and either commit it or record the window unresolved.
+
+    `FullSongBarStartLoopNode` (Pass 126) re-runs this tick repeatedly to walk
+    an entire song -- every node here was built and unit-tested (Pass 105-117)
+    assuming exactly that outer loop would exist, but until Pass 126 nothing
+    ever re-invoked the tick, so a single pipeline run only ever committed one
+    bar past the seed.
+    """
+    return SequenceNode("BarStartV2ProbeTick", [
         RollingProbeWindowNode(),
         LocalModelRegistryNode(),
         DrumEvidenceBarSearchNode(),
@@ -2310,6 +2316,109 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
         BidirectionalBarAlignmentNode(),
         TransitionConfidenceNode(),
         BarStartCandidateCommitNode(),
+    ])
+
+
+class FullSongBarStartLoopNode(BaseNode):
+    """Drives the single-bar probe/commit tick across an entire song.
+
+    Stop conditions, checked once per tick:
+    - `reached_audio_duration`: the last committed bar reached the known
+      audio length (`audio_duration_sec`, or derived from `y`/`sr`).
+    - `stalled_no_recovery`: no bar committed for `stall_limit` consecutive
+      ticks *and* `NoDrumPhaseCarryNode` had nothing in `provisional_bar_starts`
+      to fall back on either -- a genuine dead end (e.g. silence).
+    - `max_iterations_reached`: hard safety cap so a bug elsewhere can never
+      hang this node forever.
+
+    Stall recovery: when a tick fails to commit for `stall_limit` tries in a
+    row (e.g. a long ambient stretch with no drum/bass/chord/melody evidence
+    at all), the loop merges in whatever `NoDrumPhaseCarryNode` already
+    computed for that tick in `provisional_bar_starts` (Pass 121-125
+    strengthened that fallback) instead of spinning until `max_iterations`.
+    """
+
+    optional_keys = [
+        "committed_bar_starts",
+        "audio_duration_sec",
+        "y",
+        "sr",
+        "provisional_bar_starts",
+    ]
+    output_keys = ["committed_bar_starts", "full_song_loop_report"]
+
+    def __init__(self, max_iterations: int = 500, stall_limit: int = 3):
+        super().__init__("FullSongBarStartLoopNode")
+        self.max_iterations = int(max_iterations)
+        self.stall_limit = int(stall_limit)
+        self._tick = build_module3_barstart_v2_probe_tick_tree()
+        self.children = [self._tick]
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        duration_cap = NoDrumPhaseCarryNode()._audio_duration_cap(blackboard)
+        stall_count = 0
+        stall_recoveries = 0
+        iterations = 0
+        stop_reason = "max_iterations_reached"
+
+        while iterations < self.max_iterations:
+            before = self._normalize(blackboard.get_val("committed_bar_starts"))
+            if duration_cap is not None and before and before[-1] >= duration_cap - 0.08:
+                # Checked *before* spending a tick: once the last committed bar
+                # already reaches the known audio length there is no more song
+                # left to probe. Running the tick anyway would just record a
+                # spurious "unresolved" span for a window past the end of the
+                # track, which would permanently block promotion_gate from
+                # ever seeing zero unresolved spans.
+                stop_reason = "reached_audio_duration"
+                break
+
+            iterations += 1
+            self._tick.run(blackboard, parent=self.name)
+            after = self._normalize(blackboard.get_val("committed_bar_starts"))
+
+            if len(after) > len(before):
+                stall_count = 0
+                continue
+
+            stall_count += 1
+            if stall_count < self.stall_limit:
+                continue
+
+            provisional = self._normalize(blackboard.get_val("provisional_bar_starts"))
+            if provisional:
+                merged = sorted(set(after) | set(provisional))
+                blackboard.set_val("committed_bar_starts", merged)
+                stall_recoveries += 1
+                stall_count = 0
+                continue
+
+            stop_reason = "stalled_no_recovery"
+            break
+
+        final = self._normalize(blackboard.get_val("committed_bar_starts"))
+        blackboard.set_val("full_song_loop_report", {
+            "status": "COMPLETED" if stop_reason != "max_iterations_reached" else "MAX_ITERATIONS_REACHED",
+            "iterations": iterations,
+            "committed_bar_count": len(final),
+            "stall_recoveries": stall_recoveries,
+            "stop_reason": stop_reason,
+            "unresolved_span_count": len(blackboard.get_val("unresolved_bar_spans", []) or []),
+        })
+        return NodeStatus.SUCCESS
+
+    def _normalize(self, raw) -> list[float]:
+        return ManualCommittedBarStartsSeedNode()._normalize_times(raw)
+
+
+def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
+    return SequenceNode("Module3BarStartClickRoot", [
+        build_input_acquisition_tree(),
+        build_audio_quality_tree(),
+        OptionalStemSeparationNode(),
+        MeterProfileNode(),
+        ManualCommittedBarStartsSeedNode(),
+        FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
         MeterAwareBeatGridNode(),
         build_module3_barstart_v2_export_tree(),

@@ -102,6 +102,6 @@ def test_module3_barstart_v2_summary_includes_chord_track_pk_report():
     assert Module3BarStartV2SummaryNode().execute(bb) == NodeStatus.SUCCESS
 
     report = bb.get_val("barstart_v2_report")
-    assert report["status"] == "EXPERIMENTAL_PASS_125"
+    assert report["status"] == "EXPERIMENTAL_PASS_126"
     assert report["chord_track_pk"]["primary_source"] == "guitar_chord"
     assert report["harmonic_anchor_evidence_report"]["status"] == "ANCHORS_BUILT"

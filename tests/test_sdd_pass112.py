@@ -99,5 +99,5 @@ def test_module3_barstart_v2_summary_includes_beat_this_report():
     assert Module3BarStartV2SummaryNode().execute(bb) == NodeStatus.SUCCESS
 
     report = bb.get_val("barstart_v2_report")
-    assert report["status"] == "EXPERIMENTAL_PASS_125"
+    assert report["status"] == "EXPERIMENTAL_PASS_126"
     assert report["beat_this_candidate_report"]["candidate_count"] == 1

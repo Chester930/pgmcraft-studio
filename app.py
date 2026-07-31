@@ -854,6 +854,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     test_project_dir = module3_outputs.get("test_project_dir") or report.get("project_dir") or output_dir
     barstart_v2_report = report.get("barstart_v2_report", {}) or module3_outputs.get("barstart_v2_report", {}) or {}
     barstart_v2_gate = barstart_v2_report.get("promotion_gate", {}) or {}
+    barstart_v2_quality_comparison = barstart_v2_report.get("quality_comparison", {}) or {}
     main_grid_source = "BarStart v2" if barstart_v2_report.get("replaces_module3_click") else "原版"
     frontend_module3_outputs = {
         key: value for key, value in module3_outputs.items()
@@ -870,7 +871,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     def _path_text(path):
         return f"`{path}`" if path else "`未產生`"
 
-    status_md = f"""# 模塊三節拍 Click 測試完成
+    status_md = f"""# 自動節拍器：節拍辨識完成
 
 - 輸入音檔: `{os.path.basename(audio_file)}`
 - 測試專案資料夾: `{test_project_dir}`
@@ -884,7 +885,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 - 分段主要可信來源統計: `{source_counts_text}`
 - 主輸出節拍來源: `{main_grid_source}`
 - BarStart v2 合併診斷: `{barstart_v2_report.get('status', '未產生')}` / `{barstart_v2_gate.get('status', 'UNKNOWN')}`
-- BarStart v2 測聽採納: `原版 88 / v2 95`
+- 品質分數比較: `原版 {barstart_v2_quality_comparison.get('original_score', 'N/A')} / v2 {barstart_v2_quality_comparison.get('barstart_v2_score', 'N/A')}`
 - Backing + Click: `{module3_outputs.get('backing_with_click_status', 'UNKNOWN')}`
 
 ## 輸出清單
@@ -1235,8 +1236,8 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[stem_status_markdown, file_stem_vocal, file_stem_drums, file_stem_bass, file_stem_extra]
             )
 
-        # 頁籤 3: 模塊三節拍 Click 測試專案
-        with gr.TabItem("🥁 模塊三節拍 Click 測試"):
+        # 頁籤 3: 自動節拍器（節拍辨識與 Click 產生）
+        with gr.TabItem("🎯 自動節拍器"):
             with gr.Row():
                 with gr.Column(scale=1):
                     module3_audio_input = gr.File(
