@@ -1039,6 +1039,15 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
     ### DAW/PGM 工程素材 · 節拍與小節地圖 · Click / MIDI / 報告輸出
     """)
 
+    # 「🎹 MIDI 鋼琴卷軸預覽」「📦 PGM 工程素材包一鍵打包與下載」兩個分頁已從前端移除。
+    # 打包/下載能力本身沒有被刪除——之後會移到「📦 DAW 素材包」（四塊敘事 Block 3）底下，
+    # 只是那個分頁目前還是空骨架，尚未接上後端。analyze_btn.click() 的 outputs 仍依賴這
+    # 兩個元件（process_pgm() 回傳固定 17 個值，PGM_OUTPUT_COUNT 常數與多處測試都綁定這
+    # 個長度），因此保留元件本身，只是設 visible=False 讓它們從畫面上消失。元件必須是
+    # gr.Blocks() 的直接子層（不能是 gr.Tabs() 的直接子層），所以放在 with gr.Tabs() 外面。
+    piano_roll_html_box = gr.HTML(visible=False)
+    file_zip_download = gr.File(visible=False)
+
     with gr.Tabs():
         # 頁籤 0: 使用指南
         with gr.TabItem("📖 使用指南"):
@@ -1077,8 +1086,6 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             | **📦 DAW 素材包** *(開發中)* | 整合節奏定位、和弦簡譜與各音軌轉譜結果，產出完整 DAW 可匯入包 | 匯入 DAW 進行正式製作 |
             | **🎛️ PGM 節目軌與採譜分析** | 核心分析引擎：自動算節拍 (Beat/Downbeat)、BPM 曲線、生成 MIDI 軌 | Live 練團、DAW 工程建置 |
             | **🔍 Workflow 執行與診斷** | 檢視 Behavior Tree 節點執行軌跡、執行耗時與 Blackboard key 契約驗證 | 系統診斷、效能與狀態檢查 |
-            | **🎹 MIDI 鋼琴卷軸預覽** | 視覺化瀏覽樂曲和弦與主唱/旋律音高卷軸 (Piano Roll) | 快速確認和弦與樂曲段落結構 |
-            | **📦 PGM 工程素材包下載** | 一鍵匯出包含 `.rpp` (Reaper)、`.als` (Ableton)、`.fcpxml` (Logic Pro)、`.csv` (Cubase) 的完整 `.zip` | 匯入 DAW 進行正式音樂製作 |
             | **🔌 BT 節點動態插件管理器** | 檢視與管理動態加載的 Behavior Tree 自訂節點與 SDK 插件 | 擴充開發與進階除錯 |
 
             ---
@@ -1515,18 +1522,6 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             bt_refresh_btn.click(fn=_refresh_bt_html, inputs=[diag_stage_select], outputs=[bt_visualizer_html])
             diag_stage_select.change(fn=_refresh_bt_html, inputs=[diag_stage_select], outputs=[bt_visualizer_html])
 
-
-        # 頁籤 5: MIDI 鋼琴卷軸預覽 (Piano Roll)
-        with gr.TabItem("🎹 MIDI 鋼琴卷軸預覽"):
-            piano_roll_html_box = gr.HTML("<div style='padding:15px; color:#aaa;'>### 🎹 MIDI 鋼琴卷軸預覽<br>*執行 PGM 分析後，將於此處渲染 MIDI 和弦與樂曲段落鋼琴卷軸。*</div>")
-
-        # 頁籤 6: PGM 工程素材包一鍵打包與下載 (ZIP Package)
-        with gr.TabItem("📦 PGM 工程素材包一鍵打包與下載"):
-            gr.Markdown("""
-            ### 📦 DAW Ready 完整工程素材包
-            包含全套 DAW 專案檔 (`.rpp`, `.als`, `.fcpxml`)、Tempo / Click / Chord MIDI 軌、Live 舞台指示面板與逐字稿字幕報告。
-            """)
-            file_zip_download = gr.File(label="📦 一鍵下載全套 DAW 工程素材包 (.zip Archive)")
 
         # 頁籤 7: BT 節點動態插件管理器 (Node Plugin SDK)
         with gr.TabItem("🔌 BT 節點動態插件管理器"):
