@@ -13,7 +13,6 @@ import tkinter as tk
 from tkinter import filedialog
 import gradio as gr
 from pgm_craft.pipeline import PGMCraftEngine
-from pgm_craft.separator import CascadedStemSeparator
 from pgm_craft.bt_visualizer import build_tree_schema, render_bt_html
 from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow_report import WorkflowReportExporter
@@ -35,7 +34,6 @@ except RuntimeError:
 
 
 engine = PGMCraftEngine(enable_stem_separation=False)
-separator_engine = CascadedStemSeparator()
 DEFAULT_OUTPUT_DIR = os.path.abspath("outputs")
 PGM_OUTPUT_COUNT = 17
 
@@ -596,14 +594,34 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
     if mode_id is None:
         return f"❌ 不支援的分軌模式: {separation_mode}", None, None, None, None
 
+    # 🎛️ 通用分軌下拉選單：改走 Blackboard + BT 節點（stem_separation_bt.py／
+    # audio_nodes.py／live_pgm_bt.py），與上方 21 個場景工作流統一防呆邏輯來源，
+    # 不再直接呼叫 separator_engine 繞過 BT。
+    from pgm_craft.workflow.nodes import Blackboard, SequenceNode
+    from pgm_craft.workflow.stem_separation_bt import (
+        SeparateVocalsNode, SeparateDrumsNode, SeparateBassNode, SeparateGuitarNode,
+        SeparatePianoNode, SeparateStringsNode, SeparateOrganNode, SeparateGeneral6StemsNode,
+        GenericDeReverbNode, VocalDeBreatheNode, SubSplitDrumsNode, SubSplitBassNode,
+        SeparateLeadAndBackingNode,
+    )
+    from pgm_craft.workflow.audio_nodes import DemucsStemNode
+    from pgm_craft.workflow.live_pgm_bt import FullStemSeparationNode
+
+    bb = Blackboard()
+    bb.set_val("audio_path", audio_input)
+    bb.set_val("stems_dir", stem_dir)
+
     # 🟢 通用分軌模式 (可直接上傳原始混音曲 Full Mix)
     if mode_id == "general_4stem":
-        res = separator_engine.separate_general_4stems(audio_input, stem_dir, enable_enhancement=True)
+        bb.set_val("output_dir", stem_dir)
+        FullStemSeparationNode().execute(bb)
+        res = bb.get_val("stems_dict", {})
         vocal_out, drums_out, bass_out, extra_out = res.get('vocals'), res.get('drums'), res.get('bass'), res.get('other')
         status_msg = f"🎉 完成【通用標準 4-Stem 分離與 EBU R128 響度優化】！\n- 目錄: `{os.path.abspath(stem_dir)}`"
 
     elif mode_id == "general_6stem":
-        res = separator_engine.separate_general_6stems(audio_input, stem_dir, enable_enhancement=True)
+        SeparateGeneral6StemsNode().execute(bb)
+        res = bb.get_val("stems_6", {})
         vocal_out, drums_out, bass_out, extra_out = res.get('vocals'), res.get('drums'), res.get('bass'), res.get('other')
         status_msg = (
             "🎉 完成【通用進階 6-Stem 全音色分離與 EBU R128 響度優化】！\n"
@@ -612,75 +630,92 @@ def process_standalone_separation(audio_input, separation_mode, custom_output_di
         )
 
     elif mode_id == "vocals":
-        vocal_out, inst_out = separator_engine.separate_vocals(audio_input, stem_dir)
+        SeparateVocalsNode().execute(bb)
+        vocal_out, inst_out = bb.get_val("vocals_path"), bb.get_val("instrumental_path")
         status_msg = f"✅ 完成【人聲分離】！\n- **純人聲**: `{os.path.basename(vocal_out)}`\n- **無人聲伴奏**: `{os.path.basename(inst_out)}`"
         extra_out = inst_out
 
     elif mode_id == "drums":
-        drums_out, no_drums_out = separator_engine.separate_drums(audio_input, stem_dir)
+        SeparateDrumsNode().execute(bb)
+        drums_out, no_drums_out = bb.get_val("drums_path"), bb.get_val("no_drums_path")
         status_msg = f"✅ 完成【鼓組分離】！\n- **鼓組軌**: `{os.path.basename(drums_out)}`\n- **無鼓伴奏**: `{os.path.basename(no_drums_out)}`"
         extra_out = no_drums_out
 
     elif mode_id == "bass":
-        bass_out, other_out = separator_engine.separate_bass(audio_input, stem_dir)
+        SeparateBassNode().execute(bb)
+        bass_out, other_out = bb.get_val("bass_path"), bb.get_val("other_path")
         status_msg = f"✅ 完成【貝斯分離】！\n- **貝斯軌**: `{os.path.basename(bass_out)}`\n- **其他伴奏**: `{os.path.basename(other_out)}`"
         extra_out = other_out
 
     elif mode_id == "cascaded":
-        res = separator_engine.run_cascaded_demixing(audio_input, steps=['vocals', 'drums', 'bass'], output_dir=stem_dir)
+        bb.set_val("output_dir", output_dir)
+        bb.set_val("enable_stem", True)
+        bb.set_val("demix_steps", ['vocals', 'drums', 'bass'])
+        DemucsStemNode().execute(bb)
+        res = bb.get_val("stems", {})
         vocal_out, drums_out, bass_out, extra_out = res.get('vocals'), res.get('drums'), res.get('bass'), res.get('other')
         status_msg = f"🎉 完成【全自動遞迴層疊分軌】！已儲存至 `{os.path.abspath(stem_dir)}`"
 
-    # 🟡 伴奏/特定軌細分模式 (系統自動防呆：先抽對應分軌)
+    # 🟡 伴奏/特定軌細分模式 (系統自動防呆：先抽對應分軌 — 用明確的 BT Sequence 連鎖節點，
+    # 取代過去藏在 separator.py 方法內部 is_already_X 旗標裡的隱性防呆邏輯)
     elif mode_id == "drums_substem":
         status_msg = "ℹ️ 【鼓組 Guard 啟動】: 輸入為原曲時，系統已自動先執行 Pass 2 提取純鼓組，再精確細分打擊樂！\n\n"
-        kick_out, snare_out, hihat_out = separator_engine.separate_drums_substem(audio_input, stem_dir, is_already_drums=False)
+        SequenceNode("DrumsSubstemGuardChain", [SeparateDrumsNode(), SubSplitDrumsNode()]).execute(bb)
+        kick_out, snare_out, hihat_out = bb.get_val("kick_path"), bb.get_val("snare_path"), bb.get_val("hihat_path")
         status_msg += f"✅ 完成【鼓組細分】！\n- **大鼓 (Kick)**: `{os.path.basename(kick_out)}`\n- **小鼓 (Snare)**: `{os.path.basename(snare_out)}`\n- **鈸聲 (Hi-Hat)**: `{os.path.basename(hihat_out)}`"
         drums_out, bass_out, extra_out = kick_out, snare_out, hihat_out
 
     elif mode_id == "guitar":
         status_msg = "ℹ️ 【防呆保護啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 1 去人聲，確保吉他分離精度 SDR +2.5dB！\n\n"
-        guitar_out, no_guitar_out = separator_engine.separate_guitar(audio_input, stem_dir, is_already_instrumental=False)
+        SequenceNode("GuitarGuardChain", [SeparateVocalsNode(), SeparateGuitarNode()]).execute(bb)
+        guitar_out, no_guitar_out = bb.get_val("guitar_path"), bb.get_val("no_guitar_path")
         status_msg += f"✅ 完成【吉他分離】！\n- **吉他獨奏**: `{os.path.basename(guitar_out)}`\n- **無吉他伴奏**: `{os.path.basename(no_guitar_out)}`"
         extra_out = guitar_out
 
     elif mode_id == "piano":
         status_msg = "ℹ️ 【防呆保護啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 1 去人聲，避免人聲干擾鋼琴泛音！\n\n"
-        piano_out, no_piano_out = separator_engine.separate_piano(audio_input, stem_dir, is_already_instrumental=False)
+        SequenceNode("PianoGuardChain", [SeparateVocalsNode(), SeparatePianoNode()]).execute(bb)
+        piano_out, no_piano_out = bb.get_val("piano_path"), bb.get_val("no_piano_path")
         status_msg += f"✅ 完成【鋼琴分離】！\n- **鋼琴軌**: `{os.path.basename(piano_out)}`\n- **無鋼琴伴奏**: `{os.path.basename(no_piano_out)}`"
         extra_out = piano_out
 
     elif mode_id == "strings":
-        strings_out, no_strings_out = separator_engine.separate_strings(audio_input, stem_dir)
+        SeparateStringsNode().execute(bb)
+        strings_out, no_strings_out = bb.get_val("strings_path"), bb.get_val("no_strings_path")
         status_msg = f"✅ 完成【弦樂分離】！\n- **弦樂聲部**: `{os.path.basename(strings_out)}`\n- **無弦樂伴奏**: `{os.path.basename(no_strings_out)}`"
         extra_out = strings_out
 
     elif mode_id == "organ":
-        organ_out, no_organ_out = separator_engine.separate_organ(audio_input, stem_dir)
+        SeparateOrganNode().execute(bb)
+        organ_out, no_organ_out = bb.get_val("organ_path"), bb.get_val("no_organ_path")
         status_msg = f"✅ 完成【風琴分離】！\n- **風琴聲部**: `{os.path.basename(organ_out)}`\n- **無風琴伴奏**: `{os.path.basename(no_organ_out)}`"
         extra_out = organ_out
 
-    # 🔴 高前置條件特化模式 (系統自動防呆：需純人聲/單一音軌)
+    # 🔴 高前置條件特化模式 (系統自動防呆：需純人聲/單一音軌 — 同樣改用明確的 BT Sequence 連鎖)
     elif mode_id == "debreathe":
         status_msg = "ℹ️ 【人聲 Guard 啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 1 剝離純人聲，再消除換氣聲！\n\n"
-        clean_vocal, breath_out = separator_engine.process_debreathe(audio_input, stem_dir, is_already_vocal=False)
+        SequenceNode("DebreatheGuardChain", [SeparateVocalsNode(), VocalDeBreatheNode()]).execute(bb)
+        clean_vocal, breath_out = bb.get_val("clean_vocal_path"), bb.get_val("breath_path")
         status_msg += f"✅ 完成【人聲去換氣聲】！\n- **無換氣聲純人聲**: `{os.path.basename(clean_vocal)}`\n- **吸氣/換氣聲音軌**: `{os.path.basename(breath_out)}`"
         vocal_out, extra_out = clean_vocal, breath_out
 
     elif mode_id == "synth_bass":
         status_msg = "ℹ️ 【貝斯 Guard 啟動】: 檢測到輸入為原曲，系統已自動先執行 Pass 3 提取純貝斯，再細分電貝斯與 808！\n\n"
-        ebass_out, sbass_out = separator_engine.separate_synth_and_electric_bass(audio_input, stem_dir, is_already_bass=False)
+        SequenceNode("SynthBassGuardChain", [SeparateBassNode(), SubSplitBassNode()]).execute(bb)
+        ebass_out, sbass_out = bb.get_val("electric_bass_path"), bb.get_val("synth_bass_path")
         status_msg += f"✅ 完成【貝斯細分】！\n- **真實電貝斯**: `{os.path.basename(ebass_out)}`\n- **808/合成低音**: `{os.path.basename(sbass_out)}`"
         bass_out, extra_out = ebass_out, sbass_out
 
     elif mode_id == "lead_backing":
         status_msg = "ℹ️ 【極高前置保護啟動】: 本模型要求純人聲。輸入為原曲時，系統自動先剝離純人聲，再拆解主唱與和聲！\n\n"
-        lead_out, backing_out = separator_engine.separate_lead_and_backing(audio_input, stem_dir, is_already_vocal=False)
+        SequenceNode("LeadBackingGuardChain", [SeparateVocalsNode(), SeparateLeadAndBackingNode()]).execute(bb)
+        lead_out, backing_out = bb.get_val("lead_vocal_path"), bb.get_val("backing_vocals_path")
         status_msg += f"✅ 完成【主唱與和聲拆解】！\n- **單獨主唱**: `{os.path.basename(lead_out)}`\n- **背景和聲**: `{os.path.basename(backing_out)}`"
         vocal_out, extra_out = lead_out, backing_out
 
     elif mode_id == "dereverb":
-        dry_out, room_out = separator_engine.process_dereverb(audio_input, stem_dir, is_already_single_stem=False)
+        GenericDeReverbNode().execute(bb)
+        dry_out, room_out = bb.get_val("dereverb_dry_path"), bb.get_val("dereverb_room_path")
         status_msg = f"✅ 完成【去殘響處理】！\n- **無迴音乾聲**: `{os.path.basename(dry_out)}`\n- **房間迴音成分**: `{os.path.basename(room_out)}`"
         extra_out = dry_out
 

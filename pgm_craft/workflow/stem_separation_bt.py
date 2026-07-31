@@ -519,6 +519,182 @@ class SubSplitBassNode(BaseNode):
             return NodeStatus.FAILURE
 
 
+# ---------------------------------------------------------------------------
+# 2-B'  獨立分軌下拉選單補強節點（app.py process_standalone_separation 的
+#       「通用分軌模式」原本直接呼叫 separator_engine，繞過 BT/Blackboard；
+#       piano/strings/organ/general_6stem 過去完全沒有 BT 節點包裝過）
+# ---------------------------------------------------------------------------
+
+class SeparatePianoNode(BaseNode):
+    """鋼琴分離節點：與 SeparateGuitarNode 同款防呆——優先吃已剝離人聲的伴奏輸入。"""
+    required_keys = ["audio_path", "stems_dir"]
+    optional_keys = ["other_path", "instrumental_path", "target_analysis_path"]
+    output_keys = ["piano_path"]
+
+    def __init__(self, separator: CascadedStemSeparator = None):
+        super().__init__("SeparatePianoNode")
+        self.separator = separator or CascadedStemSeparator()
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        target_input = (
+            blackboard.get_val("other_path") or
+            blackboard.get_val("instrumental_path") or
+            blackboard.get_val("target_analysis_path") or
+            blackboard.get_val("audio_path")
+        )
+        stems_dir = blackboard.get_val("stems_dir")
+        piano_dir = os.path.join(stems_dir, "piano")
+        os.makedirs(piano_dir, exist_ok=True)
+
+        if not target_input or not os.path.exists(target_input):
+            print("[SeparatePiano] target input not found")
+            return NodeStatus.FAILURE
+
+        try:
+            piano_path, no_piano_path = self.separator.separate_piano(
+                target_input, piano_dir, is_already_instrumental=True,
+            )
+            blackboard.set_val("piano_path", piano_path)
+            blackboard.set_val("no_piano_path", no_piano_path)
+
+            stems = blackboard.get_val("stems", {})
+            stems["piano"] = piano_path
+            blackboard.set_val("stems", stems)
+
+            print(f"[SeparatePiano] OK -> piano: {piano_path}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[SeparatePiano] FAILED: {e}")
+            return NodeStatus.FAILURE
+
+
+class SeparateStringsNode(BaseNode):
+    """弦樂分離節點：直接吃原始混音，無前置去人聲需求。"""
+    required_keys = ["audio_path", "stems_dir"]
+    optional_keys = []
+    output_keys = ["strings_path"]
+
+    def __init__(self, separator: CascadedStemSeparator = None):
+        super().__init__("SeparateStringsNode")
+        self.separator = separator or CascadedStemSeparator()
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        stems_dir = blackboard.get_val("stems_dir")
+        if not audio_path or not os.path.exists(audio_path):
+            return NodeStatus.FAILURE
+
+        try:
+            strings_path, no_strings_path = self.separator.separate_strings(audio_path, stems_dir)
+            blackboard.set_val("strings_path", strings_path)
+            blackboard.set_val("no_strings_path", no_strings_path)
+
+            stems = blackboard.get_val("stems", {})
+            stems["strings"] = strings_path
+            blackboard.set_val("stems", stems)
+
+            print(f"[SeparateStrings] OK -> strings: {strings_path}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[SeparateStrings] FAILED: {e}")
+            return NodeStatus.FAILURE
+
+
+class SeparateOrganNode(BaseNode):
+    """風琴分離節點：直接吃原始混音，無前置去人聲需求。"""
+    required_keys = ["audio_path", "stems_dir"]
+    optional_keys = []
+    output_keys = ["organ_path"]
+
+    def __init__(self, separator: CascadedStemSeparator = None):
+        super().__init__("SeparateOrganNode")
+        self.separator = separator or CascadedStemSeparator()
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        stems_dir = blackboard.get_val("stems_dir")
+        if not audio_path or not os.path.exists(audio_path):
+            return NodeStatus.FAILURE
+
+        try:
+            organ_path, no_organ_path = self.separator.separate_organ(audio_path, stems_dir)
+            blackboard.set_val("organ_path", organ_path)
+            blackboard.set_val("no_organ_path", no_organ_path)
+
+            stems = blackboard.get_val("stems", {})
+            stems["organ"] = organ_path
+            blackboard.set_val("stems", stems)
+
+            print(f"[SeparateOrgan] OK -> organ: {organ_path}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[SeparateOrgan] FAILED: {e}")
+            return NodeStatus.FAILURE
+
+
+class SeparateGeneral6StemsNode(BaseNode):
+    """通用進階 6-Stem 全音色分離節點 (Vocals/Drums/Bass/Guitar/Piano/Other)。"""
+    required_keys = ["audio_path", "stems_dir"]
+    optional_keys = []
+    output_keys = ["stems_6"]
+
+    def __init__(self, separator: CascadedStemSeparator = None):
+        super().__init__("SeparateGeneral6StemsNode")
+        self.separator = separator or CascadedStemSeparator()
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        stems_dir = blackboard.get_val("stems_dir")
+        if not audio_path or not os.path.exists(audio_path):
+            return NodeStatus.FAILURE
+
+        try:
+            res = self.separator.separate_general_6stems(audio_path, stems_dir, enable_enhancement=True)
+            blackboard.set_val("stems_6", res)
+
+            stems = blackboard.get_val("stems", {})
+            stems.update(res)
+            blackboard.set_val("stems", stems)
+
+            print(f"[SeparateGeneral6Stems] OK -> {list(res.keys())}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[SeparateGeneral6Stems] FAILED: {e}")
+            return NodeStatus.FAILURE
+
+
+class GenericDeReverbNode(BaseNode):
+    """通用去殘響節點：直接吃單一音軌（人聲/任意單一 stem），去除房間殘響。"""
+    required_keys = ["audio_path", "stems_dir"]
+    optional_keys = []
+    output_keys = ["dereverb_dry_path", "dereverb_room_path"]
+
+    def __init__(self, separator: CascadedStemSeparator = None):
+        super().__init__("GenericDeReverbNode")
+        self.separator = separator or CascadedStemSeparator()
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        stems_dir = blackboard.get_val("stems_dir")
+        if not audio_path or not os.path.exists(audio_path):
+            return NodeStatus.FAILURE
+
+        try:
+            dry_path, room_path = self.separator.process_dereverb(audio_path, stems_dir, is_already_single_stem=False)
+            blackboard.set_val("dereverb_dry_path", dry_path)
+            blackboard.set_val("dereverb_room_path", room_path)
+
+            stems = blackboard.get_val("stems", {})
+            stems["dereverb_dry"] = dry_path
+            blackboard.set_val("stems", stems)
+
+            print(f"[GenericDeReverb] OK -> dry: {dry_path}")
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[GenericDeReverb] FAILED: {e}")
+            return NodeStatus.FAILURE
+
+
 class PeelCoreTrioNode(BaseNode):
     """
     【第 4 階同層動態減算節點】：
