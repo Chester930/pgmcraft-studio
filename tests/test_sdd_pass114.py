@@ -23,8 +23,8 @@ def test_frontend_uses_single_module3_execution_entry():
 
 def test_frontend_single_run_outputs_barstart_v2_main_only():
     assert 'module3_v2_report_json = gr.JSON(label="BarStart v2 診斷報告")' in APP_SOURCE
-    assert 'module3_mix_player = gr.Audio(label="主版本 BarStart v2：原曲 + Click")' in APP_SOURCE
-    assert 'module3_click_player = gr.Audio(label="主版本 BarStart v2：Click Only")' in APP_SOURCE
+    assert 'module3_mix_player = gr.Audio(label="主要輸出：原曲 + Click")' in APP_SOURCE
+    assert 'module3_click_player = gr.Audio(label="主要輸出：Click Only")' in APP_SOURCE
     assert "原版比較" not in MODULE3_UI_SOURCE
     assert "legacy_" not in MODULE3_UI_SOURCE
 

@@ -898,7 +898,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 | 主版本 ({main_grid_source}) 原曲 + Click | {_path_text(mix_path)} |
 | 主版本 ({main_grid_source}) Click Only | {_path_text(click_path)} |
 | Backing + Click | {_path_text(backing_path)} |
-| 模塊三 BT 報告 | {_path_text(report_path)} |
+| 自動節拍器 BT 報告 | {_path_text(report_path)} |
 | Pipeline 摘要報告 | {_path_text(pipeline_report_path)} |
 | 速度曲線 | {_path_text(tempo_curve_path)} |
 
@@ -1241,12 +1241,12 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             with gr.Row():
                 with gr.Column(scale=1):
                     module3_audio_input = gr.File(
-                        label="選擇測試音檔",
+                        label="選擇音檔",
                         type="filepath",
                         file_types=[".mp3", ".wav", ".flac", ".m4a"]
                     )
                     module3_enable_stem_chk = gr.Checkbox(
-                        label="啟用分軌產生候選軌",
+                        label="啟用分軌輔助節拍辨識",
                         value=False
                     )
                     module3_candidate_sources_chk = gr.CheckboxGroup(
@@ -1262,23 +1262,23 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     with gr.Row():
                         module3_output_dir = gr.Textbox(
                             value=DEFAULT_OUTPUT_DIR,
-                            label="測試專案輸出資料夾",
+                            label="輸出資料夾",
                             scale=4
                         )
                         module3_browse_btn = gr.Button("📂 選擇資料夾", variant="secondary", scale=1)
 
-                    module3_start_btn = gr.Button("建立模塊三測試專案", variant="primary")
+                    module3_start_btn = gr.Button("🎯 開始節拍辨識並產生 Click", variant="primary")
 
                 with gr.Column(scale=2):
-                    module3_status_markdown = gr.Markdown("### 待建立模塊三測試專案")
+                    module3_status_markdown = gr.Markdown("### 待開始節拍辨識")
                     module3_tempo_curve = gr.Image(label="速度曲線")
                 module3_debug_json = gr.JSON(label="分段可信來源與合成報告")
                 module3_v2_report_json = gr.JSON(label="BarStart v2 診斷報告")
 
-            gr.Markdown("### 模塊三試聽與檔案")
+            gr.Markdown("### 節拍器試聽與檔案下載")
             with gr.Row():
-                module3_mix_player = gr.Audio(label="主版本 BarStart v2：原曲 + Click")
-                module3_click_player = gr.Audio(label="主版本 BarStart v2：Click Only")
+                module3_mix_player = gr.Audio(label="主要輸出：原曲 + Click")
+                module3_click_player = gr.Audio(label="主要輸出：Click Only")
                 module3_backing_player = gr.Audio(label="Backing + Click")
 
             with gr.Row():
