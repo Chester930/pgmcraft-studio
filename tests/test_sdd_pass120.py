@@ -58,10 +58,15 @@ class TestSDDPass120DownbeatVerifierInV2(unittest.TestCase):
         return bb
 
     def test_v2_pipeline_places_downbeat_verifier_before_click_synthesis(self):
+        # Pass 128 dropped OnsetPhaseRealignmentNode from the v2 pipeline
+        # (per-beat snapping); KickBassDownbeatVerifierNode stays -- it only
+        # relabels which existing, evenly-spaced grid point is beat 1, never
+        # moves a beat's time -- so it now sits right after grid generation.
         names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
         self.assertIn("KickBassDownbeatVerifierNode", names)
+        self.assertNotIn("OnsetPhaseRealignmentNode", names)
         self.assertLess(
-            names.index("OnsetPhaseRealignmentNode"),
+            names.index("MeterAwareBeatGridNode"),
             names.index("KickBassDownbeatVerifierNode"),
         )
         self.assertLess(

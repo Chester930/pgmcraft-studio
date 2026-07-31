@@ -47,11 +47,13 @@ class TestSDDPass118OnsetPhaseRealignmentInV2(unittest.TestCase):
         import shutil
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_v2_pipeline_places_onset_realignment_before_click_synthesis(self):
+    def test_v2_pipeline_no_longer_wires_onset_realignment(self):
+        """Pass 128: dropped per-beat onset snapping from the v2 pipeline on
+        user listening feedback -- v2 should nail each bar's first beat and
+        evenly subdivide the rest, not chase individual onset peaks. The node
+        class itself stays valid and is still exercised directly below."""
         names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("OnsetPhaseRealignmentNode", names)
-        self.assertLess(names.index("MeterAwareBeatGridNode"), names.index("OnsetPhaseRealignmentNode"))
-        self.assertLess(names.index("OnsetPhaseRealignmentNode"), names.index("ClickSynthesisNode"))
+        self.assertNotIn("OnsetPhaseRealignmentNode", names)
 
     def test_grid_beat_snaps_onto_real_onset(self):
         bb = Blackboard()

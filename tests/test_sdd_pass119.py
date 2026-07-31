@@ -45,11 +45,14 @@ class TestSDDPass119DrumFillExclusionInV2(unittest.TestCase):
         self.assertEqual(MeterAwareBeatGridNode().execute(bb), NodeStatus.SUCCESS)
         return bb
 
-    def test_v2_pipeline_places_drum_fill_detection_before_onset_realignment(self):
+    def test_v2_pipeline_no_longer_wires_drum_fill_detection(self):
+        """Pass 128: DrumFillDetectionNode only existed to feed the onset
+        realignment exclusion zones; with onset realignment dropped from the
+        v2 pipeline, this node has no consumer left in v2 either. Its own
+        detection behaviour (tested below) remains valid and still runs on
+        the Stage 3 main line."""
         names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("DrumFillDetectionNode", names)
-        self.assertLess(names.index("MeterAwareBeatGridNode"), names.index("DrumFillDetectionNode"))
-        self.assertLess(names.index("DrumFillDetectionNode"), names.index("OnsetPhaseRealignmentNode"))
+        self.assertNotIn("DrumFillDetectionNode", names)
 
     def test_dense_kick_cluster_produces_exclusion_zone_around_first_bar(self):
         bb = self._grid_blackboard()
