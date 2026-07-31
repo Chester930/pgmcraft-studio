@@ -1236,9 +1236,9 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         type="filepath",
                         file_types=[".mp3", ".wav", ".flac", ".m4a"]
                     )
-                    module3_enable_stem_chk = gr.Checkbox(
-                        label="啟用分軌輔助節拍辨識",
-                        value=False
+                    gr.Markdown(
+                        "*分軌輔助節拍辨識為必要步驟（節拍/小節偵測需要真實的鼓組脈衝，"
+                        "沒有分軌就沒有證據可用），已固定啟用，不可關閉。*"
                     )
                     module3_candidate_sources_chk = gr.CheckboxGroup(
                         choices=[
@@ -1284,11 +1284,15 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[module3_output_dir]
             )
 
+            def _handle_module3_run(audio_file, candidate_sources, output_dir):
+                # Beat/bar detection needs real kick/snare evidence, which only
+                # exists after stem separation -- this is not an optional toggle.
+                return process_module3_click_test(audio_file, True, candidate_sources, output_dir)
+
             module3_start_btn.click(
-                fn=process_module3_click_test,
+                fn=_handle_module3_run,
                 inputs=[
                     module3_audio_input,
-                    module3_enable_stem_chk,
                     module3_candidate_sources_chk,
                     module3_output_dir,
                 ],
