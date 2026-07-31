@@ -2318,6 +2318,41 @@ def evaluate_barstart_v2_promotion_gate(
     }
 
 
+def evaluate_barstart_v2_auto_promotion_gate(
+    *,
+    unresolved_bar_spans=None,
+    v2_score=None,
+    original_score=None,
+    min_margin=0.0,
+):
+    """Automatic, score-only promotion gate for the main pipeline.
+
+    Unlike evaluate_barstart_v2_promotion_gate(), this never requires a human
+    to record reference/manual acceptance -- the isolated 節奏定位 tab needs
+    that strict human-in-the-loop gate before Module 3's own click grid is
+    ever replaced, but the main one-click pipeline has no UI path to record
+    acceptance at all, so requiring it there would mean v2 could never be
+    adopted in practice. This gate promotes v2 only when it has no unresolved
+    bar spans and its quantified quality score is strictly higher than v1's
+    on the same metric -- both sides of the same conservative bar this
+    module already applies elsewhere.
+    """
+    unresolved_count = len(unresolved_bar_spans or [])
+    blockers = []
+    if unresolved_count:
+        blockers.append("UNRESOLVED_BAR_SPANS_PRESENT")
+    if v2_score is None or original_score is None:
+        blockers.append("QUALITY_SCORES_UNAVAILABLE")
+    elif v2_score <= original_score + min_margin:
+        blockers.append("V2_SCORE_NOT_HIGHER")
+    return {
+        "promotable": not blockers,
+        "status": "AUTO_PROMOTE_READY" if not blockers else "AUTO_PROMOTION_BLOCKED",
+        "blockers": blockers,
+        "unresolved_bar_span_count": unresolved_count,
+    }
+
+
 def build_module3_barstart_v2_export_tree() -> SequenceNode:
     # Pass 128: dropped the per-beat acoustic snapping stage (Pass 118
     # OnsetPhaseRealignmentNode, plus the two exclusion-zone detectors that
