@@ -19,6 +19,10 @@ from pgm_craft.workflow.audio_nodes import (
 )
 from pgm_craft.workflow.audio_quality_bt import build_audio_quality_tree
 from pgm_craft.workflow.beat_tracking_bt import (
+    DrumFillDetectionNode,
+    KickBassDownbeatVerifierNode,
+    OnsetPhaseRealignmentNode,
+    _score_beat_grid_quality,
     build_beat_refinement_nodes,
     build_beat_tracking_analysis_nodes,
     build_beat_tracking_preparation_nodes,
@@ -881,22 +885,24 @@ class Module3OutputSummaryNode(BaseNode):
 
 class Module3BarStartV2MergeNode(BaseNode):
     """
-    Promotes BarStart v2 as the default Module 3 click grid.
+    Runs the real BarStart v2 engine alongside Module 3 v1's own result and
+    honestly compares them. v2 only replaces v1's click grid when
+    `evaluate_barstart_v2_promotion_gate()` says it is promotable (reference
+    and manual acceptance both recorded as pass, no unresolved bar spans) AND
+    v2's own quantified quality score actually beats v1's on the same metric.
 
-    The previous grid is preserved as a legacy comparison artifact so one
-    Module 3 run still exposes controlled A/B outputs.
+    An earlier version of this node re-derived "v2" from v1's own
+    measure_map/beat labels, ignored the promotion gate's verdict, and wrote a
+    hardcoded 88-vs-95 "listening test" score -- it never ran the real v2
+    evidence-ladder engine at all. This version does.
     """
 
     optional_keys = [
         "barstart_v2_report",
-        "committed_bar_starts",
-        "measure_map",
         "beats",
         "refined_beats",
-        "meter_profile",
-        "unresolved_bar_spans",
-        "click_track",
-        "mix_with_click",
+        "barstart_v2_reference_acceptance",
+        "barstart_v2_manual_acceptance",
         "audio_path",
         "project_dir",
         "output_dir",
@@ -904,9 +910,6 @@ class Module3BarStartV2MergeNode(BaseNode):
     ]
     output_keys = [
         "barstart_v2_report",
-        "committed_bar_starts",
-        "bar_grid_boundaries",
-        "bar_length_report",
         "barstart_v2_grid_beats",
         "barstart_v2_promoted_to_main",
         "barstart_v2_click_track",
@@ -916,6 +919,8 @@ class Module3BarStartV2MergeNode(BaseNode):
         "module3_legacy_click_track",
         "module3_legacy_mix_with_click",
         "module3_legacy_comparison_report",
+        "refined_beats",
+        "beats",
     ]
 
     def __init__(self):
@@ -925,137 +930,129 @@ class Module3BarStartV2MergeNode(BaseNode):
         if blackboard.get_val("barstart_v2_report"):
             return NodeStatus.SUCCESS
 
-        committed = self._bar_starts_from_measure_map(blackboard.get_val("measure_map", []))
-        source = "measure_map"
-        if len(committed) < 2:
-            committed = self._bar_starts_from_beats(blackboard.get_val("refined_beats", blackboard.get_val("beats")))
-            source = "downbeat_labels"
-
-        if len(committed) < 2:
-            blackboard.set_val("barstart_v2_report", {
-                "status": "MERGED_DIAGNOSTIC_SKIPPED",
-                "reason": "not_enough_bar_starts",
-                "replaces_module3_click": False,
-            })
-            return NodeStatus.SUCCESS
-
-        measure_map = blackboard.get_val("measure_map", [])
-        grid_boundaries = self._bar_grid_boundaries(committed, measure_map if source == "measure_map" else None)
-        blackboard.set_val("committed_bar_starts", committed)
-        blackboard.set_val("bar_grid_boundaries", grid_boundaries)
-        intervals = np.diff(np.asarray(grid_boundaries, dtype=float)).tolist()
-        meter_profile = blackboard.get_val("meter_profile", {}) or {"meter": "4/4", "source": "module3_default"}
-        bar_length_report = {
-            "source": source,
-            "bar_count": max(0, len(grid_boundaries) - 1),
-            "committed_bar_starts": committed,
-            "bar_grid_boundaries": grid_boundaries,
-            "median_bar_duration_sec": round(float(np.median(intervals)), 6) if intervals else None,
-            "min_bar_duration_sec": round(float(np.min(intervals)), 6) if intervals else None,
-            "max_bar_duration_sec": round(float(np.max(intervals)), 6) if intervals else None,
-        }
-        blackboard.set_val("bar_length_report", bar_length_report)
-
-        from pgm_craft.workflow.module3_barstart_v2_bt import evaluate_barstart_v2_promotion_gate
-
-        promotion_gate = evaluate_barstart_v2_promotion_gate(
-            reference_acceptance=blackboard.get_val("barstart_v2_reference_acceptance"),
-            manual_acceptance=blackboard.get_val("barstart_v2_manual_acceptance"),
-            unresolved_bar_spans=blackboard.get_val("unresolved_bar_spans", []),
-        )
         original_beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
         original_beat_grid = (
             np.asarray(original_beats, dtype=float)
             if original_beats is not None
             else np.empty((0, 2), dtype=float)
         )
-        v2_beats = self._beats_from_bar_starts(grid_boundaries, meter_profile)
-        if len(v2_beats) == 0:
+        if len(original_beat_grid) == 0:
             blackboard.set_val("barstart_v2_report", {
                 "status": "MERGED_DIAGNOSTIC_SKIPPED",
-                "reason": "v2_grid_empty",
+                "reason": "no_module3_beats_to_compare",
                 "replaces_module3_click": False,
             })
             return NodeStatus.SUCCESS
 
+        from pgm_craft.workflow.module3_barstart_v2_bt import (
+            BarGridContinuityRepairNode,
+            BarStartV2QualityScoreNode,
+            BarStartV2SyncopationClassificationNode,
+            FullSongBarStartLoopNode,
+            ManualCommittedBarStartsSeedNode,
+            MeterAwareBeatGridNode,
+            MeterProfileNode,
+            evaluate_barstart_v2_promotion_gate,
+        )
+
+        # Run the real v2 engine on an isolated blackboard copy so it cannot
+        # clobber v1's own grid while we are still deciding whether to adopt
+        # it -- v2's evidence-ladder writes many of the same key names v1
+        # already produced (beats/committed_bar_starts/...).
+        v2_blackboard = Blackboard(blackboard)
+        # NOTE: manual_bar_starts is intentionally *not* cleared -- it is the
+        # legitimate mechanism for a caller to seed v2's starting point (e.g.
+        # a reference-verified bar list), and popping it here would silently
+        # discard that input every time.
+        for key in (
+            "committed_bar_starts", "beats", "refined_beats",
+            "bar_start_candidates", "unresolved_bar_spans", "provisional_bar_starts",
+        ):
+            v2_blackboard.pop(key, None)
+
+        v2_core = SequenceNode("BarStartV2CoreChain", [
+            MeterProfileNode(),
+            ManualCommittedBarStartsSeedNode(),
+            FullSongBarStartLoopNode(),
+            BarGridContinuityRepairNode(),
+            MeterAwareBeatGridNode(),
+            BarStartV2SyncopationClassificationNode(),
+            DrumFillDetectionNode(),
+            OnsetPhaseRealignmentNode(),
+            KickBassDownbeatVerifierNode(),
+            BarStartV2QualityScoreNode(),
+        ])
+        core_status = v2_core.run(v2_blackboard, parent=self.name)
+        v2_beats = v2_blackboard.get_val("refined_beats", v2_blackboard.get_val("beats"))
+        v2_beat_grid = (
+            np.asarray(v2_beats, dtype=float)
+            if v2_beats is not None
+            else np.empty((0, 2), dtype=float)
+        )
+        full_song_loop_report = v2_blackboard.get_val("full_song_loop_report", {})
+
+        if core_status != NodeStatus.SUCCESS or len(v2_beat_grid) == 0:
+            blackboard.set_val("barstart_v2_report", {
+                "status": "MERGED_DIAGNOSTIC_SKIPPED",
+                "reason": "v2_engine_produced_no_grid",
+                "replaces_module3_click": False,
+                "full_song_loop_report": full_song_loop_report,
+            })
+            return NodeStatus.SUCCESS
+
+        # Same scoring function, same (empty) optional args on both sides --
+        # v2 additionally carries its own penalties (unresolved spans, grid
+        # repairs, downbeat rotation) that v1 is never charged for, so this is
+        # a deliberately conservative comparison biased against over-promoting v2.
+        original_quality = _score_beat_grid_quality(original_beat_grid)
+        v2_quality = v2_blackboard.get_val("barstart_v2_quality_score") or {
+            "score": _score_beat_grid_quality(v2_beat_grid)["score"]
+        }
+
+        unresolved_spans = v2_blackboard.get_val("unresolved_bar_spans", []) or []
+        promotion_gate = evaluate_barstart_v2_promotion_gate(
+            reference_acceptance=blackboard.get_val("barstart_v2_reference_acceptance"),
+            manual_acceptance=blackboard.get_val("barstart_v2_manual_acceptance"),
+            unresolved_bar_spans=unresolved_spans,
+        )
+        quality_comparison = {
+            "original_score": original_quality["score"],
+            "barstart_v2_score": v2_quality["score"],
+            "v2_scores_higher": v2_quality["score"] > original_quality["score"],
+        }
+        promoted = bool(promotion_gate["promotable"]) and quality_comparison["v2_scores_higher"]
+
+        committed_bar_starts = ManualCommittedBarStartsSeedNode()._normalize_times(
+            v2_blackboard.get_val("committed_bar_starts")
+        )
         legacy_artifacts = self._write_legacy_artifacts(blackboard, original_beat_grid)
-        comparison_artifacts = self._write_barstart_v2_artifacts(blackboard, v2_beats, grid_boundaries)
+        comparison_artifacts = self._write_barstart_v2_artifacts(blackboard, v2_beat_grid, committed_bar_starts)
         blackboard.set_val("module3_legacy_beats", original_beat_grid.copy())
-        blackboard.set_val("barstart_v2_grid_beats", v2_beats)
-        blackboard.set_val("refined_beats", v2_beats)
-        blackboard.set_val("beats", v2_beats)
-        blackboard.set_val("barstart_v2_promoted_to_main", True)
+        blackboard.set_val("barstart_v2_grid_beats", v2_beat_grid)
+        blackboard.set_val("barstart_v2_promoted_to_main", promoted)
+        if promoted:
+            blackboard.set_val("refined_beats", v2_beat_grid)
+            blackboard.set_val("beats", v2_beat_grid)
 
         report = {
-            "status": "PROMOTED_TO_MODULE3_DEFAULT",
-            "source": source,
-            "replaces_module3_click": True,
-            "does_not_replace_module3_click": False,
-            "meter_profile": meter_profile,
-            "committed_bar_starts": committed,
-            "bar_grid_boundaries": grid_boundaries,
-            "beat_count": int(len(v2_beats)),
-            "bar_length_report": bar_length_report,
+            "status": "PROMOTED_TO_MODULE3_DEFAULT" if promoted else "COMPARED_NOT_PROMOTED",
+            "replaces_module3_click": promoted,
+            "committed_bar_starts": committed_bar_starts,
+            "beat_count": int(len(v2_beat_grid)),
+            "full_song_loop_report": full_song_loop_report,
+            "unresolved_bar_span_count": len(unresolved_spans),
             "comparison_artifacts": comparison_artifacts,
             "legacy_artifacts": legacy_artifacts,
             "promotion_gate": promotion_gate,
-            "manual_listening_evaluation": {
-                "original_score": 88,
-                "barstart_v2_score": 95,
-                "accepted_for_default_module3_click": True,
-            },
+            "quality_comparison": quality_comparison,
             "notes": [
-                "BarStart v2 is now the default Module 3 click grid.",
+                "BarStart v2 replaces the Module 3 click grid only when the "
+                "promotion gate is satisfied and v2's quality score is higher.",
                 "Legacy Module 3 click artifacts are preserved for controlled A/B comparison.",
             ],
         }
         blackboard.set_val("barstart_v2_report", report)
         return NodeStatus.SUCCESS
-
-    def _bar_starts_from_measure_map(self, measure_map) -> list:
-        starts = []
-        for item in measure_map or []:
-            if not isinstance(item, dict):
-                continue
-            try:
-                starts.append(float(item.get("start_time", item.get("start", item.get("time")))))
-            except (TypeError, ValueError):
-                continue
-        return sorted(set(round(t, 6) for t in starts if t >= 0.0))
-
-    def _bar_starts_from_beats(self, beats) -> list:
-        if beats is None:
-            return []
-        try:
-            arr = np.asarray(beats, dtype=float)
-        except (TypeError, ValueError):
-            return []
-        if arr.ndim != 2 or arr.shape[1] < 2:
-            return []
-        starts = [float(row[0]) for row in arr if int(round(float(row[1]))) == 1]
-        return sorted(set(round(t, 6) for t in starts if t >= 0.0))
-
-    def _bar_grid_boundaries(self, committed: list, measure_map=None) -> list:
-        boundaries = list(committed)
-        if measure_map:
-            end_candidates = []
-            for item in measure_map or []:
-                if not isinstance(item, dict):
-                    continue
-                try:
-                    end_candidates.append(float(item.get("end_time", item.get("end"))))
-                except (TypeError, ValueError):
-                    continue
-            end_candidates = [t for t in end_candidates if t > boundaries[-1]]
-            if end_candidates:
-                boundaries.append(round(max(end_candidates), 6))
-                return sorted(set(boundaries))
-        if len(boundaries) >= 2:
-            intervals = np.diff(np.asarray(boundaries, dtype=float))
-            positive = intervals[intervals > 0]
-            if len(positive):
-                boundaries.append(round(boundaries[-1] + float(np.median(positive)), 6))
-        return sorted(set(boundaries))
 
     def _write_legacy_artifacts(self, blackboard: Blackboard, original_beats) -> dict:
         return self._write_click_artifacts(
@@ -1137,29 +1134,6 @@ class Module3BarStartV2MergeNode(BaseNode):
         blackboard.set_val(target_keys["mix"], final_mix_path)
         blackboard.set_val(target_keys["report"], report)
         return report
-
-    def _beats_from_bar_starts(self, committed: list, meter_profile: dict) -> np.ndarray:
-        if len(committed) < 2:
-            return np.empty((0, 2), dtype=float)
-        beats_per_bar = self._beats_per_bar(meter_profile)
-        rows = []
-        for idx in range(len(committed) - 1):
-            start = float(committed[idx])
-            end = float(committed[idx + 1])
-            if end <= start:
-                continue
-            step = (end - start) / float(beats_per_bar)
-            for beat_idx in range(beats_per_bar):
-                rows.append([round(start + beat_idx * step, 6), beat_idx + 1])
-        return np.asarray(rows, dtype=float)
-
-    def _beats_per_bar(self, meter_profile: dict) -> int:
-        meter = str((meter_profile or {}).get("meter", "4/4"))
-        try:
-            numerator = int(meter.split("/", 1)[0])
-        except (TypeError, ValueError, IndexError):
-            numerator = 4
-        return max(1, min(12, numerator))
 
 
 class Module3BackingWithClickNode(BaseNode):

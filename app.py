@@ -854,6 +854,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     test_project_dir = module3_outputs.get("test_project_dir") or report.get("project_dir") or output_dir
     barstart_v2_report = report.get("barstart_v2_report", {}) or module3_outputs.get("barstart_v2_report", {}) or {}
     barstart_v2_gate = barstart_v2_report.get("promotion_gate", {}) or {}
+    barstart_v2_quality_comparison = barstart_v2_report.get("quality_comparison", {}) or {}
     main_grid_source = "BarStart v2" if barstart_v2_report.get("replaces_module3_click") else "原版"
     frontend_module3_outputs = {
         key: value for key, value in module3_outputs.items()
@@ -870,7 +871,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     def _path_text(path):
         return f"`{path}`" if path else "`未產生`"
 
-    status_md = f"""# 模塊三節拍 Click 測試完成
+    status_md = f"""# 自動節拍器：節拍辨識完成
 
 - 輸入音檔: `{os.path.basename(audio_file)}`
 - 測試專案資料夾: `{test_project_dir}`
@@ -884,7 +885,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 - 分段主要可信來源統計: `{source_counts_text}`
 - 主輸出節拍來源: `{main_grid_source}`
 - BarStart v2 合併診斷: `{barstart_v2_report.get('status', '未產生')}` / `{barstart_v2_gate.get('status', 'UNKNOWN')}`
-- BarStart v2 測聽採納: `原版 88 / v2 95`
+- 品質分數比較: `原版 {barstart_v2_quality_comparison.get('original_score', 'N/A')} / v2 {barstart_v2_quality_comparison.get('barstart_v2_score', 'N/A')}`
 - Backing + Click: `{module3_outputs.get('backing_with_click_status', 'UNKNOWN')}`
 
 ## 輸出清單
@@ -897,7 +898,7 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
 | 主版本 ({main_grid_source}) 原曲 + Click | {_path_text(mix_path)} |
 | 主版本 ({main_grid_source}) Click Only | {_path_text(click_path)} |
 | Backing + Click | {_path_text(backing_path)} |
-| 模塊三 BT 報告 | {_path_text(report_path)} |
+| 自動節拍器 BT 報告 | {_path_text(report_path)} |
 | Pipeline 摘要報告 | {_path_text(pipeline_report_path)} |
 | 速度曲線 | {_path_text(tempo_curve_path)} |
 
@@ -1235,17 +1236,17 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[stem_status_markdown, file_stem_vocal, file_stem_drums, file_stem_bass, file_stem_extra]
             )
 
-        # 頁籤 3: 模塊三節拍 Click 測試專案
-        with gr.TabItem("🥁 模塊三節拍 Click 測試"):
+        # 頁籤 3: 自動節拍器（節拍辨識與 Click 產生）
+        with gr.TabItem("🎯 自動節拍器"):
             with gr.Row():
                 with gr.Column(scale=1):
                     module3_audio_input = gr.File(
-                        label="選擇測試音檔",
+                        label="選擇音檔",
                         type="filepath",
                         file_types=[".mp3", ".wav", ".flac", ".m4a"]
                     )
                     module3_enable_stem_chk = gr.Checkbox(
-                        label="啟用分軌產生候選軌",
+                        label="啟用分軌輔助節拍辨識",
                         value=False
                     )
                     module3_candidate_sources_chk = gr.CheckboxGroup(
@@ -1261,23 +1262,23 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     with gr.Row():
                         module3_output_dir = gr.Textbox(
                             value=DEFAULT_OUTPUT_DIR,
-                            label="測試專案輸出資料夾",
+                            label="輸出資料夾",
                             scale=4
                         )
                         module3_browse_btn = gr.Button("📂 選擇資料夾", variant="secondary", scale=1)
 
-                    module3_start_btn = gr.Button("建立模塊三測試專案", variant="primary")
+                    module3_start_btn = gr.Button("🎯 開始節拍辨識並產生 Click", variant="primary")
 
                 with gr.Column(scale=2):
-                    module3_status_markdown = gr.Markdown("### 待建立模塊三測試專案")
+                    module3_status_markdown = gr.Markdown("### 待開始節拍辨識")
                     module3_tempo_curve = gr.Image(label="速度曲線")
                 module3_debug_json = gr.JSON(label="分段可信來源與合成報告")
                 module3_v2_report_json = gr.JSON(label="BarStart v2 診斷報告")
 
-            gr.Markdown("### 模塊三試聽與檔案")
+            gr.Markdown("### 節拍器試聽與檔案下載")
             with gr.Row():
-                module3_mix_player = gr.Audio(label="主版本 BarStart v2：原曲 + Click")
-                module3_click_player = gr.Audio(label="主版本 BarStart v2：Click Only")
+                module3_mix_player = gr.Audio(label="主要輸出：原曲 + Click")
+                module3_click_player = gr.Audio(label="主要輸出：Click Only")
                 module3_backing_player = gr.Audio(label="Backing + Click")
 
             with gr.Row():
