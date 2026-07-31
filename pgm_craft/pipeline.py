@@ -208,6 +208,7 @@ class PGMCraftEngine:
             "subdivision_grid": blackboard.get_val("subdivision_grid", []),
             "syncopation_events": blackboard.get_val("syncopation_events", []),
             "barstart_v2_report": blackboard.get_val("barstart_v2_report", {}),
+            "barstart_v2_auto_report": blackboard.get_val("barstart_v2_auto_report", {}),
             "bar_length_report": blackboard.get_val("bar_length_report", {}),
             "committed_bar_starts": blackboard.get_val("committed_bar_starts", []),
             "active_bar_probe_window": blackboard.get_val("active_bar_probe_window", {}),

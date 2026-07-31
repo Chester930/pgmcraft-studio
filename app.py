@@ -774,6 +774,8 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
     quality_grade = report.get("quality_grade", "N/A")
     stems_dict = report.get("stems", {})
     stems_str = ", ".join(stems_dict.keys()) if stems_dict else "無 (或未啟用)"
+    barstart_v2_auto_report = report.get("barstart_v2_auto_report", {}) or {}
+    beat_grid_source = "BarStart v2" if barstart_v2_auto_report.get("promoted") else "原版 (v1)"
 
     summary = f"""# 🎛️ PGMCraft Studio 分析與 PGM 報告: `{filename}`
 
@@ -788,6 +790,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
 - **總拍數**: `{report['total_beats']}` 拍
 - **節拍檢查**: `{report.get('beat_validation', {}).get('status', 'UNKNOWN')}`
 - **強拍補強**: `{report.get('downbeat_refinement', {}).get('status', 'UNKNOWN')}`
+- **節拍網格來源**: `{beat_grid_source}` (`{barstart_v2_auto_report.get('status', 'NOT_RUN')}`, unresolved spans: `{barstart_v2_auto_report.get('unresolved_bar_span_count', 'N/A')}`)
 - **小節地圖**: `{report.get('measure_map_status', 'UNKNOWN')}`
 - **Stage 4 樂段結構**: `{len(report.get('sections', []))} 個段落 ({', '.join([s['name'] for s in report.get('sections', [])]) if report.get('sections') else '無'})`
 - **Stage 4 和弦對齊**: `{report.get('chord_smoothing_report', {}).get('status', 'GRID_ALIGNED')}`
