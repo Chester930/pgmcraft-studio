@@ -1040,8 +1040,8 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
     """)
 
     with gr.Tabs():
-        # 頁籤 0: 使用指南與快速入門
-        with gr.TabItem("📖 使用指南與快速入門"):
+        # 頁籤 0: 使用指南
+        with gr.TabItem("📖 使用指南"):
             gr.Markdown("""
             ## 🚀 PGMCraft Studio 快速使用指南
 
@@ -1068,10 +1068,10 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
             | 頁籤名稱 | 主要功能說明 | 適用情境 |
             | :--- | :--- | :--- |
-            | **📖 使用指南與快速入門** | 本說明文件與 FAQ 指引 | 初次使用、操作查閱 |
+            | **📖 使用指南** | 本說明文件與 FAQ 指引 | 初次使用、操作查閱 |
             | **⚡ 一鍵生成（譜+PGM分軌）** | 零設定一鍵完成下載、AI 分軌、節拍分析與 DAW 素材包打包 | 快速產出、舞台 PGM |
-            | **📥 獨立影音無損下載區塊** | 輸入網址，一鍵下載原品質 MP4 影片、WAV 與 MP3 音檔 | 預先備料、線上記錄素材下載 |
-            | **🎛️ 獨立音色分軌工作區** | 支援 4-Stem、6-Stem、人聲/鼓組/貝斯/吉他/鋼琴分離與去殘響防呆處理 | 音軌分離、採譜練習素材 |
+            | **📥 影音下載** | 輸入網址，一鍵下載原品質 MP4 影片、WAV 與 MP3 音檔 | 預先備料、線上記錄素材下載 |
+            | **🎛️ 音色分軌** | 支援 4-Stem、6-Stem、人聲/鼓組/貝斯/吉他/鋼琴分離與去殘響防呆處理 | 音軌分離、採譜練習素材 |
             | **🎛️ PGM 節目軌與採譜分析** | 核心分析引擎：自動算節拍 (Beat/Downbeat)、BPM 曲線、生成 MIDI 軌 | Live 練團、DAW 工程建置 |
             | **🔍 Workflow 執行與診斷** | 檢視 Behavior Tree 節點執行軌跡、執行耗時與 Blackboard key 契約驗證 | 系統診斷、效能與狀態檢查 |
             | **🎹 MIDI 鋼琴卷軸預覽** | 視覺化瀏覽樂曲和弦與主唱/旋律音高卷軸 (Piano Roll) | 快速確認和弦與樂曲段落結構 |
@@ -1144,7 +1144,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             )
 
         # 頁籤 1: 獨立影音下載區塊
-        with gr.TabItem("📥 獨立影音無損下載區塊"):
+        with gr.TabItem("📥 影音下載"):
             gr.Markdown("### 🔗 貼上網址自動建立專屬資料夾並下載 MP4 / MP3 / WAV 檔案 (含線上預聽與 ID3 Tag 標籤護航)")
             with gr.Row():
                 with gr.Column(scale=1):
@@ -1187,8 +1187,8 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[dl_status_markdown, dl_audio_player, file_mp4_dl, file_wav_dl, file_mp3_dl]
             )
 
-        # 頁籤 2: 獨立音色分軌與應用場景工作區 (兩階層狀態機選單)
-        with gr.TabItem("🎛️ 音色分軌與應用場景工作區"):
+        # 頁籤 2: 音色分軌 (兩階層狀態機選單)
+        with gr.TabItem("🎛️ 音色分軌"):
             gr.Markdown("""
             ### 🎚️ 兩階層目標驅動應用場景與狀態機工作流 (STAGE 1 + STAGE 2)
             依據你的實際聲音工程情境（Podcast 訪談、Vlog 剪輯、KTV 伴奏、樂手採譜、Live PGM、ASMR 配音），選擇目標後系統將自動觸發精密的 Behavior Tree 狀態機！
