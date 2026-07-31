@@ -716,41 +716,6 @@ class SkipStemPassthroughNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
-def build_stem_separation_tree(separator: CascadedStemSeparator = None) -> SequenceNode:
-    """
-    Build Stage 2 Stem Separation BT (按需懶加載 + 遞減層疊順序).
-
-    Sequence [StemSeparationRoot]
-    ├── EnsureStemsFolderNode
-    ├── Fallback [VocalsBranchFallback]
-    │   ├── Sequence [VocalsBranch]                ← 1. 人聲探測與分離主分支 (以 C 版降噪檔輸入)
-    │   │   ├── DetectVocalPresenceNode
-    │   │   ├── SeparateVocalsNode                 ➔ 分離 vocals/vocals.wav 與 instrumental.wav
-    │   │   └── Fallback [HarmonyBranchFallback]   ← 1.1 對 vocals.wav 局部探測和聲子分支
-    │   │       ├── Sequence [HarmonyBranch]
-    │   │       │   ├── DetectHarmonyPresenceNode
-    │   │       │   └── SeparateLeadAndBackingNode ➔ 拆分 vocals/lead_vocal.wav 與 vocals/backing_vocals.wav
-    │   │       └── SkipHarmonyPassthrough
-    │   └── SkipVocalsPassthrough
-    ├── Fallback [DrumsBranchFallback]             ← 2. 鼓組探測與分離分支 (以 instrumental.wav 輸入)
-    │   ├── Sequence [DrumsBranch]
-    │   │   ├── DetectDrumsPresenceNode
-    │   │   └── SeparateDrumsNode                  ➔ 分離 drums/drums.wav 與 no_drums.wav
-    │   └── SkipDrumsPassthrough
-    ├── Fallback [BassBranchFallback]              ← 3. 貝斯探測與分離分支 (以 no_drums.wav 輸入)
-    │   ├── Sequence [BassBranch]
-    │   │   ├── DetectBassPresenceNode
-    │   │   └── SeparateBassNode                   ➔ 分離 bass/bass.wav 與 other.wav
-    │   └── SkipBassPassthrough
-    ├── Fallback [GuitarBranchFallback]            ← 4. 吉他探測與分離分支 (以 other.wav 輸入)
-    │   ├── Sequence [GuitarBranch]
-    │   │   ├── DetectGuitarPresenceNode
-    │   │   └── SeparateGuitarNode                 ➔ 分離 guitars/guitar.wav
-    │   └── SkipGuitarPassthrough
-    └── RegisterStemsToBlackboardNode
-    """
-    sep = separator or CascadedStemSeparator()
-
 class ExtractCountInVoiceNode(BaseNode):
     """【Post-Vocal 精細事件】：樂團/鼓手喊拍倒數 1-2-3-4 語音提取至 stems/events/count_in_voice.wav。"""
     required_keys = ["stems_dir", "audio_path"]
