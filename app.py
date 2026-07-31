@@ -16,7 +16,7 @@ from pgm_craft.pipeline import PGMCraftEngine
 from pgm_craft.separator import CascadedStemSeparator
 from pgm_craft.workflow.downloaders import URLDownloaderDispatcher
 from pgm_craft.bt_visualizer import build_tree_schema, render_bt_html
-from pgm_craft.workflow.builder import build_pgm_workflow_tree
+from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow_report import WorkflowReportExporter
 
 # Windows asyncio proactor 已知 bug：ConnectionResetError [WinError 10054]
@@ -243,7 +243,7 @@ def standalone_download(url_input, output_dir, quality_choice="無損 WAV (44.1k
         return "❌ 請先輸入有效的影音或社群網址！", None, None, None, None
 
     try:
-        res = downloader_dispatcher.dispatch(url_input.strip(), output_dir)
+        res = downloader_dispatcher.dispatch_and_download(url_input.strip(), output_dir)
         if not res:
             return "❌ 下載失敗，不支援的網址格式或網路存取失敗！", None, None, None, None
 
@@ -997,17 +997,8 @@ def process_module3_barstart_v2_test(
     )
 
 
-def process_full_auto_pgm(url_input, audio_file, custom_output_dir, enable_smart_demix=True):
-    """一鍵全自動模式：啟動需求驅動全自動 AI Stem 分軌與全套 PGM 素材包打包流程。"""
-    if enable_smart_demix and audio_file and os.path.exists(audio_file):
-        try:
-            from pgm_craft.workflow.full_auto_bt import FullAutoDemixingBTEngine
-            engine = FullAutoDemixingBTEngine()
-            stems_dir = os.path.join(custom_output_dir or "outputs", "stems")
-            engine.run_full_auto_demixing(audio_file, output_dir=stems_dir)
-        except Exception as e:
-            print(f"[Full Auto UI] 需求驅動分軌智慧跳過提示: {e}")
-
+def process_full_auto_pgm(url_input, audio_file, custom_output_dir):
+    """一鍵全自動模式：啟動全套 PGM 素材包打包流程（Stage 0~6 完整管道）。"""
     return process_pgm(
         url_input=url_input,
         audio_file=audio_file,
@@ -1446,7 +1437,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 bt_refresh_btn = gr.Button("🌲 重新整理 BT 流程圖", variant="secondary")
 
             bt_visualizer_html = gr.HTML(
-                value=render_bt_html(build_tree_schema(build_pgm_workflow_tree())),
+                value=render_bt_html(build_tree_schema(build_master_pipeline_tree(target_stage="full"))),
                 label="Behavior Tree 工作流節點架構圖"
             )
 
@@ -1454,10 +1445,10 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 if not url and not audio:
                     return "### ⚠️ 請先輸入 URL 或上傳音檔檔案！", "<div style='color:red;'>未提供輸入來源</div>"
                 input_src = url if url else audio
-                
+
                 # 根據選擇的階段設定 enable_stem
                 enable_stem = (stage_mode in ("stage2", "stage3", "stage4", "stage5", "module3", "full"))
-                
+
                 report = engine.run(input_src, output_dir=DEFAULT_OUTPUT_DIR, enable_stem=enable_stem, target_stage=stage_mode)
                 md, html = format_workflow_diagnostics(report)
                 return md, html
@@ -1468,10 +1459,11 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[diagnostics_markdown_box, diagnostics_html_box]
             )
 
-            def _refresh_bt_html():
-                return render_bt_html(build_tree_schema(build_pgm_workflow_tree()))
+            def _refresh_bt_html(stage_mode):
+                return render_bt_html(build_tree_schema(build_master_pipeline_tree(target_stage=stage_mode)))
 
-            bt_refresh_btn.click(fn=_refresh_bt_html, inputs=[], outputs=[bt_visualizer_html])
+            bt_refresh_btn.click(fn=_refresh_bt_html, inputs=[diag_stage_select], outputs=[bt_visualizer_html])
+            diag_stage_select.change(fn=_refresh_bt_html, inputs=[diag_stage_select], outputs=[bt_visualizer_html])
 
 
         # 頁籤 5: MIDI 鋼琴卷軸預覽 (Piano Roll)
