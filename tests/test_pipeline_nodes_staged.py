@@ -45,8 +45,6 @@ from pgm_craft.workflow.smart_demixing_bt import (
     CheckAudioSNRConditionNode,
     DetectInstrumentPresenceNode,
     SmartPreprocessActionNode,
-    LeadBackingPrerequisiteGuardNode,
-    GuitarPianoPrerequisiteGuardNode,
 )
 from pgm_craft.workflow.full_auto_bt import FullAutoDemixingBTEngine
 
@@ -631,14 +629,6 @@ class TestPhase5_FullPipelineEngine(unittest.TestCase):
         bb.set_val("need_pre_amplification", False)
         status = SmartPreprocessActionNode().execute(bb)
         self.assertEqual(status, NodeStatus.SUCCESS)
-
-    def test_guitar_piano_guard_sets_devocal_flag(self):
-        """GuitarPianoPrerequisiteGuardNode: has_vocal_present=True 應設定 need_devocal_pass_first"""
-        bb = Blackboard()
-        bb.set_val("has_vocal_present", True)
-        status = GuitarPianoPrerequisiteGuardNode().execute(bb)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-        self.assertTrue(bb.get_val("need_devocal_pass_first"))
 
     # ── FullAutoDemixingBTEngine ─────────────────────────────────────────────
     def test_full_auto_bt_engine_skips_piano(self):

@@ -1,36 +1,15 @@
 """
-PGMCraft Smart Demixing Behavior Tree & Input Prerequisite Guard Engine.
-Implements detection & auto-chaining protection for all models with input requirements:
-1. Lead/Backing Guard: Auto-extracts vocals if given full mix.
-2. De-Reverb Guard: Warns or separates full mix before dereverb to avoid truncating drum decay.
-3. Guitar/Piano Guard: Auto-strips vocals first to boost SDR (+2.5dB).
-4. CREPE Pitch Guard: Detects polyphonic mix and routes to mono vocal stem.
+PGMCraft Smart Demixing Behavior Tree.
+Lazy-load input-quality gating for pgm_craft.workflow.full_auto_bt's demixing branches:
+- CheckAudioSNRConditionNode: 音量/SNR 偵測與防禦性波形載入。
+- DetectInstrumentPresenceNode: 樂器存在性機率門檻檢測，跳過用不到的 AI 拆分。
+- SmartPreprocessActionNode: 先降噪再適應性增益的前處理鏈。
 """
 
 import os
 import numpy as np
 from pgm_craft.workflow.nodes import BaseNode, NodeStatus, Blackboard
 from pgm_craft.enhancer import AudioEnhancerEngine
-
-
-class InputPrerequisiteGuardEngine:
-    """全模型輸入要求檢測與防呆護航引擎"""
-
-    def check_vocal_purity(self, y, sr):
-        """檢測是否為純人聲 (無鼓組低頻 20-100Hz)"""
-        fft = np.abs(np.fft.rfft(y[:sr]))
-        freqs = np.fft.rfftfreq(sr, 1/sr)
-        low_energy = np.sum(fft[(freqs >= 20) & (freqs <= 100)])
-        total_energy = np.sum(fft) + 1e-9
-        ratio = low_energy / total_energy
-        is_pure_vocal = ratio < 0.05
-        return is_pure_vocal, ratio
-
-    def check_is_monophonic(self, y, sr):
-        """檢測是否為單音/單一人聲 (CREPE 音高追蹤前置檢測)"""
-        zcr = np.mean(np.abs(np.diff(np.sign(y))))
-        is_mono = zcr < 0.15
-        return is_mono
 
 
 class CheckAudioSNRConditionNode(BaseNode):
@@ -104,37 +83,4 @@ class SmartPreprocessActionNode(BaseNode):
             cleaned_path = self.enhancer.enhance_audio_file(audio_path, target_lufs=-14.0)
             blackboard.set_val("target_analysis_path", cleaned_path)
             blackboard.set_val("audio_path", cleaned_path)
-        return NodeStatus.SUCCESS
-
-
-class LeadBackingPrerequisiteGuardNode(BaseNode):
-    """防呆 Guard 1: 主唱/和聲前置保護 Guard"""
-    def __init__(self):
-        super().__init__("LeadBackingPrerequisiteGuardNode")
-        self.guard = InputPrerequisiteGuardEngine()
-
-    def execute(self, blackboard: Blackboard) -> NodeStatus:
-        y = blackboard.get_val("y")
-        sr = blackboard.get_val("sr", 22050)
-        
-        if y is not None:
-            is_pure, ratio = self.guard.check_vocal_purity(y, sr)
-            if not is_pure:
-                print(f"[Input Guard] ⚠️ 檢測到輸入含有樂器伴奏 (低頻比例 {ratio:.3f})，自動先觸發 Pass 1 BS-Roformer 人聲剝離！")
-                blackboard.set_val("need_vocal_pass_first", True)
-            else:
-                blackboard.set_val("need_vocal_pass_first", False)
-        return NodeStatus.SUCCESS
-
-
-class GuitarPianoPrerequisiteGuardNode(BaseNode):
-    """防呆 Guard 2: 吉他/鋼琴前置保護 Guard"""
-    def __init__(self):
-        super().__init__("GuitarPianoPrerequisiteGuardNode")
-
-    def execute(self, blackboard: Blackboard) -> NodeStatus:
-        has_vocal = blackboard.get_val("has_vocal_present", True)
-        if has_vocal:
-            print("[Input Guard] ℹ️ 檢測到音軌包含人聲，自動先執行去人聲 (Pass 1)，確保吉他/鋼琴分離精度 SDR +2.5dB！")
-            blackboard.set_val("need_devocal_pass_first", True)
         return NodeStatus.SUCCESS
