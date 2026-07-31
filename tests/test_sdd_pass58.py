@@ -44,7 +44,9 @@ class TestSDDPass58DownloaderOptimization(unittest.TestCase):
             return_value={"wav": wav_path, "mp3": mp3_path, "mp4": mp4_path, "title": "Song"},
         ) as mocked:
             status_msg, preview_audio, mp4, wav, mp3 = standalone_download(
-                "https://www.youtube.com/watch?v=fake", self.test_dir
+                "https://www.youtube.com/watch?v=fake",
+                self.test_dir,
+                quality_choice="全部下載 (WAV + MP3 + MP4)",
             )
 
         mocked.assert_called_once_with("https://www.youtube.com/watch?v=fake", self.test_dir)
@@ -52,6 +54,55 @@ class TestSDDPass58DownloaderOptimization(unittest.TestCase):
         self.assertEqual(wav, wav_path)
         self.assertEqual(mp3, mp3_path)
         self.assertEqual(mp4, mp4_path)
+
+    def _mock_download_result(self):
+        wav_path = os.path.join(self.test_dir, "song.wav")
+        mp3_path = os.path.join(self.test_dir, "song.mp3")
+        mp4_path = os.path.join(self.test_dir, "song.mp4")
+        for path in (wav_path, mp3_path, mp4_path):
+            open(path, "wb").close()
+        return wav_path, mp3_path, mp4_path
+
+    def test_download_dropdown_has_download_all_option(self):
+        self.assertIn("全部下載 (WAV + MP3 + MP4)", app.DOWNLOAD_QUALITY_CHOICES)
+
+    def test_single_format_choice_only_returns_that_format(self):
+        """下拉選單選單一格式時，只回傳該格式的檔案，其餘欄位是 None——
+        修復前不管選什麼永遠回傳全部三種格式，選單形同虛設。"""
+        wav_path, mp3_path, mp4_path = self._mock_download_result()
+        with patch.object(
+            app.downloader_dispatcher,
+            "dispatch_and_download",
+            return_value={"wav": wav_path, "mp3": mp3_path, "mp4": mp4_path, "title": "Song"},
+        ):
+            status_msg, preview_audio, mp4, wav, mp3 = standalone_download(
+                "https://www.youtube.com/watch?v=fake",
+                self.test_dir,
+                quality_choice="完整影音 MP4",
+            )
+
+        self.assertEqual(mp4, mp4_path)
+        self.assertIsNone(wav)
+        self.assertIsNone(mp3)
+        self.assertIsNone(preview_audio)
+
+    def test_download_all_option_returns_every_format(self):
+        wav_path, mp3_path, mp4_path = self._mock_download_result()
+        with patch.object(
+            app.downloader_dispatcher,
+            "dispatch_and_download",
+            return_value={"wav": wav_path, "mp3": mp3_path, "mp4": mp4_path, "title": "Song"},
+        ):
+            status_msg, preview_audio, mp4, wav, mp3 = standalone_download(
+                "https://www.youtube.com/watch?v=fake",
+                self.test_dir,
+                quality_choice="全部下載 (WAV + MP3 + MP4)",
+            )
+
+        self.assertEqual(wav, wav_path)
+        self.assertEqual(mp3, mp3_path)
+        self.assertEqual(mp4, mp4_path)
+        self.assertEqual(preview_audio, wav_path)
 
 
 if __name__ == "__main__":

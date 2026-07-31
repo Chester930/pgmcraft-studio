@@ -237,6 +237,20 @@ def open_folder_picker(current_path):
     return current_path
 
 
+DOWNLOAD_QUALITY_CHOICES = [
+    "無損 WAV (44.1kHz 24bit)",
+    "高音質 MP3 (320kbps)",
+    "完整影音 MP4",
+    "全部下載 (WAV + MP3 + MP4)",
+]
+DOWNLOAD_QUALITY_FORMATS = {
+    "無損 WAV (44.1kHz 24bit)": {"wav"},
+    "高音質 MP3 (320kbps)": {"mp3"},
+    "完整影音 MP4": {"mp4"},
+    "全部下載 (WAV + MP3 + MP4)": {"wav", "mp3", "mp4"},
+}
+
+
 def standalone_download(url_input, output_dir, quality_choice="無損 WAV (44.1kHz 24bit)"):
     """P58: 獨立影音下載處理 (帶 Audio Previewer 預聽與 ID3 Tag 標籤護航)"""
     if not url_input or not url_input.strip():
@@ -247,17 +261,27 @@ def standalone_download(url_input, output_dir, quality_choice="無損 WAV (44.1k
         if not res:
             return "❌ 下載失敗，不支援的網址格式或網路存取失敗！", None, None, None, None
 
-        mp4_path = res.get("mp4")
-        wav_path = res.get("wav")
-        mp3_path = res.get("mp3")
+        keep_formats = DOWNLOAD_QUALITY_FORMATS.get(quality_choice, {"wav", "mp3", "mp4"})
+        mp4_path = res.get("mp4") if "mp4" in keep_formats else None
+        wav_path = res.get("wav") if "wav" in keep_formats else None
+        mp3_path = res.get("mp3") if "mp3" in keep_formats else None
         title = res.get("title", "PGM Track")
 
         # 優先選用 Previewer 音訊檔
         preview_audio = wav_path if os.path.exists(wav_path or "") else mp3_path
 
+        kept_labels = []
+        if wav_path:
+            kept_labels.append(".wav (無損)")
+        if mp3_path:
+            kept_labels.append(".mp3 (320k)")
+        if mp4_path:
+            kept_labels.append(".mp4 (影片)")
+        formats_text = "、".join(kept_labels) if kept_labels else "無"
+
         status_msg = f"""### 🎉 成功完成媒體無損下載與媒體資料夾建置！
 - **專屬資料夾**: `{title}`
-- **包含格式**: `.wav` (無損), `.mp3` (320k), `.mp4` (影片)
+- **包含格式**: `{formats_text}`
 - **ID3 Metadata**: 已自動注入歌曲標題與 PGMCraft Studio 標籤
 """
         return status_msg, preview_audio, mp4_path, wav_path, mp3_path
@@ -1045,7 +1069,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
             | 頁籤名稱 | 主要功能說明 | 適用情境 |
             | :--- | :--- | :--- |
             | **📖 使用指南與快速入門** | 本說明文件與 FAQ 指引 | 初次使用、操作查閱 |
-            | **⚡ 一鍵全自動 Live PGM 生成站** | 零設定一鍵完成下載、AI 分軌、節拍分析與 DAW 素材包打包 | 快速產出、舞台 PGM |
+            | **⚡ 一鍵生成（譜+PGM分軌）** | 零設定一鍵完成下載、AI 分軌、節拍分析與 DAW 素材包打包 | 快速產出、舞台 PGM |
             | **📥 獨立影音無損下載區塊** | 輸入網址，一鍵下載原品質 MP4 影片、WAV 與 MP3 音檔 | 預先備料、線上記錄素材下載 |
             | **🎛️ 獨立音色分軌工作區** | 支援 4-Stem、6-Stem、人聲/鼓組/貝斯/吉他/鋼琴分離與去殘響防呆處理 | 音軌分離、採譜練習素材 |
             | **🎛️ PGM 節目軌與採譜分析** | 核心分析引擎：自動算節拍 (Beat/Downbeat)、BPM 曲線、生成 MIDI 軌 | Live 練團、DAW 工程建置 |
@@ -1064,8 +1088,8 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
               專案資料夾內自動提供 `pgm_session.rpp` (Reaper)、`project_ableton.als` (Ableton Live)、`project_logic.fcpxml` (Logic Pro) 與 `tempo_track_cubase.csv` (Cubase)。
             """)
 
-        # 頁籤 1: ⚡ 一鍵全自動 Live PGM 素材包生成站 (Full Auto One-Click Mode)
-        with gr.TabItem("⚡ 一鍵全自動 Live PGM 生成站"):
+        # 頁籤 1: ⚡ 一鍵生成（譜+PGM分軌） (Full Auto One-Click Mode)
+        with gr.TabItem("⚡ 一鍵生成（譜+PGM分軌）"):
             gr.Markdown("""
             ### ⚡ 一鍵極速全自動管道 (Full Auto Master Pipeline)
             只需貼上網址或拖曳音檔，系統將**自動開啟 AI 多階層分軌 (Demucs/HPSS)**、低頻大鼓對齊、節拍校正、MIDI 生成與全套 DAW 工程包 (.zip) 一鍵打包！
@@ -1089,7 +1113,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         )
                         auto_browse_btn = gr.Button("📂 選擇資料夾", variant="secondary", scale=1)
 
-                    auto_start_btn = gr.Button("⚡ 一鍵啟動全自動 Live PGM 生成與打包", variant="primary")
+                    auto_start_btn = gr.Button("⚡ 一鍵生成譜 + PGM 分軌並打包", variant="primary")
 
                 with gr.Column(scale=1):
                     auto_status_markdown = gr.Markdown("### ⚡ 待啟動全自動管道...")
@@ -1128,10 +1152,10 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         label="🌐 影音/社群網址 (YouTube / Bilibili / IG Reels / TikTok / FB Watch)",
                         placeholder="https://www.youtube.com/watch?v=..."
                     )
-                    dl_quality_radio = gr.Radio(
-                        choices=["無損 WAV (44.1kHz 24bit)", "高音質 MP3 (320kbps)", "完整影音 MP4"],
+                    dl_quality_dropdown = gr.Dropdown(
+                        choices=DOWNLOAD_QUALITY_CHOICES,
                         value="無損 WAV (44.1kHz 24bit)",
-                        label="🎚️ 優先格式與音質設定"
+                        label="🎚️ 下載格式與音質設定"
                     )
                     with gr.Row():
                         dl_output_dir = gr.Textbox(
@@ -1159,7 +1183,7 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
 
             dl_start_btn.click(
                 fn=standalone_download,
-                inputs=[dl_url_input, dl_output_dir, dl_quality_radio],
+                inputs=[dl_url_input, dl_output_dir, dl_quality_dropdown],
                 outputs=[dl_status_markdown, dl_audio_player, file_mp4_dl, file_wav_dl, file_mp3_dl]
             )
 
