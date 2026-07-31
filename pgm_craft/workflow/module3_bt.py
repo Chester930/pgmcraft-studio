@@ -19,9 +19,7 @@ from pgm_craft.workflow.audio_nodes import (
 )
 from pgm_craft.workflow.audio_quality_bt import build_audio_quality_tree
 from pgm_craft.workflow.beat_tracking_bt import (
-    DrumFillDetectionNode,
     KickBassDownbeatVerifierNode,
-    OnsetPhaseRealignmentNode,
     _score_beat_grid_quality,
     build_beat_refinement_nodes,
     build_beat_tracking_analysis_nodes,
@@ -947,7 +945,6 @@ class Module3BarStartV2MergeNode(BaseNode):
         from pgm_craft.workflow.module3_barstart_v2_bt import (
             BarGridContinuityRepairNode,
             BarStartV2QualityScoreNode,
-            BarStartV2SyncopationClassificationNode,
             FullSongBarStartLoopNode,
             ManualCommittedBarStartsSeedNode,
             MeterAwareBeatGridNode,
@@ -970,15 +967,14 @@ class Module3BarStartV2MergeNode(BaseNode):
         ):
             v2_blackboard.pop(key, None)
 
+        # Pass 128: no per-beat onset snapping here either -- same reasoning
+        # as build_module3_barstart_v2_export_tree() in module3_barstart_v2_bt.py.
         v2_core = SequenceNode("BarStartV2CoreChain", [
             MeterProfileNode(),
             ManualCommittedBarStartsSeedNode(),
             FullSongBarStartLoopNode(),
             BarGridContinuityRepairNode(),
             MeterAwareBeatGridNode(),
-            BarStartV2SyncopationClassificationNode(),
-            DrumFillDetectionNode(),
-            OnsetPhaseRealignmentNode(),
             KickBassDownbeatVerifierNode(),
             BarStartV2QualityScoreNode(),
         ])

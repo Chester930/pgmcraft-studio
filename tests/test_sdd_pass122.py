@@ -92,7 +92,7 @@ class TestSDDPass122QualityScore(unittest.TestCase):
         self.assertEqual(Module3BarStartV2SummaryNode().execute(bb), NodeStatus.SUCCESS)
         report = bb.get_val("barstart_v2_report")
         self.assertEqual(report["quality_score"]["score"], 91.5)
-        self.assertEqual(report["status"], "EXPERIMENTAL_PASS_126")
+        self.assertEqual(report["status"], "EXPERIMENTAL_PASS_128")
 
 
 if __name__ == "__main__":

@@ -34,17 +34,13 @@ class TestSDDPass123SyncopationClassificationInV2(unittest.TestCase):
         self.assertEqual(MeterAwareBeatGridNode().execute(bb), NodeStatus.SUCCESS)
         return bb
 
-    def test_v2_pipeline_places_syncopation_classification_before_drum_fill_detection(self):
+    def test_v2_pipeline_no_longer_wires_syncopation_classification(self):
+        """Pass 128: this node only fed exclusion zones to the now-removed
+        onset realignment stage, so it has no consumer left in the v2
+        pipeline. Its own classification behaviour (tested below) remains
+        valid as a standalone node."""
         names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("BarStartV2SyncopationClassificationNode", names)
-        self.assertLess(
-            names.index("MeterAwareBeatGridNode"),
-            names.index("BarStartV2SyncopationClassificationNode"),
-        )
-        self.assertLess(
-            names.index("BarStartV2SyncopationClassificationNode"),
-            names.index("DrumFillDetectionNode"),
-        )
+        self.assertNotIn("BarStartV2SyncopationClassificationNode", names)
 
     def test_onset_on_grid_is_true_beat_and_not_excluded(self):
         bb = self._grid_blackboard()

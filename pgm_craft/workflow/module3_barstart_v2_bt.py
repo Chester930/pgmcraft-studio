@@ -17,9 +17,7 @@ from pgm_craft.workflow.input_acquisition_bt import build_input_acquisition_tree
 from pgm_craft.workflow.module3_bt import Module3BackingWithClickNode, Module3OutputSummaryNode, OptionalStemSeparationNode
 from pgm_craft.workflow.audio_nodes import ClickSynthesisNode
 from pgm_craft.workflow.beat_tracking_bt import (
-    DrumFillDetectionNode,
     KickBassDownbeatVerifierNode,
-    OnsetPhaseRealignmentNode,
     _score_beat_grid_quality,
 )
 from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
@@ -2171,12 +2169,9 @@ class Module3BarStartV2SummaryNode(BaseNode):
         "transition_confidence_report",
         "reference_acceptance",
         "manual_acceptance",
-        "drum_fill_report",
-        "phase_realignment_report",
         "downbeat_fix_report",
         "bar_grid_repair_report",
         "barstart_v2_quality_score",
-        "syncopation_report",
         "full_song_loop_report",
     ]
     output_keys = ["module3_outputs", "barstart_v2_report"]
@@ -2187,7 +2182,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         outputs = dict(blackboard.get_val("module3_outputs", {}) or {})
         report = {
-            "status": "EXPERIMENTAL_PASS_126",
+            "status": "EXPERIMENTAL_PASS_128",
             "meter_profile": blackboard.get_val("meter_profile", {}),
             "bar_length_report": blackboard.get_val("bar_length_report", {}),
             "bar_start_seed_report": blackboard.get_val("bar_start_seed_report", {}),
@@ -2220,9 +2215,6 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "full_song_loop_report": blackboard.get_val("full_song_loop_report", {}),
             "bar_grid_repair_report": blackboard.get_val("bar_grid_repair_report", {}),
             "quality_score": blackboard.get_val("barstart_v2_quality_score", {}),
-            "syncopation_report": blackboard.get_val("syncopation_report", {}),
-            "drum_fill_report": blackboard.get_val("drum_fill_report", {}),
-            "phase_realignment_report": blackboard.get_val("phase_realignment_report", {}),
             "downbeat_fix_report": blackboard.get_val("downbeat_fix_report", {}),
             "promotion_gate": evaluate_barstart_v2_promotion_gate(
                 reference_acceptance=blackboard.get_val("reference_acceptance", {}),
@@ -2265,21 +2257,20 @@ def evaluate_barstart_v2_promotion_gate(
 
 
 def build_module3_barstart_v2_export_tree() -> SequenceNode:
+    # Pass 128: dropped the per-beat acoustic snapping stage (Pass 118
+    # OnsetPhaseRealignmentNode, plus the two exclusion-zone detectors that
+    # only existed to feed it -- Pass 119 DrumFillDetectionNode and Pass 123
+    # BarStartV2SyncopationClassificationNode). User listening feedback: v2's
+    # job is to get each bar's first beat right and evenly subdivide the rest
+    # -- per-beat onset chasing can snap onto a nearby syncopated/decorative
+    # hit instead of the true beat, which reads as audibly worse than a plain
+    # even grid. Onset/fill detection remain available as node classes (and
+    # still run on the Stage 3 main line) if this needs revisiting.
     return SequenceNode("Module3BarStartV2ExportRoot", [
-        # Pass 123: general off-grid onset classification (any instrument) runs
-        # before the drum-specific fill detector so both contribute to the same
-        # accumulated snap_exclusion_zones.
-        BarStartV2SyncopationClassificationNode(),
-        # Pass 119: bar-grid-derived fill/snap exclusion zones must exist before
-        # onset realignment (Pass 118) and downbeat verification (Pass 120) run,
-        # otherwise decorative drum-fill hits get chased as if they were the beat.
-        DrumFillDetectionNode(),
-        # Pass 118: Ellis (2007) ±35ms onset-peak snap. v2's MeterAwareBeatGridNode
-        # only produces a geometrically even grid inside each committed bar, so this
-        # is the first place the actual waveform gets consulted for beat timing.
-        OnsetPhaseRealignmentNode(),
-        # Pass 120: Böck et al. (2016 madmom) 40-120Hz low-frequency downbeat check,
-        # an acoustic second opinion independent of the evidence-ladder candidates.
+        # Pass 120: Böck et al. (2016 madmom) 40-120Hz low-frequency downbeat
+        # check. This only re-labels which existing (evenly-spaced) grid
+        # point is beat 1 -- it never moves a beat's time -- so it stays: it
+        # is exactly "confirm the bar's first beat", not per-beat tuning.
         KickBassDownbeatVerifierNode(),
         # Pass 122: quantified score for the finalized grid, an auxiliary metric
         # next to the pass/fail promotion_gate.

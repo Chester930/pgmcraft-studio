@@ -101,6 +101,6 @@ def test_module3_barstart_v2_summary_includes_melody_track_pk_report():
     assert Module3BarStartV2SummaryNode().execute(bb) == NodeStatus.SUCCESS
 
     report = bb.get_val("barstart_v2_report")
-    assert report["status"] == "EXPERIMENTAL_PASS_126"
+    assert report["status"] == "EXPERIMENTAL_PASS_128"
     assert report["melody_track_pk"]["primary_source"] == "vocal_melody"
     assert report["phrase_anchor_evidence_report"]["status"] == "ANCHORS_BUILT"
