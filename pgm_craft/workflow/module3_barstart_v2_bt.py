@@ -1936,18 +1936,34 @@ class BarStartTempoSmoothingNode(BaseNode):
     which snaps outliers to a single song-wide median) lets a real, gradual
     tempo ramp survive -- the local median moves with the ramp -- while still
     flattening bar-to-bar noise that doesn't fit the ramp's own trend.
+
+    A bar-start with a real kick/snare hit nearby is never moved, no matter
+    how much its interval deviates from the local median. A statistical
+    smoother has no way to tell "noisy estimate" apart from "the song
+    genuinely changed tempo here" (e.g. an intro-to-verse transition where
+    drums kick in) -- but drum-anchored evidence is exactly what the rest of
+    this engine already treats as ground truth (`KickBassDownbeatVerifierNode`,
+    `DrumEvidenceBarSearchNode`'s 0.75 base confidence). Listening feedback:
+    smoothing a drum-evidenced bar away from its actual kick hit is strictly
+    worse than leaving real tempo-change noise in the curve -- it makes the
+    click track audibly miss the drums it should be locked to. Only bars
+    with no nearby drum evidence (interpolated/carried-forward spans) are
+    eligible for smoothing.
+
     Runs after BarGridContinuityRepairNode and before MeterAwareBeatGridNode
     so every beat geometrically subdivided from `committed_bar_starts`
     inherits the smoothed bar durations.
     """
 
     required_keys = ["committed_bar_starts"]
+    optional_keys = ["kick_anchors", "snare_anchors"]
     output_keys = ["committed_bar_starts", "bar_tempo_smoothing_report"]
 
-    def __init__(self, tolerance_pct: float = 0.08, window_bars: int = 3):
+    def __init__(self, tolerance_pct: float = 0.08, window_bars: int = 3, drum_evidence_tolerance_sec: float = 0.10):
         super().__init__("BarStartTempoSmoothingNode")
         self.tolerance_pct = tolerance_pct
         self.window_bars = window_bars
+        self.drum_evidence_tolerance_sec = drum_evidence_tolerance_sec
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         bars = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
@@ -1970,6 +1986,9 @@ class BarStartTempoSmoothingNode(BaseNode):
             })
             return NodeStatus.SUCCESS
 
+        drum_anchors = self._drum_anchors(blackboard)
+        drum_protected = self._drum_protected_mask(bars_arr, drum_anchors)
+
         # Compute every interval's local rolling median FIRST, from the
         # untouched original interval sequence, then decide per-interval
         # whether to keep or replace it -- and only afterwards rebuild
@@ -1988,11 +2007,21 @@ class BarStartTempoSmoothingNode(BaseNode):
             local_medians[i] = np.median(window) if len(window) else intervals[i]
 
         deviation = np.abs(intervals - local_medians) / (local_medians + 1e-6)
-        replace_mask = valid_mask & (deviation > self.tolerance_pct)
+        # interval i ends at bar i+1 -- only that later bar's own position
+        # would be moved, so it (not bar i) is what must not be drum-protected.
+        movable_mask = ~drum_protected[1:]
+        replace_mask = valid_mask & (deviation > self.tolerance_pct) & movable_mask
         smoothed_intervals = np.where(replace_mask, local_medians, intervals)
         smoothed_bars = np.concatenate(([bars_arr[0]], bars_arr[0] + np.cumsum(smoothed_intervals)))
+        # Leaving a protected bar's own *interval* untouched isn't enough --
+        # cumsum still carries forward any drift from earlier corrections, so
+        # a drum-anchored bar could still land away from its real position.
+        # Snap every drum-protected bar back to exactly where the evidence
+        # says it is, no matter what happened upstream.
+        smoothed_bars = np.where(drum_protected, bars_arr, smoothed_bars)
 
         smoothed_count = int(np.sum(replace_mask))
+        drum_protected_count = int(np.sum(drum_protected))
         smoothed = sorted(round(float(t), 6) for t in smoothed_bars)
         if smoothed_count:
             blackboard.set_val("committed_bar_starts", smoothed)
@@ -2001,6 +2030,7 @@ class BarStartTempoSmoothingNode(BaseNode):
             "status": "SMOOTHED" if smoothed_count else "PASS",
             "bar_count": len(smoothed),
             "smoothed_count": smoothed_count,
+            "drum_protected_bar_count": drum_protected_count,
             "window_bars": self.window_bars,
             "tolerance_pct": self.tolerance_pct,
         })
@@ -2010,6 +2040,24 @@ class BarStartTempoSmoothingNode(BaseNode):
                 f"{self.tolerance_pct * 100:.0f}% 的小節長度離群值（局部窗口 ±{self.window_bars} 小節）。"
             )
         return NodeStatus.SUCCESS
+
+    def _drum_anchors(self, blackboard: Blackboard) -> np.ndarray:
+        kick = blackboard.get_val("kick_anchors") or []
+        snare = blackboard.get_val("snare_anchors") or []
+        try:
+            combined = np.asarray(list(kick) + list(snare), dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            return np.array([])
+        return combined[np.isfinite(combined) & (combined >= 0.0)]
+
+    def _drum_protected_mask(self, bars_arr: np.ndarray, drum_anchors: np.ndarray) -> np.ndarray:
+        if len(drum_anchors) == 0:
+            return np.zeros(len(bars_arr), dtype=bool)
+        protected = np.zeros(len(bars_arr), dtype=bool)
+        for i, t in enumerate(bars_arr):
+            if np.min(np.abs(drum_anchors - t)) <= self.drum_evidence_tolerance_sec:
+                protected[i] = True
+        return protected
 
 
 class BarStartV2SyncopationClassificationNode(BaseNode):
