@@ -905,6 +905,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
 
     from pgm_craft.workflow.module3_barstart_v2_bt import (
         BarGridContinuityRepairNode,
+        BarStartTempoSmoothingNode,
         BarStartV2QualityScoreNode,
         FullSongBarStartLoopNode,
         ManualCommittedBarStartsSeedNode,
@@ -934,6 +935,9 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         ManualCommittedBarStartsSeedNode(),
         FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
+        # Run twice -- see module3_barstart_v2_bt.py's pipeline wiring for why.
+        BarStartTempoSmoothingNode(),
+        BarStartTempoSmoothingNode(),
         MeterAwareBeatGridNode(),
         KickBassDownbeatVerifierNode(),
         BarStartV2QualityScoreNode(),
