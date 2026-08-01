@@ -881,7 +881,7 @@ def process_pgm(url_input, audio_file, enable_stem, custom_output_dir, target_st
 
 def process_module3_click_test(audio_file, enable_stem, candidate_sources, custom_output_dir):
     if audio_file is None:
-        return "### 請先選擇音檔", {}, {}, None, None, None, None, None, None, None, None
+        return "### 請先選擇音檔", {}, {}, None, None, None, None, None, None, None, None, None, None, None, None
 
     output_dir = custom_output_dir.strip() if custom_output_dir and custom_output_dir.strip() else "outputs"
     os.makedirs(output_dir, exist_ok=True)
@@ -925,6 +925,14 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
     click_path = outputs.get("click_track") or module3_outputs.get("click_track")
     mix_path = outputs.get("mix_with_click") or module3_outputs.get("mix_with_click")
     test_project_dir = module3_outputs.get("test_project_dir") or report.get("project_dir") or output_dir
+
+    def _existing_or_none(path):
+        return path if path and os.path.exists(path) else None
+
+    v1_mix_path = _existing_or_none(module3_outputs.get("module3_legacy_mix_with_click"))
+    v1_click_path = _existing_or_none(module3_outputs.get("module3_legacy_click_track"))
+    v2_mix_path = _existing_or_none(module3_outputs.get("barstart_v2_mix_with_click"))
+    v2_click_path = _existing_or_none(module3_outputs.get("barstart_v2_click_track"))
     barstart_v2_report = report.get("barstart_v2_report", {}) or module3_outputs.get("barstart_v2_report", {}) or {}
     barstart_v2_gate = barstart_v2_report.get("promotion_gate", {}) or {}
     barstart_v2_quality_comparison = barstart_v2_report.get("quality_comparison", {}) or {}
@@ -1000,6 +1008,10 @@ def process_module3_click_test(audio_file, enable_stem, candidate_sources, custo
         click_path,
         backing_path,
         report_path,
+        v1_mix_path,
+        v1_click_path,
+        v2_mix_path,
+        v2_click_path,
     )
 
 
@@ -1357,6 +1369,21 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 module3_backing_file = gr.File(label="下載 backing_with_click.wav")
                 module3_report_file = gr.File(label="下載 module3_beat_click_report.json")
 
+            gr.Markdown("""
+            ### 🆚 v1 原版 vs v2 BarStart 比較試聽
+            v2（BarStart）的做法：先用鼓/貝斯/和聲/旋律等多重證據逐小節走查、確定每個小節的**第一拍**位置，
+            再對小節內部**均勻切分**出其餘拍子（不逐拍微調、不追逐裝飾音）；小節長度若明顯偏離鄰近小節的
+            局部趨勢會被平滑修正，但只要該小節附近有真實鼓點證據，就完全不會被平滑器移動。
+            v1 原版走的是 Stage 3 傳統雙軌並行分析＋動態融合。上面「主要輸出」目前一律採用 v2（無 unresolved
+            小節缺口時），這裡讓你可以直接用同一首歌 A/B 兩者，抓出 v2 哪裡聽起來還不如 v1。
+            """)
+            with gr.Row():
+                module3_v1_mix_player = gr.Audio(label="v1 原版：原曲 + Click")
+                module3_v1_click_player = gr.Audio(label="v1 原版：Click Only")
+            with gr.Row():
+                module3_v2_mix_player = gr.Audio(label="v2 BarStart：原曲 + Click")
+                module3_v2_click_player = gr.Audio(label="v2 BarStart：Click Only")
+
             module3_browse_btn.click(
                 fn=open_folder_picker,
                 inputs=[module3_output_dir],
@@ -1387,6 +1414,10 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                     module3_click_file,
                     module3_backing_file,
                     module3_report_file,
+                    module3_v1_mix_player,
+                    module3_v1_click_player,
+                    module3_v2_mix_player,
+                    module3_v2_click_player,
                 ]
             )
 

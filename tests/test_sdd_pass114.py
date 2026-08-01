@@ -6,7 +6,6 @@ from pathlib import Path
 
 
 APP_SOURCE = Path("app.py").read_text(encoding="utf-8")
-MODULE3_UI_SOURCE = APP_SOURCE[APP_SOURCE.index("with gr.TabItem(\"🎯 節奏定位\")"):APP_SOURCE.index("# 頁籤 3: 完整 PGM")]
 LAUNCH_SOURCE = Path("launch_app_7860.py").read_text(encoding="utf-8")
 
 
@@ -31,20 +30,25 @@ def test_frontend_single_run_outputs_barstart_v2_main_only():
     assert 'module3_v2_report_json = gr.JSON(label="BarStart v2 診斷報告")' in APP_SOURCE
     assert 'module3_mix_player = gr.Audio(label="主要輸出：原曲 + Click")' in APP_SOURCE
     assert 'module3_click_player = gr.Audio(label="主要輸出：Click Only")' in APP_SOURCE
-    assert "原版比較" not in MODULE3_UI_SOURCE
-    assert "legacy_" not in MODULE3_UI_SOURCE
 
 
 def test_frontend_main_callback_updates_single_final_outputs():
+    # Pass 146: user explicitly asked to see v1 and v2 side by side for A/B
+    # listening (following the discovery that the pre-Pass-127 "v2" score
+    # was fake and the 7/30 baseline everyone remembered as "95分" was
+    # actually v1's own output relabeled). The single-winner-only output
+    # contract from Pass 114 is superseded by that explicit request; this
+    # test now asserts the comparison players ARE wired into the same click
+    # handler, not that they're absent.
     main_click = APP_SOURCE[APP_SOURCE.index("module3_start_btn.click("):APP_SOURCE.index("# 頁籤 3: 完整 PGM")]
     assert "module3_v2_report_json" in main_click
     assert "module3_mix_player" in main_click
     assert "module3_click_player" in main_click
     assert "module3_backing_player" in main_click
-    assert "module3_v2_mix_player" not in main_click
-    assert "module3_v2_click_player" not in main_click
-    assert "module3_v2_mix_file" not in main_click
-    assert "module3_v2_click_file" not in main_click
+    assert "module3_v1_mix_player" in main_click
+    assert "module3_v1_click_player" in main_click
+    assert "module3_v2_mix_player" in main_click
+    assert "module3_v2_click_player" in main_click
 
 
 def test_frontend_v2_uses_model_for_bar_starts():
