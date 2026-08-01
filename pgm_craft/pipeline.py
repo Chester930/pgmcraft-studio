@@ -119,10 +119,35 @@ class PGMCraftEngine:
 
 
 
-        # Generate Tempo Curve Plot
+        # Generate Tempo Curve Plot -- averaged per bar (小節), not per raw
+        # beat-to-beat gap. Beats within a bar are evenly subdivided by
+        # design (Pass 128), so plotting every single instantaneous
+        # 60/diff reading exposes tiny bar-to-bar duration differences
+        # (estimation noise, not real tempo changes) as a jagged,
+        # oscillating curve even when every bar's own beats are locally
+        # flat. One averaged point per bar reads the way the underlying
+        # grid was actually built (Pass 144).
+        bar_start_indices = (
+            [i for i in range(len(beats)) if int(beats[i, 1]) == 1]
+            if beats is not None else []
+        )
+        plot_times, plot_bpms = [], []
+        if len(bar_start_indices) > 1:
+            for idx in range(len(bar_start_indices) - 1):
+                start_i, end_i = bar_start_indices[idx], bar_start_indices[idx + 1]
+                bar_duration = float(beats[end_i, 0] - beats[start_i, 0])
+                n_beats_in_bar = end_i - start_i
+                if bar_duration > 0 and n_beats_in_bar > 0:
+                    plot_times.append(float(beats[start_i, 0]))
+                    plot_bpms.append(60.0 * n_beats_in_bar / bar_duration)
+        elif beats is not None and len(beats) > 1:
+            # No beat-number labels to group by bar (or only one bar) --
+            # fall back to the raw per-beat curve rather than show nothing.
+            plot_times, plot_bpms = list(beats[:-1, 0]), list(bpms)
+
         fig, ax = plt.subplots(figsize=(10, 4))
-        if beats is not None and len(beats) > 1:
-            ax.plot(beats[:-1, 0], bpms, color='#4F46E5', linewidth=1.8, label='Dynamic BPM')
+        if plot_times:
+            ax.plot(plot_times, plot_bpms, color='#4F46E5', linewidth=1.8, marker='o', markersize=3, label='Per-Bar Avg BPM')
         ax.axhline(avg_bpm, color='#EF4444', linestyle='--', label=f'Avg BPM ({avg_bpm:.1f})')
         ax.set_title("PGMCraft BT Workflow Dynamic Tempo Profile")
         ax.set_xlabel("Time (seconds)")

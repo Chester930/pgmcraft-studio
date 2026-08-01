@@ -1916,6 +1916,102 @@ class BarGridContinuityRepairNode(BaseNode):
         return abs(pair_sum - expected_sum) / (expected_sum + 1e-6) <= self.pair_sum_tolerance
 
 
+class BarStartTempoSmoothingNode(BaseNode):
+    """Bar-level general tempo smoothing, complementing BarGridContinuityRepairNode.
+
+    BarGridContinuityRepairNode only catches one narrow pattern: an isolated
+    bar that is unusually short immediately followed by one unusually long
+    (or vice versa), with the pair summing back to ~2x the local median. Real
+    evidence-ladder uncertainty across a whole song is rarely that clean --
+    several consecutive bars can each be a little off without ever forming
+    that specific alternating-pair shape, and none of that gets repaired.
+    Left alone, that bar-to-bar duration noise becomes visible as a jagged,
+    oscillating tempo curve even though every individual bar's beats are
+    evenly (and therefore locally flat) subdivided.
+
+    This clamps any bar duration that deviates more than tolerance_pct from
+    a *local* rolling median (a window of `window_bars` bars on each side,
+    not the whole song) back onto that local median. Using a local window
+    rather than one global median (unlike Stage 3's ViterbiTempoSmoothingNode,
+    which snaps outliers to a single song-wide median) lets a real, gradual
+    tempo ramp survive -- the local median moves with the ramp -- while still
+    flattening bar-to-bar noise that doesn't fit the ramp's own trend.
+    Runs after BarGridContinuityRepairNode and before MeterAwareBeatGridNode
+    so every beat geometrically subdivided from `committed_bar_starts`
+    inherits the smoothed bar durations.
+    """
+
+    required_keys = ["committed_bar_starts"]
+    output_keys = ["committed_bar_starts", "bar_tempo_smoothing_report"]
+
+    def __init__(self, tolerance_pct: float = 0.08, window_bars: int = 3):
+        super().__init__("BarStartTempoSmoothingNode")
+        self.tolerance_pct = tolerance_pct
+        self.window_bars = window_bars
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        bars = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
+        if len(bars) < 5:
+            blackboard.set_val("bar_tempo_smoothing_report", {
+                "status": "SKIPPED_NOT_ENOUGH_BARS",
+                "bar_count": len(bars),
+                "smoothed_count": 0,
+            })
+            return NodeStatus.SUCCESS
+
+        bars_arr = np.asarray(bars, dtype=float)
+        intervals = np.diff(bars_arr)
+        valid_mask = np.isfinite(intervals) & (intervals > 0.05)
+        if not np.any(valid_mask):
+            blackboard.set_val("bar_tempo_smoothing_report", {
+                "status": "SKIPPED_NO_VALID_INTERVAL",
+                "bar_count": len(bars),
+                "smoothed_count": 0,
+            })
+            return NodeStatus.SUCCESS
+
+        # Compute every interval's local rolling median FIRST, from the
+        # untouched original interval sequence, then decide per-interval
+        # whether to keep or replace it -- and only afterwards rebuild
+        # absolute bar-start times via a single cumulative sum. Mutating
+        # bar-start times in place while iterating (shift bar i+1, then use
+        # that shifted value as the base for bar i+2) lets one correction's
+        # side effect silently create a brand new, unchecked interval with
+        # whatever bar comes next -- that cascading drift can make the
+        # overall bar-length variance *worse*, not better.
+        n = len(intervals)
+        local_medians = np.empty(n, dtype=float)
+        for i in range(n):
+            lo = max(0, i - self.window_bars)
+            hi = min(n, i + self.window_bars + 1)
+            window = intervals[lo:hi][valid_mask[lo:hi]]
+            local_medians[i] = np.median(window) if len(window) else intervals[i]
+
+        deviation = np.abs(intervals - local_medians) / (local_medians + 1e-6)
+        replace_mask = valid_mask & (deviation > self.tolerance_pct)
+        smoothed_intervals = np.where(replace_mask, local_medians, intervals)
+        smoothed_bars = np.concatenate(([bars_arr[0]], bars_arr[0] + np.cumsum(smoothed_intervals)))
+
+        smoothed_count = int(np.sum(replace_mask))
+        smoothed = sorted(round(float(t), 6) for t in smoothed_bars)
+        if smoothed_count:
+            blackboard.set_val("committed_bar_starts", smoothed)
+
+        blackboard.set_val("bar_tempo_smoothing_report", {
+            "status": "SMOOTHED" if smoothed_count else "PASS",
+            "bar_count": len(smoothed),
+            "smoothed_count": smoothed_count,
+            "window_bars": self.window_bars,
+            "tolerance_pct": self.tolerance_pct,
+        })
+        if smoothed_count:
+            print(
+                f"[{self.name}] 平滑修復 {smoothed_count} 個偏離局部中位數超過 "
+                f"{self.tolerance_pct * 100:.0f}% 的小節長度離群值（局部窗口 ±{self.window_bars} 小節）。"
+            )
+        return NodeStatus.SUCCESS
+
+
 class BarStartV2SyncopationClassificationNode(BaseNode):
     """Classifies onsets against the v2 bar-grid so downstream snap logic does
     not chase syncopation/anticipation instead of the true beat.
@@ -2472,6 +2568,12 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
         ManualCommittedBarStartsSeedNode(),
         FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
+        # Run twice: correcting one outlier interval shifts the local median
+        # for its neighbors, occasionally surfacing a residual outlier a
+        # single pass would miss. Converges quickly (empirically 0 further
+        # corrections by the 3rd pass on realistic jitter).
+        BarStartTempoSmoothingNode(),
+        BarStartTempoSmoothingNode(),
         MeterAwareBeatGridNode(),
         build_module3_barstart_v2_export_tree(),
     ])
