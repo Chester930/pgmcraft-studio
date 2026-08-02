@@ -245,6 +245,113 @@ class KickSnarePulseNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class AnchorTransientSnapNode(BaseNode):
+    """Snaps a set of peak-picked anchor times to the nearest true onset-strength
+    transient within a small search window.
+
+    `_extract_peak_anchors` (used by `KickSnarePulseNode` for kick/snare and by
+    `BassEvidenceExtractNode` for bass) is deliberately crude: a 100ms-window
+    max-abs envelope against a single global threshold. That's good enough to
+    find *roughly* where the hits are, but it only measures loudness, not
+    "is this actually a new percussive onset" -- quieter ghost notes or hits
+    whose energy overlaps another instrument can land slightly off, or the
+    100ms window itself smears the true attack point.
+
+    This node doesn't find new anchors -- a stem that's genuinely silent at a
+    given time still yields nothing here, same as before. It refines the
+    *precision* of anchors already found, merging two techniques already
+    proven in this codebase's Stage 3 refinement chain:
+    `OnsetPhaseRealignmentNode`'s spectral-flux `onset_strength` envelope
+    (a more principled "is this a new sound" signal than raw amplitude) with
+    `MicroTimingTransientSnapNode`'s stem-specific search-and-snap approach
+    (computing the envelope on the isolated stem itself, not the full mix).
+    """
+
+    def __init__(
+        self,
+        anchor_key: str,
+        stem_keys: tuple,
+        stems_dir_fallbacks: tuple = (),
+        search_window_ms: float = 35.0,
+        node_name: str = None,
+    ):
+        super().__init__(node_name or f"AnchorTransientSnapNode[{anchor_key}]")
+        self.anchor_key = anchor_key
+        self.stem_keys = tuple(stem_keys)
+        self.stems_dir_fallbacks = tuple(stems_dir_fallbacks)
+        self.window_sec = float(search_window_ms) / 1000.0
+        self.optional_keys = [anchor_key, "stems", "stems_dir"]
+        self.output_keys = [anchor_key, f"{anchor_key}_snap_report"]
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        anchor_times = self._normalize(blackboard.get_val(self.anchor_key))
+        report_key = f"{self.anchor_key}_snap_report"
+        if not anchor_times:
+            blackboard.set_val(report_key, {"status": "SKIPPED_NO_ANCHORS"})
+            return NodeStatus.SUCCESS
+
+        stems = blackboard.get_val("stems", {}) or {}
+        stems_dir = blackboard.get_val("stems_dir", "")
+        path = self._resolve_stem_path(stems, stems_dir)
+        if not path or not os.path.exists(path):
+            blackboard.set_val(report_key, {"status": "SKIPPED_NO_STEM"})
+            return NodeStatus.SUCCESS
+
+        try:
+            import librosa
+
+            y, sr = librosa.load(path, sr=22050, mono=True)
+            onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=256)
+            times = librosa.times_like(onset_env, sr=sr, hop_length=256)
+
+            snapped_times = []
+            snapped_count = 0
+            for t in anchor_times:
+                new_t = t
+                mask = (times >= t - self.window_sec) & (times <= t + self.window_sec)
+                if np.any(mask):
+                    idx_range = np.where(mask)[0]
+                    peak_idx = idx_range[int(np.argmax(onset_env[idx_range]))]
+                    peak_time = float(times[peak_idx])
+                    if abs(peak_time - t) > 0.003:
+                        new_t = peak_time
+                        snapped_count += 1
+                snapped_times.append(round(float(new_t), 6))
+
+            blackboard.set_val(self.anchor_key, sorted(snapped_times))
+            blackboard.set_val(report_key, {
+                "status": "SNAPPED",
+                "source": os.path.basename(path),
+                "anchor_count": len(snapped_times),
+                "snapped_count": snapped_count,
+                "search_window_ms": self.window_sec * 1000.0,
+            })
+        except Exception as e:
+            blackboard.set_val(report_key, {"status": "ERROR", "error": str(e)})
+            print(f"[{self.name}] 瞬態磁吸校正異常: {e}")
+        return NodeStatus.SUCCESS
+
+    def _normalize(self, raw) -> list:
+        if raw is None:
+            return []
+        try:
+            return sorted(float(t) for t in raw)
+        except (TypeError, ValueError):
+            return []
+
+    def _resolve_stem_path(self, stems: dict, stems_dir: str):
+        for key in self.stem_keys:
+            path = stems.get(key)
+            if path and os.path.exists(path):
+                return path
+        if stems_dir:
+            for relpath in self.stems_dir_fallbacks:
+                candidate = os.path.join(stems_dir, *relpath.split("/"))
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+
+
 class SynthesizeRhythmTrackNode(BaseNode):
     """
     A 軌音訊準備：合成 Drums + Bass 作為節奏骨幹軌 (`rhythm_track_path`)
@@ -2049,6 +2156,16 @@ def build_beat_tracking_preparation_nodes() -> list:
         SynthesizeRhythmTrackNode(),
         PrepareInstrumentalTrackNode(),
         KickSnarePulseNode(),
+        AnchorTransientSnapNode(
+            anchor_key="kick_anchors",
+            stem_keys=("kick",),
+            stems_dir_fallbacks=("drums/kick.wav",),
+        ),
+        AnchorTransientSnapNode(
+            anchor_key="snare_anchors",
+            stem_keys=("snare",),
+            stems_dir_fallbacks=("drums/snare.wav",),
+        ),
     ]
 
 

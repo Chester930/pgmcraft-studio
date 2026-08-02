@@ -19,6 +19,7 @@ from pgm_craft.workflow.audio_nodes import (
 )
 from pgm_craft.workflow.audio_quality_bt import build_audio_quality_tree
 from pgm_craft.workflow.beat_tracking_bt import (
+    AnchorTransientSnapNode,
     KickBassDownbeatVerifierNode,
     _score_beat_grid_quality,
     build_beat_refinement_nodes,
@@ -944,6 +945,11 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         MeterProfileNode(),
         ManualCommittedBarStartsSeedNode(),
         BassEvidenceExtractNode(),
+        AnchorTransientSnapNode(
+            anchor_key="bass_anchors",
+            stem_keys=("sub_bass_808", "electric_bass", "bass"),
+            stems_dir_fallbacks=("bass/synth_bass_808.wav", "bass/electric_bass.wav", "bass/bass.wav"),
+        ),
         ChordMelodyOnsetSplitNode(),
         VocalMelodyEvidenceExtractNode(),
         FullSongBarStartLoopNode(),
