@@ -17,6 +17,7 @@ from pgm_craft.workflow.input_acquisition_bt import build_input_acquisition_tree
 from pgm_craft.workflow.module3_bt import Module3BackingWithClickNode, Module3OutputSummaryNode, OptionalStemSeparationNode
 from pgm_craft.workflow.audio_nodes import ClickSynthesisNode
 from pgm_craft.workflow.beat_tracking_bt import (
+    AnchorTransientSnapNode,
     KickBassDownbeatVerifierNode,
     _extract_peak_anchors,
     _score_beat_grid_quality,
@@ -2897,6 +2898,11 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
         MeterProfileNode(),
         ManualCommittedBarStartsSeedNode(),
         BassEvidenceExtractNode(),
+        AnchorTransientSnapNode(
+            anchor_key="bass_anchors",
+            stem_keys=("sub_bass_808", "electric_bass", "bass"),
+            stems_dir_fallbacks=("bass/synth_bass_808.wav", "bass/electric_bass.wav", "bass/bass.wav"),
+        ),
         ChordMelodyOnsetSplitNode(),
         VocalMelodyEvidenceExtractNode(),
         FullSongBarStartLoopNode(),
