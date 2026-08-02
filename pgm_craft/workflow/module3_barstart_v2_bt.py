@@ -2893,7 +2893,7 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
     return SequenceNode("Module3BarStartClickRoot", [
         build_input_acquisition_tree(),
         build_audio_quality_tree(),
-        OptionalStemSeparationNode(),
+        OptionalStemSeparationNode(mode='beat_only'),
         MeterProfileNode(),
         ManualCommittedBarStartsSeedNode(),
         BassEvidenceExtractNode(),
