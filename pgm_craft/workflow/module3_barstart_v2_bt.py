@@ -18,6 +18,7 @@ from pgm_craft.workflow.module3_bt import Module3BackingWithClickNode, Module3Ou
 from pgm_craft.workflow.audio_nodes import ClickSynthesisNode
 from pgm_craft.workflow.beat_tracking_bt import (
     KickBassDownbeatVerifierNode,
+    _extract_peak_anchors,
     _score_beat_grid_quality,
 )
 from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
@@ -1228,6 +1229,67 @@ class DrumBassEvidenceBarSearchNode(BaseNode):
         return float(interval) if interval > 0 else None
 
 
+class BassEvidenceExtractNode(BaseNode):
+    """Extracts real bass pulse onset times as bar-start evidence.
+
+    `DrumBassEvidenceBarSearchNode` expects `bass_anchors` on the
+    blackboard, but until this node, nothing in the codebase ever wrote
+    it -- the "drums + bass" tier of the evidence ladder was consumer-only,
+    the same gap Pass 147 found and fixed for the guitar/piano chord tier.
+
+    Reuses the exact peak-picking algorithm Stage 3's `KickSnarePulseNode`
+    already uses for kick/snare (`_extract_peak_anchors`), applied to
+    Stage 2's already-separated bass stem, so bass evidence is produced by
+    the same one algorithm as kick/snare rather than a fourth
+    reimplementation. `threshold_ratio=0.35` matches the sub-bass guard
+    tuning `KickSnarePulseNode` already uses when it borrows bass energy
+    to backfill sparse kick detection in no-drum spans.
+    """
+
+    optional_keys = ["stems", "stems_dir"]
+    output_keys = ["bass_anchors", "bass_evidence_extract_report"]
+
+    def __init__(self, threshold_ratio: float = 0.35, min_gap_sec: float = 0.2):
+        super().__init__("BassEvidenceExtractNode")
+        self.threshold_ratio = float(threshold_ratio)
+        self.min_gap_sec = float(min_gap_sec)
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        stems = blackboard.get_val("stems", {}) or {}
+        stems_dir = blackboard.get_val("stems_dir", "")
+        path = self._resolve_bass_path(stems, stems_dir)
+        if not path or not os.path.exists(path):
+            blackboard.set_val("bass_anchors", [])
+            blackboard.set_val("bass_evidence_extract_report", {"status": "SKIPPED_NO_STEM"})
+            return NodeStatus.SUCCESS
+
+        try:
+            anchors = _extract_peak_anchors(path, threshold_ratio=self.threshold_ratio, min_gap_sec=self.min_gap_sec)
+            blackboard.set_val("bass_anchors", anchors)
+            blackboard.set_val("bass_evidence_extract_report", {
+                "status": "EXTRACTED",
+                "source": os.path.basename(path),
+                "anchor_count": len(anchors),
+            })
+        except Exception as e:
+            blackboard.set_val("bass_anchors", [])
+            blackboard.set_val("bass_evidence_extract_report", {"status": "ERROR", "error": str(e)})
+            print(f"[{self.name}] 貝斯脈衝提取異常: {e}")
+        return NodeStatus.SUCCESS
+
+    def _resolve_bass_path(self, stems: dict, stems_dir: str):
+        for key in ("sub_bass_808", "electric_bass", "bass"):
+            path = stems.get(key)
+            if path and os.path.exists(path):
+                return path
+        if stems_dir:
+            for filename in ("synth_bass_808.wav", "electric_bass.wav", "bass.wav"):
+                candidate = os.path.join(stems_dir, "bass", filename)
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+
+
 class ChordMelodyOnsetSplitNode(BaseNode):
     """Splits guitar/piano stems into rhythm-chord vs melody onset evidence.
 
@@ -2174,8 +2236,10 @@ class BarStartTempoSmoothingNode(BaseNode):
         return NodeStatus.SUCCESS
 
     def _drum_anchors(self, blackboard: Blackboard) -> np.ndarray:
-        kick = blackboard.get_val("kick_anchors") or []
-        snare = blackboard.get_val("snare_anchors") or []
+        kick = blackboard.get_val("kick_anchors")
+        kick = [] if kick is None else kick
+        snare = blackboard.get_val("snare_anchors")
+        snare = [] if snare is None else snare
         try:
             combined = np.asarray(list(kick) + list(snare), dtype=float).reshape(-1)
         except (TypeError, ValueError):
@@ -2746,6 +2810,7 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
         OptionalStemSeparationNode(),
         MeterProfileNode(),
         ManualCommittedBarStartsSeedNode(),
+        BassEvidenceExtractNode(),
         ChordMelodyOnsetSplitNode(),
         FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
