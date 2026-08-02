@@ -48,6 +48,5 @@ def test_app_exposes_module3_stage_choice():
     assert 'with gr.TabItem("🎯 節奏定位")' in source
     assert "def process_module3_click_test" in source
     assert "module3_start_btn.click" in source
-    assert "module3_candidate_sources_chk" in source
     assert "module3_candidate_sources" in source
     assert '("Module 3: 節拍候選可信度合成 + Click 手動測試", "module3")' in source

@@ -1331,16 +1331,6 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                         type="filepath",
                         file_types=[".mp3", ".wav", ".flac", ".m4a"]
                     )
-                    module3_candidate_sources_chk = gr.CheckboxGroup(
-                        choices=[
-                            ("Full Mix / 原曲保底", "full_mix"),
-                            ("Rhythm / 鼓+Bass", "rhythm"),
-                            ("Band / 鼓+Bass+吉他+鋼琴/伴奏", "band"),
-                            ("Vocal / 人聲 phrase 輔助", "vocal"),
-                        ],
-                        value=["full_mix", "rhythm", "band", "vocal"],
-                        label="四軌候選來源",
-                    )
                     with gr.Row():
                         module3_output_dir = gr.Textbox(
                             value=DEFAULT_OUTPUT_DIR,
@@ -1390,16 +1380,18 @@ with gr.Blocks(title="PGMCraft Studio - DAW/PGM 工程素材與實驗性分軌�
                 outputs=[module3_output_dir]
             )
 
-            def _handle_module3_run(audio_file, candidate_sources, output_dir):
+            def _handle_module3_run(audio_file, output_dir):
                 # Beat/bar detection needs real kick/snare evidence, which only
                 # exists after stem separation -- this is not an optional toggle.
+                # All four candidate sources are always used -- there's no
+                # scenario where excluding one helps, so this isn't a user choice.
+                candidate_sources = ["full_mix", "rhythm", "band", "vocal"]
                 return process_module3_click_test(audio_file, True, candidate_sources, output_dir)
 
             module3_start_btn.click(
                 fn=_handle_module3_run,
                 inputs=[
                     module3_audio_input,
-                    module3_candidate_sources_chk,
                     module3_output_dir,
                 ],
                 outputs=[
