@@ -11,6 +11,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from pgm_craft.beat_evaluation import coerce_beat_array, serialize_beats
+from pgm_craft.determinism import enable_deterministic_mode
 from pgm_craft.workflow.builder import BTWorkflowEngine
 from pgm_craft.packager import PGMProjectPackager
 
@@ -28,7 +29,14 @@ def _float_list(values, ndigits=3):
 
 
 class PGMCraftEngine:
-    def __init__(self, enable_stem_separation=True, validate_contracts=False):
+    def __init__(self, enable_stem_separation=True, validate_contracts=False, deterministic=True):
+        # Must run before any BT node executes -- BeatNet/torch/Demucs are all
+        # imported lazily inside node execute() methods, so this is early
+        # enough to still be before any CUDA context exists.
+        if deterministic:
+            self.determinism_report = enable_deterministic_mode()
+        else:
+            self.determinism_report = {"status": "DISABLED"}
         self.enable_stem_separation = enable_stem_separation
         self.validate_contracts = validate_contracts
         self.bt_engine = BTWorkflowEngine()
