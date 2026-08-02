@@ -851,7 +851,13 @@ class BarStartCandidateCommitNode(BaseNode):
         window = dict(blackboard.get_val("active_bar_probe_window", {}) or {})
         candidates = self._normalize_candidates(blackboard.get_val("bar_start_candidates", []), window)
         threshold = self._threshold(blackboard.get_val("candidate_commit_confidence_threshold"))
-        best = self._best_candidate(candidates)
+        # The probe window's own start_time is anchored at the last committed
+        # bar, so that bar's own anchors are still inside the window and would
+        # otherwise keep winning the confidence tie-break (earliest-time-wins)
+        # against the genuinely next candidates further ahead -- silently
+        # re-"committing" the same bar every tick forever with no progress.
+        eligible = self._exclude_already_committed(candidates, committed)
+        best = self._best_candidate(eligible)
 
         report = {
             "threshold": threshold,
@@ -968,6 +974,14 @@ class BarStartCandidateCommitNode(BaseNode):
         if not candidates:
             return None
         return max(candidates, key=lambda item: (item["confidence"], -item["time"]))
+
+    def _exclude_already_committed(self, candidates: list[dict], committed: list[float]) -> list[dict]:
+        if not committed:
+            return candidates
+        return [
+            candidate for candidate in candidates
+            if all(abs(candidate["time"] - existing) > self.duplicate_tolerance_sec for existing in committed)
+        ]
 
     def _append_unique(self, committed: list[float], time_sec: float) -> list[float]:
         if all(abs(float(existing) - float(time_sec)) > self.duplicate_tolerance_sec for existing in committed):
