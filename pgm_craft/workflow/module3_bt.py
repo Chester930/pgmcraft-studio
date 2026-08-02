@@ -907,6 +907,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         BarGridContinuityRepairNode,
         BarStartTempoSmoothingNode,
         BarStartV2QualityScoreNode,
+        BassEvidenceExtractNode,
         ChordMelodyOnsetSplitNode,
         FullSongBarStartLoopNode,
         ManualCommittedBarStartsSeedNode,
@@ -934,6 +935,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
     v2_core = SequenceNode("BarStartV2CoreChain", [
         MeterProfileNode(),
         ManualCommittedBarStartsSeedNode(),
+        BassEvidenceExtractNode(),
         ChordMelodyOnsetSplitNode(),
         FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
