@@ -29,7 +29,7 @@ from pgm_craft.workflow.export_bt import BackingWithClickSynthesizerNode
 from pgm_craft.workflow.input_acquisition_bt import build_input_acquisition_tree
 from pgm_craft.workflow.music_analysis_bt import build_music_analysis_tree
 from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
-from pgm_craft.workflow.stem_separation_bt import build_stem_separation_tree
+from pgm_craft.workflow.stem_separation_bt import build_stem_separation_tree, build_beat_stem_tree
 
 
 SOURCE_KEYS = ("full_mix", "rhythm", "band", "vocal")
@@ -104,9 +104,16 @@ class OptionalStemSeparationNode(BaseNode):
     optional_keys = ["enable_stem", "project_dir", "output_dir"]
     output_keys = ["stems", "stems_dir", "stem_separation_status"]
 
-    def __init__(self):
+    def __init__(self, mode: str = "full"):
+        """
+        mode='full'      -> build_stem_separation_tree()（完整樹，預設）
+        mode='beat_only' -> build_beat_stem_tree()（輕量，僅節拍分析所需音色）
+        """
         super().__init__("OptionalStemSeparationNode")
-        self.tree = build_stem_separation_tree()
+        if mode == "beat_only":
+            self.tree = build_beat_stem_tree()
+        else:
+            self.tree = build_stem_separation_tree()
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         project_dir = blackboard.get_val("project_dir") or blackboard.get_val("output_dir", "outputs")
