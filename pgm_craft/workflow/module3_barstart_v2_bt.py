@@ -1422,6 +1422,92 @@ class ChordMelodyOnsetSplitNode(BaseNode):
         return chord_anchors, melody_anchors
 
 
+class VocalMelodyEvidenceExtractNode(BaseNode):
+    """Extracts lead-vocal phrase-entrance onset times as `vocal_melody_anchors`.
+
+    `MelodyTrackPKNode` already reads `vocal_melody_anchors` alongside
+    `guitar_melody_anchors`/`piano_melody_anchors` (Pass 147), but nothing
+    ever wrote it -- the lead vocal, often the clearest melodic cue for
+    where a phrase/bar begins, was never analyzed for this evidence tier.
+
+    Unlike `ChordMelodyOnsetSplitNode`, this doesn't classify onsets into
+    chord vs melody: a vocal line is inherently monophonic (no "strummed
+    block chord" mode the way guitar/piano can play), so every detected
+    onset is a melody anchor. Confidence is scaled by each onset's relative
+    onset-strength envelope value rather than chroma dominance.
+    """
+
+    optional_keys = ["stems", "stems_dir"]
+    output_keys = ["vocal_melody_anchors", "vocal_melody_extract_report"]
+
+    def __init__(self, window_sec: float = 0.15):
+        super().__init__("VocalMelodyEvidenceExtractNode")
+        self.window_sec = float(window_sec)
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        stems = blackboard.get_val("stems", {}) or {}
+        stems_dir = blackboard.get_val("stems_dir", "")
+        path = self._resolve_vocal_path(stems, stems_dir)
+        if not path or not os.path.exists(path):
+            blackboard.set_val("vocal_melody_anchors", [])
+            blackboard.set_val("vocal_melody_extract_report", {"status": "SKIPPED_NO_STEM"})
+            return NodeStatus.SUCCESS
+
+        try:
+            anchors = self._extract_onsets(path)
+            blackboard.set_val("vocal_melody_anchors", anchors)
+            blackboard.set_val("vocal_melody_extract_report", {
+                "status": "EXTRACTED",
+                "source": os.path.basename(path),
+                "anchor_count": len(anchors),
+            })
+        except Exception as e:
+            blackboard.set_val("vocal_melody_anchors", [])
+            blackboard.set_val("vocal_melody_extract_report", {"status": "ERROR", "error": str(e)})
+            print(f"[{self.name}] 人聲旋律偵測異常: {e}")
+        return NodeStatus.SUCCESS
+
+    def _resolve_vocal_path(self, stems: dict, stems_dir: str):
+        for key in ("lead_vocal", "vocals_debreathed", "vocals"):
+            path = stems.get(key)
+            if path and os.path.exists(path):
+                return path
+        if stems_dir:
+            for filename in ("lead_vocal.wav", "vocals_debreathed.wav", "vocals.wav"):
+                candidate = os.path.join(stems_dir, "vocals", filename)
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+
+    def _extract_onsets(self, audio_path: str) -> list[dict]:
+        import librosa
+
+        y, sr = librosa.load(audio_path, sr=22050, mono=True)
+        if len(y) < sr * self.window_sec:
+            return []
+
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        onset_times = librosa.onset.onset_detect(
+            y=y, sr=sr, onset_envelope=onset_env, units="time", backtrack=True
+        )
+        if len(onset_times) == 0:
+            return []
+
+        peak = float(np.max(onset_env)) if len(onset_env) else 0.0
+        if peak <= 1e-6:
+            return [{"time": round(float(t), 6), "confidence": 0.5, "chord": None} for t in onset_times]
+
+        hop_length = 512
+        frame_indices = librosa.time_to_frames(onset_times, sr=sr, hop_length=hop_length)
+        anchors = []
+        for t, frame_idx in zip(onset_times, frame_indices):
+            frame_idx = int(np.clip(frame_idx, 0, len(onset_env) - 1))
+            strength = float(onset_env[frame_idx])
+            confidence = round(float(np.clip(0.35 + 0.4 * (strength / peak), 0.0, 0.85)), 6)
+            anchors.append({"time": round(float(t), 6), "confidence": confidence, "chord": None})
+        return anchors
+
+
 class ChordTrackPKNode(BaseNode):
     """Builds guitar/piano harmonic anchors and uses them as conservative bar-start evidence."""
 
@@ -2812,6 +2898,7 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
         ManualCommittedBarStartsSeedNode(),
         BassEvidenceExtractNode(),
         ChordMelodyOnsetSplitNode(),
+        VocalMelodyEvidenceExtractNode(),
         FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
         # Run twice: correcting one outlier interval shifts the local median
