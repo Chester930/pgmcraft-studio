@@ -1228,6 +1228,138 @@ class DrumBassEvidenceBarSearchNode(BaseNode):
         return float(interval) if interval > 0 else None
 
 
+class ChordMelodyOnsetSplitNode(BaseNode):
+    """Splits guitar/piano stems into rhythm-chord vs melody onset evidence.
+
+    ChordTrackPKNode expects `guitar_chord_anchors`/`piano_chord_anchors` on
+    the blackboard and MelodyTrackPKNode expects
+    `guitar_melody_anchors`/`piano_melody_anchors` -- but until this node,
+    nothing anywhere in the codebase ever wrote any of the four. Both
+    consumers were designed against these keys (Pass 110-111) and silently
+    ran on empty lists in every real run since, meaning the evidence ladder
+    only ever had drum evidence (Tier 1) in practice; the "listen to the
+    rhythm chord for this time span" tier the user designed was consumer-only.
+
+    Runs once per song against Stage 2's already-separated guitar.wav/
+    piano.wav (not per probe-tick): each onset is classified as a chord (a
+    strum/block chord -- several chroma pitch classes simultaneously active)
+    or a melody note (one dominant pitch class) by counting how many chroma
+    bins stay above a fraction of the onset window's peak. This mirrors the
+    same lightweight onset+chroma style already used elsewhere in this
+    module rather than adding a new heavy transcription model dependency.
+    """
+
+    optional_keys = ["stems", "stems_dir"]
+    output_keys = [
+        "guitar_chord_anchors", "guitar_melody_anchors",
+        "piano_chord_anchors", "piano_melody_anchors",
+        "chord_melody_split_report",
+    ]
+
+    _PITCH_CLASS_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+    def __init__(self, chord_active_bins: int = 3, window_sec: float = 0.15):
+        super().__init__("ChordMelodyOnsetSplitNode")
+        self.chord_active_bins = int(chord_active_bins)
+        self.window_sec = float(window_sec)
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        stems = blackboard.get_val("stems", {}) or {}
+        stems_dir = blackboard.get_val("stems_dir", "")
+        report = {}
+
+        for instrument, chord_key, melody_key, folder in (
+            ("guitar", "guitar_chord_anchors", "guitar_melody_anchors", "guitars"),
+            ("piano", "piano_chord_anchors", "piano_melody_anchors", "pianos"),
+        ):
+            path = self._resolve_stem_path(stems, stems_dir, instrument, folder)
+            if not path or not os.path.exists(path):
+                blackboard.set_val(chord_key, [])
+                blackboard.set_val(melody_key, [])
+                report[instrument] = {"status": "SKIPPED_NO_STEM"}
+                continue
+            try:
+                chord_anchors, melody_anchors = self._split_onsets(path)
+                blackboard.set_val(chord_key, chord_anchors)
+                blackboard.set_val(melody_key, melody_anchors)
+                report[instrument] = {
+                    "status": "ANALYZED",
+                    "chord_count": len(chord_anchors),
+                    "melody_count": len(melody_anchors),
+                }
+            except Exception as e:
+                blackboard.set_val(chord_key, [])
+                blackboard.set_val(melody_key, [])
+                report[instrument] = {"status": "ERROR", "error": str(e)}
+                print(f"[{self.name}] {instrument} 節奏和弦/旋律分析異常: {e}")
+
+        blackboard.set_val("chord_melody_split_report", report)
+        return NodeStatus.SUCCESS
+
+    def _resolve_stem_path(self, stems: dict, stems_dir: str, instrument: str, folder: str):
+        path = stems.get(instrument)
+        if path and os.path.exists(path):
+            return path
+        if stems_dir:
+            candidate = os.path.join(stems_dir, folder, f"{instrument}.wav")
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    def _split_onsets(self, audio_path: str) -> tuple[list[dict], list[dict]]:
+        import librosa
+
+        y, sr = librosa.load(audio_path, sr=22050, mono=True)
+        if len(y) < sr * self.window_sec:
+            return [], []
+
+        onset_times = librosa.onset.onset_detect(y=y, sr=sr, units="time", backtrack=True)
+        if len(onset_times) == 0:
+            return [], []
+
+        hop_length = 512
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop_length)
+        if chroma.shape[1] == 0:
+            return [], []
+        frame_times = librosa.frames_to_time(np.arange(chroma.shape[1]), sr=sr, hop_length=hop_length)
+        window_frames = max(1, int(round(self.window_sec * sr / hop_length)))
+
+        chord_anchors, melody_anchors = [], []
+        for t in onset_times:
+            start_frame = int(np.searchsorted(frame_times, t))
+            if start_frame >= chroma.shape[1]:
+                continue
+            end_frame = min(chroma.shape[1], start_frame + window_frames)
+            window_chroma = chroma[:, start_frame:end_frame]
+            if window_chroma.size == 0:
+                continue
+            profile = np.mean(window_chroma, axis=1)
+            peak = float(np.max(profile))
+            if peak <= 1e-6:
+                continue
+            active_bins = int(np.sum(profile >= peak * 0.5))
+            root_name = self._PITCH_CLASS_NAMES[int(np.argmax(profile))]
+
+            if active_bins >= self.chord_active_bins:
+                confidence = round(float(np.clip(0.4 + 0.08 * active_bins, 0.0, 0.85)), 6)
+                chord_anchors.append({
+                    "time": round(float(t), 6),
+                    "confidence": confidence,
+                    "chord": root_name,
+                })
+            else:
+                sorted_profile = np.sort(profile)
+                second_peak = float(sorted_profile[-2]) if len(sorted_profile) > 1 else 0.0
+                dominance = 1.0 - (second_peak / peak if peak > 0 else 0.0)
+                confidence = round(float(np.clip(0.35 + 0.3 * dominance, 0.0, 0.75)), 6)
+                melody_anchors.append({
+                    "time": round(float(t), 6),
+                    "confidence": confidence,
+                    "chord": None,
+                })
+        return chord_anchors, melody_anchors
+
+
 class ChordTrackPKNode(BaseNode):
     """Builds guitar/piano harmonic anchors and uses them as conservative bar-start evidence."""
 
@@ -2614,6 +2746,7 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
         OptionalStemSeparationNode(),
         MeterProfileNode(),
         ManualCommittedBarStartsSeedNode(),
+        ChordMelodyOnsetSplitNode(),
         FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
         # Run twice: correcting one outlier interval shifts the local median
