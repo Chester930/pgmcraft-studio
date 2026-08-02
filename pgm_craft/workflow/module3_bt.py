@@ -913,6 +913,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         ManualCommittedBarStartsSeedNode,
         MeterAwareBeatGridNode,
         MeterProfileNode,
+        VocalMelodyEvidenceExtractNode,
     )
 
     # Run the real v2 engine on an isolated blackboard copy so it cannot
@@ -937,6 +938,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         ManualCommittedBarStartsSeedNode(),
         BassEvidenceExtractNode(),
         ChordMelodyOnsetSplitNode(),
+        VocalMelodyEvidenceExtractNode(),
         FullSongBarStartLoopNode(),
         BarGridContinuityRepairNode(),
         # Run twice -- see module3_barstart_v2_bt.py's pipeline wiring for why.
