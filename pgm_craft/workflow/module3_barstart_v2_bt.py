@@ -1951,6 +1951,133 @@ class MelodyTrackPKNode(BaseNode):
         return start <= float(time_sec) <= end
 
 
+class V1GridEvidenceBarSearchNode(BaseNode):
+    """Uses v1's own already-computed downbeat grid as bar-start evidence, for
+    probe windows where v2's acoustic tiers (drum/bass/chord/melody) found
+    nothing above commit threshold.
+
+    Unlike chord/melody-only candidates (deliberately capped below the 0.7
+    commit threshold -- see ChordTrackPKNode/MelodyTrackPKNode -- so a single
+    instrument's local onset can never alone confirm a bar), this tier CAN
+    independently commit. `v1_reference_beat_grid` represents an entire
+    neural beat-tracking model's (BeatNet CRNN+DBN, ensembled with Librosa,
+    refined through Stage 3's guard chain) judgment across the whole song --
+    not one instrument's local signal.
+
+    Crucially, v1's tracker does not require drum evidence to keep tracking:
+    it estimates a continuous tempo/beat pulse from the full mix regardless
+    of instrumentation, which is exactly the property v2's evidence-only
+    design lacks in drum-sparse spans. Confirmed directly on a real song
+    with a 12.4s drum-less intro: v1's own `beats` array starts tracking at
+    0.033s with no gap, while v2 (pre-this-node) had nothing until the first
+    real kick at 12.376s.
+
+    Confidence is gated by `downbeat_refinement`'s own status: full
+    confidence when v1 itself reports real (non-fallback) downbeat tracking
+    for a region, reduced when v1 also had to fall back to a synthetic
+    4-beat assumption there -- in which case this tier isn't meaningfully
+    better-informed than v2's own carry-forward and shouldn't be trusted as
+    much.
+    """
+
+    optional_keys = [
+        "active_bar_probe_window",
+        "bar_start_candidates",
+        "v1_reference_beat_grid",
+        "downbeat_refinement",
+        "committed_bar_starts",
+    ]
+    output_keys = ["bar_start_candidates", "v1_grid_evidence_report"]
+
+    def __init__(
+        self,
+        base_confidence: float = 0.72,
+        fallback_confidence: float = 0.5,
+        coincidence_tolerance_sec: float = 0.09,
+    ):
+        super().__init__("V1GridEvidenceBarSearchNode")
+        self.base_confidence = float(base_confidence)
+        self.fallback_confidence = float(fallback_confidence)
+        self.coincidence_tolerance_sec = float(coincidence_tolerance_sec)
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        window = dict(blackboard.get_val("active_bar_probe_window", {}) or {})
+        if not window:
+            blackboard.set_val("v1_grid_evidence_report", {"status": "SKIPPED_NO_WINDOW"})
+            return NodeStatus.SUCCESS
+
+        downbeats = self._v1_downbeat_times(blackboard)
+        in_window = sorted(t for t in downbeats if self._inside_window(t, window))
+        if not in_window:
+            blackboard.set_val("v1_grid_evidence_report", {
+                "status": "NO_V1_DOWNBEAT_IN_WINDOW",
+                "total_v1_downbeat_count": len(downbeats),
+            })
+            return NodeStatus.SUCCESS
+
+        confidence = self._confidence(blackboard)
+        candidates = list(blackboard.get_val("bar_start_candidates", []) or [])
+
+        added = []
+        for t in in_window:
+            if self._has_candidate_near(candidates + added, t):
+                continue
+            added.append({
+                "time": round(t, 6),
+                "confidence": round(float(np.clip(confidence, 0.0, 1.0)), 6),
+                "evidence_sources": ["v1_grid"],
+                "source_node": self.name,
+            })
+        candidates.extend(added)
+
+        blackboard.set_val("bar_start_candidates", candidates)
+        blackboard.set_val("v1_grid_evidence_report", {
+            "status": "CANDIDATES_ADDED" if added else "ALREADY_COVERED",
+            "downbeat_count_in_window": len(in_window),
+            "added_count": len(added),
+            "confidence_used": confidence,
+        })
+        return NodeStatus.SUCCESS
+
+    def _v1_downbeat_times(self, blackboard: Blackboard) -> list[float]:
+        grid = blackboard.get_val("v1_reference_beat_grid")
+        if grid is None:
+            return []
+        try:
+            arr = np.asarray(grid, dtype=float)
+        except (TypeError, ValueError):
+            return []
+        if arr.ndim != 2 or arr.shape[1] < 2 or len(arr) == 0:
+            return []
+        return [float(t) for t in arr[arr[:, 1] == 1, 0]]
+
+    def _confidence(self, blackboard: Blackboard) -> float:
+        refinement = blackboard.get_val("downbeat_refinement", {}) or {}
+        source = str(refinement.get("source", ""))
+        if source.startswith("fallback"):
+            return self.fallback_confidence
+        return self.base_confidence
+
+    def _has_candidate_near(self, candidates: list, time_sec: float) -> bool:
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            try:
+                existing_time = float(candidate.get("time"))
+            except (TypeError, ValueError):
+                continue
+            if abs(existing_time - float(time_sec)) <= self.coincidence_tolerance_sec:
+                return True
+        return False
+
+    def _inside_window(self, time_sec: float, window: dict) -> bool:
+        if not window:
+            return False
+        start = float(window.get("start_time", 0.0))
+        end = float(window.get("end_time", start))
+        return start <= float(time_sec) <= end
+
+
 class BeatThisCandidateAdapterNode(BaseNode):
     """Adapts optional Beat This! beat/downbeat candidates into the bar-start evidence ladder."""
 
@@ -2883,6 +3010,9 @@ def build_module3_barstart_v2_probe_tick_tree() -> SequenceNode:
         DrumBassEvidenceBarSearchNode(),
         ChordTrackPKNode(),
         MelodyTrackPKNode(),
+        # Pass 156: v1's own continuous beat grid as a 6th evidence tier --
+        # unlike chord/melody, this one can independently commit a bar.
+        V1GridEvidenceBarSearchNode(),
         BeatThisCandidateAdapterNode(),
         ReliableBarAnchorNode(),
         # Pass 129: populates lookahead_drum_events from real kick/snare

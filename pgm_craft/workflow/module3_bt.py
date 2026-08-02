@@ -923,6 +923,11 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
     # it -- v2's evidence-ladder writes many of the same key names v1
     # already produced (beats/committed_bar_starts/...).
     v2_blackboard = Blackboard(blackboard)
+    # Pass 156: v1's original grid is about to be popped below (v2's own
+    # nodes write their own beats/refined_beats under the same key names),
+    # but V1GridEvidenceBarSearchNode needs it as a 6th evidence tier -- save
+    # it under a distinct key first so it survives the pop.
+    v2_blackboard.set_val("v1_reference_beat_grid", original_beat_grid)
     # NOTE: manual_bar_starts is intentionally *not* cleared -- it is the
     # legitimate mechanism for a caller to seed v2's starting point (e.g.
     # a reference-verified bar list), and popping it here would silently
