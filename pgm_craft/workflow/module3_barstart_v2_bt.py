@@ -1291,6 +1291,92 @@ class BassEvidenceExtractNode(BaseNode):
         return None
 
 
+class DrumBassOnsetCandidateExtractNode(BaseNode):
+    """Extracts generic onset-detection candidates for drums and bass, as a
+    broader complement to the band-specific peak-picked kick_anchors/
+    snare_anchors/bass_anchors.
+
+    `DrumEvidenceBarSearchNode` falls back to `drum_onset_candidates` when no
+    kick evidence exists in a probe window, and `DrumBassEvidenceBarSearchNode`
+    adds `bass_onset_candidates` alongside `bass_anchors` -- but until this
+    node, nothing anywhere in the codebase ever wrote either key, the same
+    consumer-only gap Pass 147/148/149 found and fixed for chord/melody/vocal
+    evidence.
+
+    Unlike `_extract_peak_anchors` (a crude single-threshold envelope peak
+    picker used for kick_anchors/snare_anchors/bass_anchors), this uses
+    `librosa.onset.onset_detect` (spectral-flux based) -- more sensitive to
+    timbral onset than raw loudness, so it catches hits the narrow-band
+    peak-picker misses: `drum_onset_candidates` reads the full `drums` stem
+    (kick+snare+hihat+cymbals together, not the kick/snare sub-splits), so it
+    can surface a hihat or cymbal hit with no clear kick/snare;
+    `bass_onset_candidates` reads the same bass stem `BassEvidenceExtractNode`
+    already resolves, catching smoother-attack bass notes the envelope
+    threshold would miss.
+    """
+
+    optional_keys = ["stems", "stems_dir"]
+    output_keys = ["drum_onset_candidates", "bass_onset_candidates", "drum_bass_onset_extract_report"]
+
+    def __init__(self, window_sec: float = 0.15):
+        super().__init__("DrumBassOnsetCandidateExtractNode")
+        self.window_sec = float(window_sec)
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        stems = blackboard.get_val("stems", {}) or {}
+        stems_dir = blackboard.get_val("stems_dir", "")
+        report = {}
+
+        drum_path = self._resolve_path(stems, stems_dir, ("drums",), ("drums/drums.wav",))
+        drum_onsets, drum_status = self._extract_onsets(drum_path)
+        blackboard.set_val("drum_onset_candidates", drum_onsets)
+        report["drums"] = drum_status
+
+        bass_path = self._resolve_path(
+            stems, stems_dir,
+            ("sub_bass_808", "electric_bass", "bass"),
+            ("bass/synth_bass_808.wav", "bass/electric_bass.wav", "bass/bass.wav"),
+        )
+        bass_onsets, bass_status = self._extract_onsets(bass_path)
+        blackboard.set_val("bass_onset_candidates", bass_onsets)
+        report["bass"] = bass_status
+
+        blackboard.set_val("drum_bass_onset_extract_report", report)
+        return NodeStatus.SUCCESS
+
+    def _extract_onsets(self, path):
+        if not path or not os.path.exists(path):
+            return [], {"status": "SKIPPED_NO_STEM"}
+        try:
+            import librosa
+
+            y, sr = librosa.load(path, sr=22050, mono=True)
+            if len(y) < sr * self.window_sec:
+                return [], {"status": "SKIPPED_TOO_SHORT"}
+            onset_times = librosa.onset.onset_detect(y=y, sr=sr, units="time", backtrack=True)
+            onsets = sorted(round(float(t), 6) for t in onset_times)
+            return onsets, {
+                "status": "EXTRACTED",
+                "source": os.path.basename(path),
+                "onset_count": len(onsets),
+            }
+        except Exception as e:
+            print(f"[{self.name}] onset 偵測異常 ({path}): {e}")
+            return [], {"status": "ERROR", "error": str(e)}
+
+    def _resolve_path(self, stems: dict, stems_dir: str, keys: tuple, stems_dir_fallbacks: tuple):
+        for key in keys:
+            path = stems.get(key)
+            if path and os.path.exists(path):
+                return path
+        if stems_dir:
+            for relpath in stems_dir_fallbacks:
+                candidate = os.path.join(stems_dir, *relpath.split("/"))
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+
+
 class ChordMelodyOnsetSplitNode(BaseNode):
     """Splits guitar/piano stems into rhythm-chord vs melody onset evidence.
 
@@ -2903,6 +2989,7 @@ def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
             stem_keys=("sub_bass_808", "electric_bass", "bass"),
             stems_dir_fallbacks=("bass/synth_bass_808.wav", "bass/electric_bass.wav", "bass/bass.wav"),
         ),
+        DrumBassOnsetCandidateExtractNode(),
         ChordMelodyOnsetSplitNode(),
         VocalMelodyEvidenceExtractNode(),
         FullSongBarStartLoopNode(),
