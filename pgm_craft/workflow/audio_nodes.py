@@ -413,7 +413,7 @@ class DownbeatRefineNode(BaseNode):
 
         refined_beats, result = self.refine(beats, count_in_events=count_in_events, clap_events=clap_events)
         blackboard.set_val("refined_beats", refined_beats)
-        blackboard.set_val("beats", refined_beats)
+        blackboard.set_val("beats", refined_beats)  # Pass 160: 確保 beats 與 refined_beats 雙向同步
         blackboard.set_val("downbeat_refinement", result)
         blackboard.set_val("downbeat_refine_status", result["status"])
         blackboard.set_val("downbeat_refine_warnings", result["warnings"])
