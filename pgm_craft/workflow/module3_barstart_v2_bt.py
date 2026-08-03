@@ -904,7 +904,25 @@ def _score_bar_start_list_quality(bars: list[float]) -> float | None:
 
 
 class BarStartCandidateCommitNode(BaseNode):
-    """Commits the best bar-start candidate or records an unresolved probe span."""
+    """Commits the best bar-start candidate or records an unresolved probe span.
+
+    Pass 158: every evidence tier (kick/bass/chord/melody/v1-grid/lookahead)
+    only ever scores a candidate's own local plausibility -- none of them
+    check whether the resulting gap from the *previous committed bar* is
+    actually a real bar length. In passages with a kick on every beat (common
+    -- four-on-the-floor, verses, choruses), that means a beat-level kick
+    hit right after the previous commit routinely outscores the true next
+    bar three beats later on raw confidence alone, so v2 ends up committing
+    on nearly every beat instead of every bar (~0.4s median gap observed on
+    a real song vs v1's own ~1.45s real downbeat-to-downbeat spacing --
+    almost 4x too dense, "a wall of clicks" per user report). Before picking
+    the best candidate, filter out ones whose gap from the last committed
+    bar is implausibly short relative to v1's own real bar-duration estimate
+    (from `v1_reference_beat_grid`, Pass 156/157); if that filter would
+    eliminate every candidate (legitimate short/pickup bar, or no v1 grid
+    available), fall back to the unfiltered list so this never introduces a
+    false negative that Pass 153's stall bug already taught us to avoid.
+    """
 
     optional_keys = [
         "bar_start_candidates",
@@ -912,6 +930,7 @@ class BarStartCandidateCommitNode(BaseNode):
         "active_bar_probe_window",
         "candidate_commit_confidence_threshold",
         "unresolved_bar_spans",
+        "v1_reference_beat_grid",
     ]
     output_keys = [
         "bar_start_candidates",
@@ -926,11 +945,13 @@ class BarStartCandidateCommitNode(BaseNode):
         default_threshold: float = 0.7,
         duplicate_tolerance_sec: float = 0.03,
         quality_drop_tolerance: float = 0.15,
+        min_bar_gap_ratio: float = 0.6,
     ):
         super().__init__("BarStartCandidateCommitNode")
         self.default_threshold = float(default_threshold)
         self.duplicate_tolerance_sec = float(duplicate_tolerance_sec)
         self.quality_drop_tolerance = float(quality_drop_tolerance)
+        self.min_bar_gap_ratio = float(min_bar_gap_ratio)
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         committed = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
@@ -943,6 +964,7 @@ class BarStartCandidateCommitNode(BaseNode):
         # against the genuinely next candidates further ahead -- silently
         # re-"committing" the same bar every tick forever with no progress.
         eligible = self._exclude_already_committed(candidates, committed)
+        eligible = self._prefer_bar_length_plausible(eligible, committed, blackboard)
         best = self._best_candidate(eligible)
 
         report = {
@@ -1068,6 +1090,29 @@ class BarStartCandidateCommitNode(BaseNode):
             candidate for candidate in candidates
             if all(abs(candidate["time"] - existing) > self.duplicate_tolerance_sec for existing in committed)
         ]
+
+    def _prefer_bar_length_plausible(
+        self, candidates: list[dict], committed: list[float], blackboard: Blackboard
+    ) -> list[dict]:
+        if not committed or not candidates:
+            return candidates
+        expected = self._expected_bar_duration(blackboard)
+        if not expected or expected <= 0:
+            return candidates
+        previous = committed[-1]
+        min_gap = expected * self.min_bar_gap_ratio
+        plausible = [c for c in candidates if (c["time"] - previous) >= min_gap]
+        return plausible if plausible else candidates
+
+    def _expected_bar_duration(self, blackboard: Blackboard) -> float | None:
+        downbeats = _v1_reference_downbeats(blackboard)
+        if len(downbeats) < 2:
+            return None
+        intervals = np.diff(downbeats)
+        intervals = intervals[intervals > 0.05]
+        if len(intervals) == 0:
+            return None
+        return float(np.median(intervals))
 
     def _append_unique(self, committed: list[float], time_sec: float) -> list[float]:
         if all(abs(float(existing) - float(time_sec)) > self.duplicate_tolerance_sec for existing in committed):
