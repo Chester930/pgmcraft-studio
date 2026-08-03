@@ -3233,6 +3233,96 @@ class GroovePatternPhaseDecoderNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class BarGridSanityPrunerNode(BaseNode):
+    """
+    Pass 170: 小節網格合理性過濾與 Ghost 小節合併 (BarGridSanityPrunerNode)
+
+    問題根源：
+    Pass 168 TwoWayAnchorBacktraceNode 修復 105 處切分搶拍後，部分修復點留下超短「Ghost 殘片小節」
+    (duration < 0.6 * global_median，約 0.36s)，這些殘片造成相鄰 BPM 跳動超過 35%，
+    拉低 CommercialBeatQualityNode 評分至 70.2 (NEEDS_MANUAL_EDIT)。
+
+    修復策略：
+    1. 計算全曲 global_median 小節步距。
+    2. 掃描所有小節，若 duration < 0.6 * global_median，判定為 Ghost 殘片。
+    3. 將 Ghost 殘片起始時間點標記刪除，前一個小節自動延伸覆蓋該殘片區段。
+    4. 重新整理後輸出乾淨的小節網格，供下游節點使用。
+    """
+    optional_keys = ["committed_bar_starts"]
+    output_keys = ["committed_bar_starts", "bar_grid_sanity_report"]
+
+    GHOST_RATIO = 0.6  # 低於此比例 * global_median 視為 ghost 殘片
+
+    def __init__(self):
+        super().__init__("BarGridSanityPrunerNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        raw_bars = blackboard.get_val("committed_bar_starts", [])
+        if len(raw_bars) < 4:
+            return NodeStatus.SUCCESS
+
+        # 提取所有時間點
+        times = []
+        for b in raw_bars:
+            if isinstance(b, dict):
+                times.append(float(b.get("time", 0.0)))
+            else:
+                times.append(float(b))
+        times = sorted(times)
+
+        diffs = np.diff(times)
+        if len(diffs) == 0:
+            return NodeStatus.SUCCESS
+
+        global_median = float(np.median(diffs))
+        ghost_threshold = self.GHOST_RATIO * global_median
+
+        # 找出所有 ghost 殘片索引（duration < threshold）
+        ghost_indices = set()
+        for i in range(len(diffs)):
+            if diffs[i] < ghost_threshold:
+                # 標記這個「太短的間距」的後一個拍點為 ghost（應被刪除）
+                ghost_indices.add(i + 1)
+
+        if not ghost_indices:
+            blackboard.set_val("bar_grid_sanity_report", {"pruned": 0, "ghost_threshold": ghost_threshold})
+            return NodeStatus.SUCCESS
+
+        # 重建乾淨的時間列表，跳過 ghost 索引
+        clean_times = [t for i, t in enumerate(times) if i not in ghost_indices]
+
+        # 重建對應的 committed_bar_starts（保留 dict 結構）
+        clean_bars = []
+        clean_idx = 0
+        for i, b in enumerate(raw_bars):
+            if i in ghost_indices:
+                continue
+            if isinstance(b, dict):
+                item = dict(b)
+                if clean_idx < len(clean_times):
+                    item["time"] = clean_times[clean_idx]
+                item["ghost_pruned_neighbor"] = True
+                clean_bars.append(item)
+            else:
+                if clean_idx < len(clean_times):
+                    clean_bars.append(clean_times[clean_idx])
+                else:
+                    clean_bars.append(b)
+            clean_idx += 1
+
+        blackboard.set_val("committed_bar_starts", clean_bars)
+        print(
+            f"[{self.name}] 🧹 Ghost 小節清理完畢！"
+            f"移除 {len(ghost_indices)} 個 Ghost 殘片小節 "
+            f"(threshold={ghost_threshold:.3f}s, global_median={global_median:.3f}s)。"
+        )
+        blackboard.set_val(
+            "bar_grid_sanity_report",
+            {"pruned": len(ghost_indices), "ghost_threshold": ghost_threshold, "global_median": global_median},
+        )
+        return NodeStatus.SUCCESS
+
+
 def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None):
     """Return whether v2's grid is complete enough to adopt as the main
     output.
@@ -3400,6 +3490,8 @@ class FullSongBarStartLoopNode(BaseNode):
         TwoWayAnchorBacktraceNode().execute(blackboard)
         # Pass 169: 執行鼓型拍位解碼與雙聲部和弦鎖定，修復重音不在第 1 拍 (反拍/雷鬼) 的相位位移
         GroovePatternPhaseDecoderNode().execute(blackboard)
+        # Pass 170: 過濾 Ghost 殘片小節 (duration < 0.6 * global_median)，消除 BPM 跳動超過 35% 問題
+        BarGridSanityPrunerNode().execute(blackboard)
 
         final = self._normalize(blackboard.get_val("committed_bar_starts"))
         blackboard.set_val("full_song_loop_report", {
