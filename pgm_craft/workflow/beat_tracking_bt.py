@@ -635,8 +635,24 @@ class BeatFusionArbitratorNode(BaseNode):
         all_times = np.union1d(timestamps_a, timestamps_b)
         all_times = np.sort(all_times)
 
+        # Pass 163: 讀取 v1 網格作為速度慣性約束參考
+        v1_grid = blackboard.get_val("v1_reference_beat_grid")
+        if v1_grid is not None and len(v1_grid) > 0:
+            grid_arr = np.asarray(v1_grid)
+            if grid_arr.ndim == 2 and grid_arr.shape[1] >= 2:
+                down_mask = grid_arr[:, 1] == 1
+                v1_beats = grid_arr[down_mask, 0] if np.any(down_mask) else grid_arr[:, 0]
+            else:
+                v1_beats = grid_arr.reshape(-1)
+        else:
+            v1_beats = None
+
         # 簡單高保真融合演算法：以 A 軌的時間軸為基本骨架，在 A 軌能量過低時補入 B 軌
         final_beats_list = []
+        track_b_spans = []
+        current_span_start = None
+        current_span_count = 0
+
         for row in beats_a:
             t, label = float(row[0]), int(row[1])
             start_sample = int(max(0, (t - 0.1) * sr))
@@ -644,16 +660,27 @@ class BeatFusionArbitratorNode(BaseNode):
             segment_rms = np.sqrt(np.mean(y_rhythm[start_sample:end_sample] ** 2)) if end_sample > start_sample else 0.0
 
             if segment_rms < self.energy_threshold:
+                if current_span_start is None:
+                    current_span_start = t
+                current_span_count += 1
+
                 # 鼓軌在此時間點靜音 (Intro/Breakdown)：開啟 Tempo Inertia 速度慣性引擎
-                # 優先拿 B 軌最近拍點，但若 B 軌拍點與上一拍步距異常 (<0.3s)，改採前段穩定步距等速內插
                 idx_b = np.argmin(np.abs(timestamps_b - t))
                 t_candidate = float(beats_b[idx_b, 0])
                 label_candidate = int(beats_b[idx_b, 1])
 
-                if len(final_beats_list) >= 2:
-                    last_interval = final_beats_list[-1][0] - final_beats_list[-2][0]
-                else:
-                    last_interval = 0.5  # 預設 120 BPM
+                # Pass 163: 優先從 v1 網格獲取該區間的真實步距，若無則降級至既有前 2 拍步距
+                last_interval = None
+                if v1_beats is not None and len(v1_beats) > 1:
+                    near_v1 = v1_beats[(v1_beats >= t - 3.0) & (v1_beats <= t + 3.0)]
+                    if len(near_v1) >= 2:
+                        last_interval = float(np.median(np.diff(near_v1))) / 4.0  # downbeat 間距轉為單拍間距
+
+                if last_interval is None or last_interval <= 0:
+                    if len(final_beats_list) >= 2:
+                        last_interval = final_beats_list[-1][0] - final_beats_list[-2][0]
+                    else:
+                        last_interval = 0.5  # 預設 120 BPM
 
                 # 若選出的 B 軌拍點與上一拍時間過近 (< 0.7 * last_interval) 或過遠，使用穩定慣性內插
                 if final_beats_list and (t_candidate - final_beats_list[-1][0] < 0.7 * last_interval or t_candidate - final_beats_list[-1][0] > 1.4 * last_interval):
@@ -666,8 +693,27 @@ class BeatFusionArbitratorNode(BaseNode):
                     final_beats_list.append([t_candidate, label_candidate])
                     switched_to_b += 1
                     continue
+            else:
+                if current_span_start is not None:
+                    track_b_spans.append({
+                        "start_time": round(current_span_start, 3),
+                        "end_time": round(t, 3),
+                        "beat_count": current_span_count,
+                        "reason": "low_rhythm_energy"
+                    })
+                    current_span_start = None
+                    current_span_count = 0
+
             final_beats_list.append([t, label])
             used_a += 1
+
+        if current_span_start is not None:
+            track_b_spans.append({
+                "start_time": round(current_span_start, 3),
+                "end_time": round(beats_a[-1][0], 3),
+                "beat_count": current_span_count,
+                "reason": "low_rhythm_energy"
+            })
 
         # 依時間升序排序
         final_beats_list.sort(key=lambda x: x[0])
@@ -690,7 +736,8 @@ class BeatFusionArbitratorNode(BaseNode):
             "switched_to_track_b_count": switched_to_b,
             "conf_a": conf_a,
             "conf_b": conf_b,
-            "total_fused_beats": len(final_beats_arr)
+            "total_fused_beats": len(final_beats_arr),
+            "track_b_spans": track_b_spans,  # Pass 163: 新增 B 軌接管時間軸區段明細
         }
         blackboard.set_val("beat_fusion_report", report)
 
