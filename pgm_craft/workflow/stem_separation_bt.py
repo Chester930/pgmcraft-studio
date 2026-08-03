@@ -762,12 +762,13 @@ class StrictStemDirectoryGuardNode(BaseNode):
     WHITELIST_MAP = {
         "": {"no_vocals.wav", "instrumental.wav"},  # stems/ 根目錄
         "vocals": {"vocals.wav", "lead_vocal.wav", "backing_vocals.wav", "vocals_debreathed.wav", "breath_noises.wav"},
-        "drums": {"drums.wav", "kick.wav", "snare.wav", "hihat.wav"},
+        "drums": {"drums.wav", "kick.wav", "snare.wav", "hihat_cymbals.wav"},  # Pass 159: hihat_cymbals.wav 才是 SubSplitDrumsNode 實際產出的檔名
         "bass": {"bass.wav", "electric_bass.wav", "synth_bass_808.wav"},
         "guitars": {"guitar.wav", "acoustic_guitar.wav", "electric_guitar.wav", "guitar_left.wav", "guitar_right.wav"},
         "pianos": {"piano.wav", "piano_treble_hand.wav", "piano_bass_hand.wav", "electric_rhodes_piano.wav"},
         "strings": {"strings.wav", "violins_viola.wav", "cello_double_bass.wav", "pizzicato_strings.wav", "bowed_legato_strings.wav"},
-        "events": {"glass.wav", "applause.wav", "cheering.wav", "screaming.wav", "speech_subtitles.srt"}
+        "events": {"glass.wav", "applause.wav", "cheering.wav", "screaming.wav", "speech_subtitles.srt",
+                   "count_in_voice.wav", "claps_snaps.wav"}  # Pass 159: 補上 ExtractCountInVoiceNode / ExtractClapSnapEventsNode 的產出
     }
 
     # 根目錄搬移對應表 (檔名 -> 子資料夾)
