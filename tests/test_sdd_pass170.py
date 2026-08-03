@@ -15,6 +15,7 @@ import pytest
 import numpy as np
 
 from pgm_craft.workflow.module3_barstart_v2_bt import BarGridSanityPrunerNode
+from pgm_craft.workflow.audio_nodes import MeasureMapNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
 
@@ -58,3 +59,34 @@ class TestSDDPass170:
             diffs = np.diff(sorted(fixed_times))
             median = float(np.median(diffs))
             assert all(d >= 0.6 * median for d in diffs), f"仍有 ghost 殘片存在: {[d for d in diffs if d < 0.6 * median]}"
+
+    def test_measure_map_node_prune_ghost_downbeats(self):
+        """
+        Pass 170 fix: MeasureMapNode._prune_ghost_downbeats 應移除相鄰間距只有 1 個 beat 的 ghost downbeat。
+        模擬：正常 4-beat 小節中插入 5 個 ghost downbeat（間距只有 1），
+        驗證 build_measure_map 不產生 beat_count == 1 的異常小節。
+        """
+        node = MeasureMapNode()
+
+        # 建立 beats 序列：每小節 4 拍 (beat 1,2,3,4)，在第 4、8 個小節後各插一個 ghost downbeat (beat=1)
+        beat_interval = 0.363  # 約 165 BPM
+        beats = []
+        t = 0.405
+        measure_count = 12
+        for m in range(measure_count):
+            for b in range(1, 5):
+                beats.append([t, b])
+                t += beat_interval
+            # 在第 3 和第 7 個小節後各插入一個 ghost downbeat
+            if m in (3, 7):
+                beats.append([t, 1])   # ghost downbeat（間距只有 0 拍）
+                t += beat_interval * 0.3  # 超短間距
+
+        beats_arr = np.array(beats)
+        beat_validation = {"status": "PASS", "warnings": []}
+
+        measure_map, status, warnings = node.build_measure_map(beats_arr, beat_validation, {})
+
+        # 不應有 beat_count == 1 的 ghost 小節
+        ghost_measures = [m for m in measure_map if m.get("beat_count", 4) == 1]
+        assert len(ghost_measures) == 0, f"仍有 {len(ghost_measures)} 個 ghost 1-beat 小節存在！"
