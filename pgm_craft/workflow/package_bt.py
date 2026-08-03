@@ -113,8 +113,11 @@ class DAWPresetsPackagerNode(BaseNode):
                     for file in files:
                         if file.endswith(('.als', '.rpp', '.csv', '.mid', '.txt', '.md')) and file != "daw_presets_pack.zip":
                             fp = os.path.join(root, file)
-                            arcname = os.path.relpath(fp, output_dir)
-                            zipf.write(fp, arcname)
+                            arcname = os.path.relpath(fp, output_dir).replace("\\", "/")
+                            zinfo = zipfile.ZipInfo.from_file(fp, arcname)
+                            zinfo.flag_bits |= 0x800  # Pass 167: UTF-8 Filename Encoding Flag
+                            with open(fp, "rb") as f_in:
+                                zipf.writestr(zinfo, f_in.read())
 
             blackboard.set_val("daw_presets_pack_path", zip_path)
             outputs = blackboard.get_val("outputs", {})
