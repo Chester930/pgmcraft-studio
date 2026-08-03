@@ -123,7 +123,7 @@ def _score_beat_grid_quality(beats, kick_anchors=None, sections=None, alignment_
     anchor_alignment = float(np.mean(anchor_scores)) if anchor_scores else 0.75
 
     section_scores = []
-    section_values = [] if sections is None else sections
+    section_values = sections if (sections is not None and len(sections) > 0) else [{"name": "Main", "start_time": 0.0}]  # Pass 161: Sections 為空時 Safe Fallback 至全曲 Main 樂段
     for sec in section_values:
         if not isinstance(sec, dict):
             continue
@@ -570,10 +570,12 @@ class BeatFusionArbitratorNode(BaseNode):
         if beats_a is None or len(beats_a) == 0:
             print(f"[{self.name}] ⚠️ A 軌節拍缺失，直接採用 B 軌。")
             blackboard.set_val("beats", beats_b)
+            blackboard.set_val("refined_beats", beats_b)
             return NodeStatus.SUCCESS
         if beats_b is None or len(beats_b) == 0:
             print(f"[{self.name}] ⚠️ B 軌節拍缺失，直接採用 A 軌。")
             blackboard.set_val("beats", beats_a)
+            blackboard.set_val("refined_beats", beats_a)
             return NodeStatus.SUCCESS
         if len(beats_a) < 4 and len(beats_b) >= 4:
             print(f"[{self.name}] ⚠️ A 軌節拍過少 ({len(beats_a)} 拍)，直接採用 B 軌完整節拍。")
@@ -617,6 +619,7 @@ class BeatFusionArbitratorNode(BaseNode):
         if y_rhythm is None:
             selected_beats = beats_a if conf_a >= conf_b else beats_b
             blackboard.set_val("beats", selected_beats)
+            blackboard.set_val("refined_beats", selected_beats)  # Pass 162: 雙軌信心度選出結果同步至 refined_beats
             return NodeStatus.SUCCESS
 
         # 融合計算
@@ -680,6 +683,7 @@ class BeatFusionArbitratorNode(BaseNode):
 
         final_beats_arr = np.array(sanitized_beats)
         blackboard.set_val("beats", final_beats_arr)
+        blackboard.set_val("refined_beats", final_beats_arr)  # Pass 162: 雙軌融合結果同步至 refined_beats
 
         report = {
             "used_track_a_count": used_a,
