@@ -3150,6 +3150,89 @@ class TwoWayAnchorBacktraceNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+class GroovePatternPhaseDecoderNode(BaseNode):
+    """
+    Pass 169: 鼓型拍位解碼與雙聲部和弦鎖定節點 (GroovePatternPhaseDecoderNode)
+
+    演算法核心：
+    1. 當重音不在第 1 拍（如反拍/雷鬼/切分重音，或小鼓打在第 2、4 拍）時，
+       讀取 chord_progression 的和弦變換點與 bass_anchors 低音根音作為第 1 拍物理鎖定。
+    2. 計算重音點 T_accent 相對於和弦切換點 T_chord 的相對拍位 Phase Offset。
+    3. 若 Phase 相對為第 2 拍或第 4 拍，不把重音點當第 1 拍，而是用 T_accent - (Phase - 1) * BeatInterval 反推真正的第 1 拍 (Downbeat)！
+    """
+    optional_keys = ["committed_bar_starts", "chord_progression", "bass_anchors", "beats"]
+    output_keys = ["committed_bar_starts", "groove_phase_report"]
+
+    def __init__(self):
+        super().__init__("GroovePatternPhaseDecoderNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        raw_bars = blackboard.get_val("committed_bar_starts", [])
+        chords = blackboard.get_val("chord_progression", [])
+        bass_anchors = blackboard.get_val("bass_anchors", [])
+
+        if len(raw_bars) < 3:
+            return NodeStatus.SUCCESS
+
+        times = []
+        for b in raw_bars:
+            if isinstance(b, dict):
+                times.append(float(b.get("time", 0.0)))
+            else:
+                times.append(float(b))
+
+        times = sorted(times)
+        diffs = np.diff(times)
+        if len(diffs) == 0:
+            return NodeStatus.SUCCESS
+
+        median_step = float(np.median(diffs))
+        beat_interval = median_step / 4.0 if median_step > 0 else 0.363  # 預設 4/4 拍
+
+        # 1. 提取 Bass 根音與和弦變換時間點
+        chord_change_times = []
+        for c in chords:
+            if isinstance(c, dict) and "time" in c:
+                chord_change_times.append(float(c["time"]))
+
+        phase_corrections = 0
+        adjusted_times = list(times)
+
+        # 2. 檢測非 1 拍重音與反拍 (Off-Beat Phase Shift)
+        for i, curr_t in enumerate(adjusted_times):
+            # 尋找最近的和弦切換點或 Bass 根音
+            nearest_chord_t = None
+            if chord_change_times:
+                nearest_chord_t = min(chord_change_times, key=lambda ct: abs(ct - curr_t))
+
+            if nearest_chord_t is not None and abs(nearest_chord_t - curr_t) > 0.05:
+                # 計算相對拍數偏移
+                phase_offset = round((curr_t - nearest_chord_t) / beat_interval)
+                # 若偏離 1 拍或 3 拍 (表示 curr_t 其實落在第 2 拍或第 4 拍反拍)
+                if phase_offset in (1, 3):
+                    inferred_downbeat = round(curr_t - phase_offset * beat_interval, 4)
+                    if abs(inferred_downbeat - nearest_chord_t) < 0.15:
+                        adjusted_times[i] = inferred_downbeat
+                        phase_corrections += 1
+
+        if phase_corrections > 0:
+            new_committed = []
+            for i, t in enumerate(adjusted_times):
+                if i < len(raw_bars) and isinstance(raw_bars[i], dict):
+                    item = dict(raw_bars[i])
+                    item["time"] = t
+                    item["groove_phase_decoded"] = True
+                    new_committed.append(item)
+                else:
+                    new_committed.append(t)
+
+            blackboard.set_val("committed_bar_starts", new_committed)
+            print(f"[{self.name}] 🎯 鼓型拍位解碼完成！成功修復 {phase_corrections} 處非第 1 拍重音 / 反拍相位位移。")
+
+        blackboard.set_val("groove_phase_report", {"phase_corrections": phase_corrections, "beat_interval": beat_interval})
+        return NodeStatus.SUCCESS
+
+
 def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None):
     """Return whether v2's grid is complete enough to adopt as the main
     output.
@@ -3315,6 +3398,8 @@ class FullSongBarStartLoopNode(BaseNode):
 
         # Pass 168: 執行雙向確信錨點跳過與拍位反推，修復切分音搶拍導致的第 1 拍位移
         TwoWayAnchorBacktraceNode().execute(blackboard)
+        # Pass 169: 執行鼓型拍位解碼與雙聲部和弦鎖定，修復重音不在第 1 拍 (反拍/雷鬼) 的相位位移
+        GroovePatternPhaseDecoderNode().execute(blackboard)
 
         final = self._normalize(blackboard.get_val("committed_bar_starts"))
         blackboard.set_val("full_song_loop_report", {
