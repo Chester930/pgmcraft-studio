@@ -322,15 +322,23 @@ class DownbeatAlignedSectionNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         sections = blackboard.get_val("sections")
-        measure_map = blackboard.get_val("measure_map")
+        measure_map = blackboard.get_val("measure_map", [])
 
-        if not sections or not measure_map:
+        # Pass 165: 若 sections 為空，自動退回預設全曲 Main 樂段 Safe Fallback
+        if not sections:
+            m_start = measure_map[0].get("start_time", 0.0) if measure_map else 0.0
+            m_end = measure_map[-1].get("end_time", m_start + 10.0) if measure_map else 10.0
+            sections = [{"name": "Main", "start_time": m_start, "end_time": m_end, "measure": 1}]
+
+        if not measure_map:
+            blackboard.set_val("sections", sections)
             return NodeStatus.SUCCESS
 
         downbeat_times = [float(m.get("start_time", 0.0)) for m in measure_map]
         if measure_map and "end_time" in measure_map[-1]:
             downbeat_times.append(float(measure_map[-1]["end_time"]))
         if not downbeat_times:
+            blackboard.set_val("sections", sections)
             return NodeStatus.SUCCESS
 
         aligned_sections = []
@@ -339,8 +347,9 @@ class DownbeatAlignedSectionNode(BaseNode):
             s_t = float(sec_item.get("start_time", 0.0))
             e_t = float(sec_item.get("end_time", s_t + 2.0))
 
-            # 尋找最近的 Downbeat 時間
-            snap_s = min(downbeat_times, key=lambda x: abs(x - s_t))
+            # 尋找最近的 Downbeat 時間與對應小節號
+            closest_m = min(measure_map, key=lambda m: abs(float(m.get("start_time", 0.0)) - s_t))
+            snap_s = float(closest_m.get("start_time", s_t))
             snap_e = min(downbeat_times, key=lambda x: abs(x - e_t))
 
             # 確保 end_time 大於 start_time
@@ -349,10 +358,11 @@ class DownbeatAlignedSectionNode(BaseNode):
 
             sec_item["start_time"] = snap_s
             sec_item["end_time"] = snap_e
+            sec_item["measure"] = int(closest_m.get("measure", 1))  # Pass 165: 同步小節號碼
             aligned_sections.append(sec_item)
 
         blackboard.set_val("sections", aligned_sections)
-        print(f"[{self.name}] 🎯 樂段對齊衛兵執行完畢，已將 {len(aligned_sections)} 個樂段強行對齊小節第 1 拍 (Downbeat)。")
+        print(f"[{self.name}] 🎯 樂段對齊衛兵執行完畢，已將 {len(aligned_sections)} 個樂段強行對齊小節第 1 拍 (Downbeat) 與小節號。")
         return NodeStatus.SUCCESS
 
 
