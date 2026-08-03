@@ -1345,6 +1345,8 @@ def build_module3_export_tree() -> SequenceNode:
 
 def build_module3_pipeline_tree() -> SequenceNode:
     """Builds the Module 3 chord/click test project pipeline."""
+    from pgm_craft.workflow.module3_barstart_v2_bt import TwoWayAnchorBacktraceNode
+
     return SequenceNode("Module3BeatClickRoot", [
         build_input_acquisition_tree(),
         build_audio_quality_tree(),
@@ -1361,6 +1363,7 @@ def build_module3_pipeline_tree() -> SequenceNode:
         build_music_analysis_tree(),
         SubdivisionGridNode(),
         SyncopationClassificationNode(),
+        TwoWayAnchorBacktraceNode(),
         Module3BarStartV2MergeNode(),
         build_module3_export_tree(),
     ])
