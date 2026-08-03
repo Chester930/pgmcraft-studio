@@ -3242,30 +3242,7 @@ class FullSongBarStartLoopNode(BaseNode):
         return ManualCommittedBarStartsSeedNode()._normalize_times(raw)
 
 
-def build_module3_barstart_v2_pipeline_tree() -> SequenceNode:
-    return SequenceNode("Module3BarStartClickRoot", [
-        build_input_acquisition_tree(),
-        build_audio_quality_tree(),
-        OptionalStemSeparationNode(),
-        MeterProfileNode(),
-        ManualCommittedBarStartsSeedNode(),
-        BassEvidenceExtractNode(),
-        AnchorTransientSnapNode(
-            anchor_key="bass_anchors",
-            stem_keys=("sub_bass_808", "electric_bass", "bass"),
-            stems_dir_fallbacks=("bass/synth_bass_808.wav", "bass/electric_bass.wav", "bass/bass.wav"),
-        ),
-        DrumBassOnsetCandidateExtractNode(),
-        ChordMelodyOnsetSplitNode(),
-        VocalMelodyEvidenceExtractNode(),
-        FullSongBarStartLoopNode(),
-        BarGridContinuityRepairNode(),
-        # Run twice: correcting one outlier interval shifts the local median
-        # for its neighbors, occasionally surfacing a residual outlier a
-        # single pass would miss. Converges quickly (empirically 0 further
-        # corrections by the 3rd pass on realistic jitter).
-        BarStartTempoSmoothingNode(),
-        BarStartTempoSmoothingNode(),
-        MeterAwareBeatGridNode(),
-        build_module3_barstart_v2_export_tree(),
-    ])
+def build_module3_barstart_v2_pipeline_tree() -> BaseNode:
+    """Pass 166: 委派呼叫主樹 build_module3_pipeline_tree()，確保獲得 Stage 3 完整的 BeatNet / v1 網格與融合資料。"""
+    from pgm_craft.workflow.module3_bt import build_module3_pipeline_tree
+    return build_module3_pipeline_tree()

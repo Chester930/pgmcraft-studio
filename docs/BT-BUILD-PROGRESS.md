@@ -383,6 +383,7 @@ Sequence [StemSeparationRoot]
 | **Pass 163** | **升級 BeatFusionArbitratorNode 仲裁時間軸記錄與 v1 網格速度慣性約束：(A) `beat_fusion_report` 新增 `track_b_spans` 時間軸明細，記錄 B 軌切換段落與原因；(B) 速度慣性內插時優先引用 Pass 156/157 `v1_reference_beat_grid` 的真實步距，避免等速假設累積誤差；新增 `tests/test_sdd_pass163.py`（2 項）驗證** | 776 | ✅ 2026-08-03 |
 | **Pass 164** | **升級 GridConstrainedChordNode 支援半小節（2拍）動態雙和弦對齊平滑：(A) 小節按前半段與後半段分別多數決採樣；(B) 當前後半小節出現顯著異和弦時，輸出 2 個半小節和弦事件（`sub_bar: 1`, `sub_bar: 2`），完美保留流行樂半小節和弦進行；新增 `tests/test_sdd_pass164.py`（2 項）驗證** | 778 | ✅ 2026-08-03 |
 | **Pass 165** | **升級 DownbeatAlignedSectionNode 樂段小節號雙向對齊與 Safe Fallback：(A) 樂段對齊至 Downbeat 時同步更新 `start_time` 與 `measure` 小節號，確保 DAW 導出（MIDI Markers/CSV）拿到雙向對齊資料；(B) 當 `sections` 為空時 Safe Fallback 至預設全曲 Main 樂段；新增 `tests/test_sdd_pass165.py`（2 項）驗證** | 780 | ✅ 2026-08-03 |
+| **Pass 166** | **清理孤立死路徑 Tree A (build_module3_barstart_v2_pipeline_tree) 委派化：(A) 將孤立繞過 Stage 3 的 Tree A 簡化為委派呼叫包含完整 BeatNet/v1 網格的主樹 `build_module3_pipeline_tree()`；(B) 保持 `target_stage="module3_barstart_v2"` API 的向下相容性；新增 `tests/test_sdd_pass166.py`（2 項）驗證** | 782 | ✅ 2026-08-03 |
 | **聯合測試** | **全套 6 大領域 21 大 BT 狀態機與 Pass 88~102 百大 SDD 滿貫總驗證** | **263** | ✅ **100% 通過** |
 
 ---
@@ -452,6 +453,7 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 
 | 日期 | 變更說明 |
 |---|---|
+| 2026-08-03 | 完成 **Pass 166: 清理孤立死路徑 Tree A (build_module3_barstart_v2_pipeline_tree) 委派化**：<br>1. **背景**：原 `build_module3_barstart_v2_pipeline_tree()` (Tree A) 屬於獨立測試樹，因繞過 Stage 3 Beat Tracking 導致缺乏 `beats` 與 `v1_reference_beat_grid` 資料，Pass 156-163 引入的優化機制無法運作<br>2. **修復**：(a) 將 Tree A 簡化為委派呼叫包含完整 Stage 3 與 MergeNode 的主樹 `build_module3_pipeline_tree()`；(b) 完整保留 `builder.py` 傳入 `target_stage="module3_barstart_v2"` 的向下相容性<br>3. 新增 `tests/test_sdd_pass166.py` (2 項) 驗證 Tree A 委派與 Builder API 向下相容，6 項測試（含 Pass 164-165）100% 通過 |
 | 2026-08-03 | 完成 **Pass 165: 升級 DownbeatAlignedSectionNode 樂段小節號雙向對齊與 Safe Fallback**：<br>1. **背景**：原 `DownbeatAlignedSectionNode` 在對齊 Downbeat 時僅更新了 `start_time`，未同步改寫 `sec["measure"]` 造成 1 拍位移風險；且當 `sections` 為空時直接 skip 未做退回<br>2. **修復**：(a) 在對齊每個樂段時，同步更新 `sec["start_time"]` 與 `sec["measure"]` 小節號；(b) 當 `sections` 為空時 Safe Fallback 自動建立全曲 Main 樂段並完成對齊寫回 Blackboard<br>3. 新增 `tests/test_sdd_pass165.py` (2 項) 驗證小節號雙向同步與空 sections Safe Fallback，4 項測試（含 Pass 164）100% 通過 |
 | 2026-08-03 | 完成 **Pass 164: 升級 GridConstrainedChordNode 支援半小節（2拍）動態雙和弦對齊平滑**：<br>1. **背景**：原 `GridConstrainedChordNode` 強制採用全小節單一多數決，會將流行樂曲中半小節（2 拍）切換一次和弦的樂理進行硬性抹平<br>2. **修復**：將小節切分為前後半段獨立採樣多數決。若前後半段出現顯著不同和弦，拆分為 2 個半小節和弦事件（`sub_bar: 1` 與 `sub_bar: 2`）；同和弦則自動合併為全小節和弦事件（`sub_bar: 0`）<br>3. 新增 `tests/test_sdd_pass164.py` (2 項) 驗證單和弦全小節合併與雙和弦半小節拆分對齊，4 項測試（含 Pass 163）100% 通過 |
 | 2026-08-03 | 完成 **Pass 163: 升級 BeatFusionArbitratorNode 仲裁時間軸記錄與 v1 網格速度慣性約束**：<br>1. **背景**：原 `beat_fusion_report` 僅記錄採納拍數總計，未記載時間區段；且無鼓段落進行速度慣性內插時僅依據前 2 拍等速假設，遇到變速曲目易發散<br>2. **修復**：(a) `beat_fusion_report` 新增 `track_b_spans` 陣列，詳細記錄由 B 軌接管的時間區段與原因；(b) 速度慣性內插優先自 `v1_reference_beat_grid` 提取該時間區間之真實步距約束<br>3. 新增 `tests/test_sdd_pass163.py` (2 項) 驗證時間軸明細與 v1 網格速度慣性導引，6 項測試（含 Pass 160-162）100% 通過 |
