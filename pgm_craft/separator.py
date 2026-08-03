@@ -476,11 +476,11 @@ class CascadedStemSeparator:
                 sf.write(no_guitar_path, mix.astype(np.float32), sr_val)
                 print(f"[Demucs Guitar Specialized] ✅ 吉他專項分離完成 (HTDemucs 6s + Guard Adapter)")
             else:
-                shutil.copyfile(target_input, no_guitar_path)
+                shutil.copyfile(standardized_input, no_guitar_path)  # Pass 159: target_input 未定義，改為 standardized_input
         except Exception as e:
             print(f"[Guitar Demucs Fallback] {e} — 降級為複製伴奏")
-            shutil.copyfile(target_input, guitar_path)
-            shutil.copyfile(target_input, no_guitar_path)
+            shutil.copyfile(standardized_input, guitar_path)     # Pass 159: 同上
+            shutil.copyfile(standardized_input, no_guitar_path)  # Pass 159: 同上
         return guitar_path, no_guitar_path
 
     def separate_piano(self, audio_path, output_dir, is_already_instrumental=False):
