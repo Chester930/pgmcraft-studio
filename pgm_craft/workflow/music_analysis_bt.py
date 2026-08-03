@@ -182,31 +182,55 @@ class GridConstrainedChordNode(BaseNode):
         smoothed_chords = []
 
         if measure_map:
-            # 結合 measure_map 小節進行多數決和弦 Smoothing
+            # 結合 measure_map 小節與半小節（2 拍）動態雙和弦 Smoothing
             for m in measure_map:
                 m_num = m.get("measure", 1)
                 m_start = m.get("start_time", 0.0)
                 m_end = m.get("end_time", 0.0)
+                m_mid = m_start + (m_end - m_start) / 2.0
 
-                # 收集落在此小節範圍內的所有和弦片段
-                matched_chords = [
+                # 前半小節與後半小節分別採樣
+                chords_h1 = [
                     c.get("chord", "N/A") for c in chords
-                    if c.get("start_time", 0.0) < m_end and c.get("end_time", 0.0) > m_start
+                    if c.get("start_time", 0.0) < m_mid and c.get("end_time", 0.0) > m_start
+                ]
+                chords_h2 = [
+                    c.get("chord", "N/A") for c in chords
+                    if c.get("start_time", 0.0) < m_end and c.get("end_time", 0.0) > m_mid
                 ]
 
-                if matched_chords:
-                    # 採多數決作為小節主要和弦
-                    main_chord = max(set(matched_chords), key=matched_chords.count)
-                else:
-                    main_chord = "N/A"
+                main_h1 = max(set(chords_h1), key=chords_h1.count) if chords_h1 else "N/A"
+                main_h2 = max(set(chords_h2), key=chords_h2.count) if chords_h2 else "N/A"
 
-                smoothed_chords.append({
-                    "measure": m_num,
-                    "start_time": m_start,
-                    "end_time": m_end,
-                    "chord": main_chord,
-                    "is_grid_aligned": True
-                })
+                if main_h1 != "N/A" and main_h2 != "N/A" and main_h1 != main_h2:
+                    # 顯著半小節和弦切換：輸出 2 個半小節和弦事件
+                    smoothed_chords.append({
+                        "measure": m_num,
+                        "sub_bar": 1,
+                        "start_time": m_start,
+                        "end_time": m_mid,
+                        "chord": main_h1,
+                        "is_grid_aligned": True
+                    })
+                    smoothed_chords.append({
+                        "measure": m_num,
+                        "sub_bar": 2,
+                        "start_time": m_mid,
+                        "end_time": m_end,
+                        "chord": main_h2,
+                        "is_grid_aligned": True
+                    })
+                else:
+                    # 同和弦或單一和弦：合併為全小節和弦事件
+                    full_chord = main_h1 if main_h1 != "N/A" else main_h2
+                    smoothed_chords.append({
+                        "measure": m_num,
+                        "sub_bar": 0,
+                        "start_time": m_start,
+                        "end_time": m_end,
+                        "chord": full_chord,
+                        "is_grid_aligned": True
+                    })
         else:
             # 無 measure_map 時做基礎正規化
             for item in chords:
