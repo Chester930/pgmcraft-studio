@@ -1174,6 +1174,81 @@ def build_stem_separation_tree(separator: CascadedStemSeparator = None) -> BaseN
     ])
 
 
+
+def build_beat_stem_tree(separator: CascadedStemSeparator = None) -> BaseNode:
+    """節拍分析專用輕量分軌樹 (Beat-Analysis-Only Stem Separation).
+
+    相較於 build_stem_separation_tree()，此樹只跑節拍分析所需的最小音色集：
+      - 人聲（vocals）：detect → separate，不含和音細分 harmony_sub_branch
+      - 鼓（drums）：detect → separate → SubSplitDrums（kick/snare/hihat），不含 ExtractClapSnap
+      - 貝斯（bass）：detect → separate，不含 SubSplitBass / 808 細分
+      - 吉他 + 鋼琴：DetectGuitarPresence → PeelCoreTrioNode（同時分出 guitar + piano）
+
+    跳過的部分：
+      - Tier 2（Organ / Sub-Bass 808 / Glockenspiel）
+      - Tier 3（CLAP 語意探測 + PeelTier3 + Formant Guard）
+      - 和音細分（SeparateLeadAndBackingNode / VocalDeBreatheNode / ExtractCountInVoiceNode）
+      - ExtractClapSnapEventsNode
+      - SubSplitBassNode
+
+    輸出 Blackboard keys 與 build_stem_separation_tree() 相同子集，
+    保證 ChordMelodyOnsetSplitNode 能讀到 guitar.wav / piano.wav。
+
+    供使用者：
+      - OptionalStemSeparationNode(mode='beat_only')（節奏定位 tab）
+    注意：全自動管道 Stage 2 繼續使用 build_stem_separation_tree()，不受影響。
+    """
+    sep = separator or CascadedStemSeparator()
+
+    # 1. 人聲（不含和音細分）
+    vocals_branch = FallbackNode("BeatStemVocalsFallback", [
+        SequenceNode("BeatStemVocals", [
+            DetectVocalPresenceNode(threshold=0.25),
+            SeparateVocalsNode(sep),
+            # 刻意省略 harmony_sub_branch
+        ]),
+        SkipStemPassthroughNode("SkipBeatVocals"),
+    ])
+
+    # 2. 鼓組 + 二階細分（kick / snare / hihat），不含 ExtractClapSnap
+    drums_branch = FallbackNode("BeatStemDrumsFallback", [
+        SequenceNode("BeatStemDrums", [
+            DetectDrumsPresenceNode(threshold=0.25),
+            SeparateDrumsNode(sep),
+            SubSplitDrumsNode(sep),   # kick / snare / hihat — 節拍錨點必要
+            # 刻意省略 ExtractClapSnapEventsNode
+        ]),
+        SkipStemPassthroughNode("SkipBeatDrums"),
+    ])
+
+    # 3. 貝斯（不含 808 / electric 二階細分）
+    bass_branch = FallbackNode("BeatStemBassFallback", [
+        SequenceNode("BeatStemBass", [
+            DetectBassPresenceNode(threshold=0.25),
+            SeparateBassNode(sep),
+            # 刻意省略 SubSplitBassNode
+        ]),
+        SkipStemPassthroughNode("SkipBeatBass"),
+    ])
+
+    # 4. 吉他 + 鋼琴（PeelCoreTrioNode 一次分完；strings 可忽略）
+    guitar_piano_branch = FallbackNode("BeatStemGuitarPianoFallback", [
+        SequenceNode("BeatStemGuitarPiano", [
+            DetectGuitarPresenceNode(threshold=0.10),
+            PeelCoreTrioNode(sep),    # 同時產出 guitar.wav / piano.wav
+        ]),
+        SkipStemPassthroughNode("SkipBeatGuitarPiano"),
+    ])
+
+    return SequenceNode("BeatAnalysisStemRoot", [
+        EnsureStemsFolderNode(),
+        vocals_branch,
+        drums_branch,
+        bass_branch,
+        guitar_piano_branch,
+        StrictStemDirectoryGuardNode(),
+        RegisterStemsToBlackboardNode(),
+    ])
 class StemSeparationBTEngine:
     """Stage 2 Stem Separation BT Engine wrapper."""
 
