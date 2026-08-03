@@ -673,6 +673,10 @@ class MeasureMapNode(BaseNode):
         return sorted(rows, key=lambda item: item["time"])
 
     def _build_from_downbeats(self, beat_rows, downbeat_indexes, source="downbeat"):
+        # Pass 170 fix: 過濾相鄰 downbeat 間距過小的 ghost downbeat 索引
+        # 當兩個相鄰 downbeat 之間只有 1 個 beat (duration < 0.6 * common_step)，視為 ghost 重複 downbeat
+        downbeat_indexes = self._prune_ghost_downbeats(beat_rows, downbeat_indexes)
+
         common_length = self._common_measure_length(downbeat_indexes)
         measures = []
 
@@ -696,6 +700,40 @@ class MeasureMapNode(BaseNode):
             ))
 
         return measures
+
+    def _prune_ghost_downbeats(self, beat_rows, downbeat_indexes):
+        """
+        Pass 170: 過濾相鄰間距過小的重複 ghost downbeat 索引。
+        當兩個相鄰 downbeat 之間的 beat 數量 < 0.6 * common_step，視為 ghost，移除後一個 downbeat。
+        """
+        if len(downbeat_indexes) < 3:
+            return downbeat_indexes
+
+        # 計算相鄰 downbeat 之間的 beat 數量
+        gaps = [
+            downbeat_indexes[i + 1] - downbeat_indexes[i]
+            for i in range(len(downbeat_indexes) - 1)
+        ]
+        if not gaps:
+            return downbeat_indexes
+
+        import statistics
+        try:
+            common_step = statistics.median(gaps)
+        except Exception:
+            common_step = 4
+
+        ghost_threshold = 0.6 * common_step
+
+        pruned = [downbeat_indexes[0]]
+        for i in range(1, len(downbeat_indexes)):
+            gap = downbeat_indexes[i] - pruned[-1]
+            if gap >= ghost_threshold:
+                pruned.append(downbeat_indexes[i])
+            # 若 gap < threshold，此 downbeat 為 ghost，跳過
+
+        return pruned
+
 
     def _build_fallback_4beat(self, beat_rows):
         measures = []
