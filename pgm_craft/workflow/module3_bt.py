@@ -677,6 +677,20 @@ class SyncopationClassificationNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         onsets = blackboard.get_val("onset_events", []) or []
+        if not onsets:
+            # Pass 160: onset_events 為空時，自動整合既有已提取的重音 anchors，避免空轉
+            fallback_times = set()
+            for key in ("kick_anchors", "snare_anchors", "guitar_chord_anchors", "piano_chord_anchors"):
+                anchors = blackboard.get_val(key, [])
+                if anchors is not None:
+                    for a in anchors:
+                        t = a.get("time", a) if isinstance(a, dict) else a
+                        try:
+                            fallback_times.add(round(float(t), 4))
+                        except (ValueError, TypeError):
+                            pass
+            onsets = [{"time": t} for t in sorted(fallback_times)]
+
         subdivision_grid = blackboard.get_val("subdivision_grid", []) or []
         click_grid = blackboard.get_val("click_grid", []) or []
         events = []
