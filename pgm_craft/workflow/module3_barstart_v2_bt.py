@@ -429,17 +429,42 @@ class ReliableBarAnchorNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+def _v1_reference_downbeats(blackboard: Blackboard) -> list[float]:
+    """Shared helper: extract v1's own downbeat times from the
+    `v1_reference_beat_grid` blackboard key (see `V1GridEvidenceBarSearchNode`,
+    Pass 156). Used wherever a node would otherwise have to assume a constant
+    bar duration across a drum-sparse span -- v1's grid keeps tracking through
+    such spans via vocal/harmonic cues even though v2's evidence tiers cannot.
+    """
+    grid = blackboard.get_val("v1_reference_beat_grid")
+    if grid is None:
+        return []
+    try:
+        arr = np.asarray(grid, dtype=float)
+    except (TypeError, ValueError):
+        return []
+    if arr.ndim != 2 or arr.shape[1] < 2 or len(arr) == 0:
+        return []
+    return sorted(float(t) for t in arr[arr[:, 1] == 1, 0])
+
+
 class NoDrumPhaseCarryNode(BaseNode):
     """Carry the previous bar phase through a no-drum span as provisional bars.
 
     When a future drum anchor exists within the lookahead window, bars are
-    carried up to that anchor (unchanged behaviour). When no future anchor is
-    found at all -- e.g. a long ambient outro past the lookahead range -- v1's
-    `_inertia_fill` still produced a bounded constant-tempo extrapolation
-    instead of silently leaving that whole span without any click coverage.
-    This pass ports that fallback here, capped at `max_fallback_bars` and by
-    the audio's own duration when known, and tagged with a distinct status so
-    reviewers can tell it apart from an anchor-confirmed carry.
+    carried up to that anchor. When no future anchor is found at all -- e.g. a
+    long ambient outro past the lookahead range -- v1's `_inertia_fill` still
+    produced a bounded constant-tempo extrapolation instead of silently
+    leaving that whole span without any click coverage. This pass ports that
+    fallback here, capped at `max_fallback_bars` and by the audio's own
+    duration when known, and tagged with a distinct status so reviewers can
+    tell it apart from an anchor-confirmed carry.
+
+    Pass 157: both branches previously spaced provisional bars evenly using a
+    single global `bar_duration` -- a constant-tempo assumption across the
+    whole gap. When `v1_reference_beat_grid` (Pass 156) has real downbeats
+    inside the gap, those are used directly instead, since they reflect v1's
+    actual tempo-tracking rather than an equal-spacing guess.
     """
 
     optional_keys = [
@@ -471,26 +496,41 @@ class NoDrumPhaseCarryNode(BaseNode):
         provisional = []
         status = "NO_SPAN"
         used_fallback = False
+        used_v1_grid = False
 
         if previous is not None and bar_duration > 0:
             if next_anchor is not None:
-                current = previous + bar_duration
-                while current < next_anchor - self.tolerance_sec:
-                    provisional.append(round(current, 6))
-                    current += bar_duration
-                status = "CARRIED" if provisional else "NO_SPAN"
+                v1_times = self._v1_grid_times_in_span(blackboard, previous, next_anchor)
+                if v1_times:
+                    provisional = [round(t, 6) for t in v1_times]
+                    used_v1_grid = True
+                    status = "CARRIED_V1_GRID"
+                else:
+                    current = previous + bar_duration
+                    while current < next_anchor - self.tolerance_sec:
+                        provisional.append(round(current, 6))
+                        current += bar_duration
+                    status = "CARRIED" if provisional else "NO_SPAN"
             else:
                 duration_cap = self._audio_duration_cap(blackboard)
-                current = previous + bar_duration
-                count = 0
-                while count < self.max_fallback_bars and (
-                    duration_cap is None or current <= duration_cap + self.tolerance_sec
-                ):
-                    provisional.append(round(current, 6))
-                    current += bar_duration
-                    count += 1
-                used_fallback = True
-                status = "CARRIED_FALLBACK_NO_LOOKAHEAD" if provisional else "NO_SPAN"
+                v1_times = self._v1_grid_times_in_span(
+                    blackboard, previous, duration_cap, max_count=self.max_fallback_bars
+                )
+                if v1_times:
+                    provisional = [round(t, 6) for t in v1_times]
+                    used_v1_grid = True
+                    status = "CARRIED_FALLBACK_V1_GRID"
+                else:
+                    current = previous + bar_duration
+                    count = 0
+                    while count < self.max_fallback_bars and (
+                        duration_cap is None or current <= duration_cap + self.tolerance_sec
+                    ):
+                        provisional.append(round(current, 6))
+                        current += bar_duration
+                        count += 1
+                    used_fallback = True
+                    status = "CARRIED_FALLBACK_NO_LOOKAHEAD" if provisional else "NO_SPAN"
 
         blackboard.set_val("provisional_bar_starts", provisional)
         blackboard.set_val("no_drum_phase_report", {
@@ -501,8 +541,26 @@ class NoDrumPhaseCarryNode(BaseNode):
             "count": len(provisional),
             "provisional": True,
             "used_no_lookahead_fallback": used_fallback,
+            "used_v1_grid": used_v1_grid,
         })
         return NodeStatus.SUCCESS
+
+    def _v1_grid_times_in_span(
+        self, blackboard: Blackboard, start: float, end: float | None, max_count: int | None = None
+    ) -> list[float]:
+        """Real v1 downbeat times strictly between `start` and `end` (`end`
+        may be None when there is no known upper bound -- the no-lookahead
+        fallback case), capped at `max_count` when given."""
+        downbeats = _v1_reference_downbeats(blackboard)
+        if not downbeats:
+            return []
+        in_span = [
+            t for t in downbeats
+            if t > start + self.tolerance_sec and (end is None or t < end - self.tolerance_sec)
+        ]
+        if max_count is not None:
+            in_span = in_span[:max_count]
+        return in_span
 
     def _audio_duration_cap(self, blackboard: Blackboard) -> float | None:
         try:
@@ -670,9 +728,20 @@ class LookaheadDrumAnchorSearchNode(BaseNode):
 
 
 class InterveningBarCountEstimatorNode(BaseNode):
-    """Estimate N-1/N/N+1 bars between two anchors."""
+    """Estimate N-1/N/N+1 bars between two anchors.
 
-    optional_keys = ["reliable_bar_anchors", "lookahead_bar_candidates", "bar_duration_sec", "meter_profile", "tempo_bpm"]
+    Pass 157: the arithmetic estimate (`delta / duration`) implicitly assumes
+    constant tempo across the whole gap, which is exactly the assumption that
+    breaks down across a long no-drum span. When `v1_reference_beat_grid`
+    (Pass 156) has real downbeats between `previous` and the next anchor, the
+    actual count of those downbeats is used to seed the N-1/N/N+1 exploration
+    instead of the arithmetic guess -- it reflects v1's own tempo-tracking
+    rather than an equal-spacing assumption. The `duration`-based
+    `duration_error_sec` tie-break is kept as-is for consistency with
+    downstream consumers (e.g. `BidirectionalBarAlignmentNode`).
+    """
+
+    optional_keys = ["reliable_bar_anchors", "lookahead_bar_candidates", "bar_duration_sec", "meter_profile", "tempo_bpm", "v1_reference_beat_grid"]
     output_keys = ["intervening_bar_count_candidates", "selected_intervening_bar_count"]
 
     def __init__(self):
@@ -686,9 +755,17 @@ class InterveningBarCountEstimatorNode(BaseNode):
         duration = NoDrumPhaseCarryNode()._bar_duration(blackboard)
         rows = []
         selected = None
+        source = None
         if previous is not None and next_item is not None and duration > 0:
-            delta = max(0.0, float(next_item["time"]) - previous)
-            estimate = max(1, int(round(delta / duration)))
+            next_time = float(next_item["time"])
+            delta = max(0.0, next_time - previous)
+            v1_count = self._v1_downbeat_count(blackboard, previous, next_time)
+            if v1_count is not None:
+                estimate = max(1, v1_count)
+                source = "v1_grid_count"
+            else:
+                estimate = max(1, int(round(delta / duration)))
+                source = "arithmetic_estimate"
             allowed = sorted({max(1, estimate - 1), estimate, estimate + 1})
             for count in allowed:
                 error = abs(delta - count * duration)
@@ -697,11 +774,20 @@ class InterveningBarCountEstimatorNode(BaseNode):
                     "duration_error_sec": round(error, 6),
                     "next_anchor_time": next_item["time"],
                     "candidate": next_item,
+                    "estimate_source": source,
                 })
             selected = min(rows, key=lambda row: row["duration_error_sec"])
         blackboard.set_val("intervening_bar_count_candidates", rows)
         blackboard.set_val("selected_intervening_bar_count", selected)
         return NodeStatus.SUCCESS
+
+    def _v1_downbeat_count(self, blackboard: Blackboard, start: float, end: float) -> int | None:
+        downbeats = _v1_reference_downbeats(blackboard)
+        if not downbeats:
+            return None
+        tolerance = 0.08
+        count = sum(1 for t in downbeats if start + tolerance < t < end - tolerance)
+        return count if count > 0 else None
 
 
 class BidirectionalBarAlignmentNode(BaseNode):
@@ -2040,16 +2126,7 @@ class V1GridEvidenceBarSearchNode(BaseNode):
         return NodeStatus.SUCCESS
 
     def _v1_downbeat_times(self, blackboard: Blackboard) -> list[float]:
-        grid = blackboard.get_val("v1_reference_beat_grid")
-        if grid is None:
-            return []
-        try:
-            arr = np.asarray(grid, dtype=float)
-        except (TypeError, ValueError):
-            return []
-        if arr.ndim != 2 or arr.shape[1] < 2 or len(arr) == 0:
-            return []
-        return [float(t) for t in arr[arr[:, 1] == 1, 0]]
+        return _v1_reference_downbeats(blackboard)
 
     def _confidence(self, blackboard: Blackboard) -> float:
         refinement = blackboard.get_val("downbeat_refinement", {}) or {}
