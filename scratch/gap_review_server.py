@@ -71,9 +71,20 @@ PAGE_HTML = r"""<!doctype html>
   .lane-label.active { background: #2f6fb2; color: #fff; border-color: #4a90d9; }
   .lane-label .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; flex: none; }
   .lane-label.active .dot { background: #7fd67f; }
+  .lane-reset-btn {
+    margin-left: 4px; font-size: 10px; color: #999; background: transparent;
+    border: 1px solid #555; border-radius: 3px; padding: 1px 6px; cursor: pointer;
+  }
+  .lane-reset-btn:hover { color: #eee; border-color: #888; }
   .lane-timeline {
     position: relative; height: 46px; background: #2a2a30; border-radius: 6px;
     cursor: pointer; overflow: hidden; border: 1px solid #3a3a42;
+  }
+  .block.submeasure { border-right: 1px solid rgba(0,0,0,0.55); }
+  .block.submeasure .label { display: none; }
+  .expand-hint {
+    position: absolute; top: 1px; right: 2px; font-size: 8px; color: rgba(255,255,255,0.55);
+    pointer-events: none;
   }
   .block {
     position: absolute; top: 0; bottom: 0; box-sizing: border-box;
@@ -118,7 +129,7 @@ PAGE_HTML = r"""<!doctype html>
     <span><i class="swatch" style="background:#4a4a55"></i>待複核（黃框＝標準判定可疑）</span>
     <span><i class="swatch" style="background:#2f8f4e"></i>人工通過</span>
     <span><i class="swatch" style="background:#b23b3b"></i>人工不通過</span>
-    <span style="margin-left:auto">點軌道標籤＝切換目前播放的 Lane；點時間軸空白處＝跳轉播放；點區塊＝循環切換狀態（同時跳到該區塊前 2 秒並切換到該 Lane）</span>
+    <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態；雙擊已通過的區塊＝展開/收合小節細標；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
   </div>
 
   <div id="multi-timeline"><div id="lane-rows"><div id="playhead"></div></div></div>
@@ -175,14 +186,19 @@ async function saveMarks(laneId) {
 function renderSummary() {
   const lines = lanesMeta.map(lane => {
     const data = lanesData[lane.id];
+    const blockIds = new Set(data.blocks.map(b => b.id));
     const total = data.blocks.length;
     const needReview = data.blocks.filter(b => b.needs_review).length;
-    const passCount = Object.values(data.marks).filter(v => v === 'pass').length;
-    const failCount = Object.values(data.marks).filter(v => v === 'fail').length;
-    const autoCount = Object.values(data.marks).filter(v => v === 'auto_pass').length;
+    const blockMarkValues = Object.entries(data.marks).filter(([k]) => blockIds.has(k)).map(([, v]) => v);
+    const passCount = blockMarkValues.filter(v => v === 'pass').length;
+    const failCount = blockMarkValues.filter(v => v === 'fail').length;
+    const autoCount = blockMarkValues.filter(v => v === 'auto_pass').length;
     const unmarked = data.blocks.filter(b => b.needs_review && !data.marks[b.id]).length;
-    return `[${lane.name}] 共 ${total} 塊 | 需複核 ${needReview} | 通過 ${passCount} | ` +
+    const submeasureFail = Object.entries(data.marks).filter(([k, v]) => !blockIds.has(k) && v === 'fail').length;
+    let line = `[${lane.name}] 共 ${total} 塊 | 需複核 ${needReview} | 通過 ${passCount} | ` +
            `不通過 ${failCount} | 自動通過 ${autoCount} | 待複核 ${unmarked}`;
+    if (submeasureFail > 0) line += ` | 小節細標不通過 ${submeasureFail}`;
+    return line;
   });
   summaryEl.innerHTML = lines.join('<br>');
 }
@@ -210,18 +226,31 @@ function renderLaneBlocks(laneId) {
   const data = lanesData[laneId];
   timelineEl.querySelectorAll('.block').forEach(el => el.remove());
   for (const b of data.blocks) {
-    const el = document.createElement('div');
     const st = stateOf(laneId, b.id);
+    const isPassed = (st === 'pass' || st === 'auto_pass');
+    if (isPassed && data.expandedBlocks.has(b.id) && data.submeasureCache[b.id]) {
+      renderSubmeasures(laneId, b, data.submeasureCache[b.id]);
+      continue;
+    }
+
+    const el = document.createElement('div');
     el.className = 'block ' + st + (b.needs_review ? ' needs-review' : '');
     el.style.left = (b.start / duration * 100) + '%';
     el.style.width = Math.max(0.15, (b.end - b.start) / duration * 100) + '%';
     el.title = `[${laneId}] ${b.start.toFixed(2)}s ~ ${b.end.toFixed(2)}s  [${st}]` +
-               (b.needs_review ? '\n⚠ 需複核' : '');
+               (b.needs_review ? '\n⚠ 需複核' : '') +
+               (isPassed ? '\n（雙擊展開小節細標）' : '');
     if ((b.end - b.start) / duration > 0.012) {
       const label = document.createElement('div');
       label.className = 'label';
       label.textContent = `${b.start.toFixed(0)}s`;
       el.appendChild(label);
+    }
+    if (isPassed) {
+      const hint = document.createElement('div');
+      hint.className = 'expand-hint';
+      hint.textContent = '⋯';
+      el.appendChild(hint);
     }
     el.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -230,6 +259,48 @@ function renderLaneBlocks(laneId) {
       activateLane(laneId, Math.max(0, b.start - 2.0) / duration);
       player.play().catch(() => {});
       saveMarks(laneId);
+    });
+    if (isPassed) {
+      el.addEventListener('dblclick', async (ev) => {
+        ev.stopPropagation();
+        if (!data.submeasureCache[b.id]) {
+          const resp = await fetch(`/submeasures?lane=${encodeURIComponent(laneId)}&block=${encodeURIComponent(b.id)}`);
+          data.submeasureCache[b.id] = await resp.json();
+        }
+        if (data.submeasureCache[b.id].length) {
+          data.expandedBlocks.add(b.id);
+          renderLaneBlocks(laneId);
+        } else {
+          statusEl.textContent = `[${laneId}] 這個區塊找不到拍點資料，無法展開小節。`;
+        }
+      });
+    }
+    timelineEl.appendChild(el);
+  }
+}
+
+function renderSubmeasures(laneId, parentBlock, measures) {
+  const timelineEl = document.querySelector(`.lane-timeline[data-lane="${laneId}"]`);
+  const data = lanesData[laneId];
+  for (const m of measures) {
+    const el = document.createElement('div');
+    const st = stateOf(laneId, m.id);
+    el.className = 'block submeasure ' + st;
+    el.style.left = (m.start / duration * 100) + '%';
+    el.style.width = Math.max(0.08, (m.end - m.start) / duration * 100) + '%';
+    el.title = `[${laneId}] ${m.start.toFixed(2)}s ~ ${m.end.toFixed(2)}s  小節 [${st}]（雙擊收合回上一層）`;
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      data.marks[m.id] = nextState(stateOf(laneId, m.id));
+      el.className = 'block submeasure ' + data.marks[m.id];
+      activateLane(laneId, Math.max(0, m.start - 2.0) / duration);
+      player.play().catch(() => {});
+      saveMarks(laneId);
+    });
+    el.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation();
+      data.expandedBlocks.delete(parentBlock.id);
+      renderLaneBlocks(laneId);
     });
     timelineEl.appendChild(el);
   }
@@ -245,6 +316,24 @@ function buildLaneRows() {
     label.dataset.lane = lane.id;
     label.innerHTML = `<span class="dot"></span><span>${lane.name}</span>`;
     label.addEventListener('click', () => activateLane(lane.id, duration ? player.currentTime / duration : 0));
+
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'lane-reset-btn';
+    resetBtn.textContent = '重設';
+    resetBtn.title = '清空這條 Lane 的人工標記（含小節細標），回到自動評分基準線';
+    resetBtn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      if (!confirm(`確定要清空 [${lane.name}] 的所有人工標記嗎？`)) return;
+      const resp = await fetch('/reset?lane=' + encodeURIComponent(lane.id), { method: 'POST' });
+      const result = await resp.json();
+      lanesData[lane.id].marks = result.marks;
+      lanesData[lane.id].expandedBlocks.clear();
+      lanesData[lane.id].submeasureCache = {};
+      renderLaneBlocks(lane.id);
+      renderSummary();
+      statusEl.textContent = `[${lane.id}] 已重設為自動評分基準線。`;
+    });
+    label.appendChild(resetBtn);
 
     const tl = document.createElement('div');
     tl.className = 'lane-timeline';
@@ -324,7 +413,7 @@ async function init() {
     return { id: lane.id, blocks: await blocksResp.json(), marks: await marksResp.json() };
   }));
   for (const r of results) {
-    lanesData[r.id] = { blocks: r.blocks, marks: r.marks };
+    lanesData[r.id] = { blocks: r.blocks, marks: r.marks, expandedBlocks: new Set(), submeasureCache: {} };
     duration = Math.max(duration, 0, ...r.blocks.map(b => b.end));
   }
 
@@ -503,6 +592,7 @@ def discover_lanes(project_dir: str) -> list:
             "audio_path": base_audio,
             "blocks": load_blocks(project_dir, base_audio),
             "marks_path": os.path.join(project_dir, "reports", "gap_review_marks.json"),
+            "beats_path": os.path.join(project_dir, "reports", "module3_pipeline_report.json"),
         })
 
     lanes_root = os.path.join(project_dir, "lanes")
@@ -520,6 +610,7 @@ def discover_lanes(project_dir: str) -> list:
                     "audio_path": audio_path,
                     "blocks": blocks,
                     "marks_path": os.path.join(lane_dir, "marks.json"),
+                    "beats_path": os.path.join(lane_dir, "beats.json"),
                 })
     return lanes
 
@@ -542,6 +633,48 @@ def _save_marks_file(marks_path: str, marks: dict) -> None:
 
 def _overlaps(a_start, a_end, b_start, b_end) -> bool:
     return a_start < b_end and b_start < a_end
+
+
+def _load_beats_file(beats_path: str) -> list:
+    if not beats_path or not os.path.exists(beats_path):
+        return []
+    try:
+        with open(beats_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    return data.get("refined_beats") or data.get("beats") or []
+
+
+def _measures_for_block(beats: list, block: dict, beats_per_measure: int = 4) -> list:
+    """把一個已經『通過驗證』的區塊，依這條 Lane 自己的實際拍點時間，每
+    beats_per_measure 拍切一個小節子區塊——刻意只給已通過驗證的區塊呼叫，
+    因為只有這些區塊的拍點網格是使用者已經信任的；還沒通過驗證的區塊本來
+    就不該假裝知道正確的小節邊界在哪（跟一開始不用小節切塊的理由一致）。
+    子區塊邊界完全從實際拍點時間算出來，不是憑空平均切割。"""
+    in_block = sorted(
+        float(row[0]) for row in beats if block["start"] - 1e-6 <= float(row[0]) < block["end"]
+    )
+    if not in_block:
+        return []
+
+    measures = []
+    for i in range(0, len(in_block), beats_per_measure):
+        group = in_block[i:i + beats_per_measure]
+        start = group[0]
+        next_idx = i + beats_per_measure
+        end = in_block[next_idx] if next_idx < len(in_block) else block["end"]
+        measures.append({"id": f"{block['id']}-m{i // beats_per_measure}", "start": start, "end": end})
+
+    measures[0]["start"] = block["start"]
+    measures[-1]["end"] = block["end"]
+    return measures
+
+
+def _reset_marks_baseline(blocks: list) -> dict:
+    """回到最乾淨的自動評分基準線：needs_review=False 的區塊自動通過，其餘
+    留白等待真正複核。會清掉這條 Lane 的所有人工標記，包含小節細標。"""
+    return {b["id"]: "auto_pass" for b in blocks if not b["needs_review"]}
 
 
 def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
@@ -626,6 +759,21 @@ def make_handler(lanes: list):
                     return
                 _, lane = found
                 self._send_json(_load_marks_file(lane["marks_path"]))
+            elif path == "/submeasures":
+                found = self._query_lane()
+                if not found:
+                    self.send_error(404, "unknown lane")
+                    return
+                _, lane = found
+                from urllib.parse import urlsplit, parse_qs
+                qs = parse_qs(urlsplit(self.path).query)
+                block_id = qs.get("block", [None])[0]
+                block = next((b for b in lane["blocks"] if b["id"] == block_id), None)
+                if not block:
+                    self.send_error(404, "unknown block")
+                    return
+                beats = _load_beats_file(lane.get("beats_path", ""))
+                self._send_json(_measures_for_block(beats, block))
             elif path == "/info":
                 self._send_json({"lanes": [l["id"] for l in lanes]})
             elif path.startswith("/audio/"):
@@ -708,6 +856,10 @@ def make_handler(lanes: list):
                     if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail":
                         affected_lanes.extend(propagate_fail(lanes, lane_index, b))
                 self._send_json({"status": "OK", "count": len(new_marks), "propagated_to": sorted(set(affected_lanes))})
+            elif path == "/reset":
+                new_marks = _reset_marks_baseline(lane["blocks"])
+                _save_marks_file(lane["marks_path"], new_marks)
+                self._send_json({"status": "OK", "marks": new_marks})
             elif path == "/submit":
                 marks = _load_marks_file(lane["marks_path"])
                 marks_dir = os.path.dirname(lane["marks_path"])
