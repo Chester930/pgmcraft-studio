@@ -241,8 +241,13 @@ Tracked 477 beats via BeatNet DBN.`），跟 `BeatFusionArbitratorNode` 之後�
 本身跟黃金版當時不同，要往 `SynthesizeRhythmTrackNode` 或 Demucs 模型版本去查）。
 
 這已經超出「開關 Pass 168-170 旗標、跑變體矩陣比較」的原始範圍，牽涉到模型/環境層級的
-決定性問題，建議另開 Pass 172 任務書處理，並先由使用者確認是否要繼續投入運算資源
-（每次驗證仍需要跑一次 Stage 3，數分鐘等級）。
+決定性問題，已另開 `docs/PASS-172-STAGE3-BEATNET-DETERMINISM-VERIFICATION-TASK.md` 處理。
+
+**Pass 172 結論先劇透**：用黃金專案本身的節奏骨幹軌重跑兩次 BeatNet，兩次都精確複現
+黃金版的 485 拍——證實 BeatNet 本身是決定性的，477 vs 485 的落差其實出在**每次重新分離
+出的 drums/bass 音訊內容本身不是逐 byte 相同**（很可能是 Demucs 的 test-time shift
+augmentation 沒有被 `enable_deterministic_mode()` 完全覆蓋），不是任何節拍追蹤或
+BarStart v2 節點的邏輯問題。詳見該任務書第 3 節。
 
 ## 3. 延伸建議（非本 Pass 範圍，留給後續 Pass）
 

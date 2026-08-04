@@ -86,3 +86,38 @@ def enable_deterministic_mode(seed: int = 42) -> dict:
 
 def is_deterministic_mode_enabled() -> bool:
     return _ALREADY_ENABLED
+
+
+def compare_beat_outputs(output1, output2, tolerance_sec: float = 1e-6) -> dict:
+    """Pass 172: compare two beat-tracking outputs (e.g. two BeatNet runs on the
+    same audio) and report whether they are reproducible.
+
+    Used by scratch/pass172_beatnet_determinism_check.py to verify
+    enable_deterministic_mode() actually makes Stage 3 beat tracking
+    reproducible run-to-run, rather than assuming it does.
+    """
+    import numpy as np
+
+    count1, count2 = len(output1), len(output2)
+    count_match = count1 == count2
+
+    max_delta = None
+    if count_match and count1 > 0:
+        arr1 = np.asarray(output1, dtype=float)
+        arr2 = np.asarray(output2, dtype=float)
+        max_delta = float(np.max(np.abs(arr1[:, 0] - arr2[:, 0])))
+
+    if count_match and max_delta is not None and max_delta < tolerance_sec:
+        verdict = "DETERMINISTIC"
+    elif count_match:
+        verdict = "MOSTLY_DETERMINISTIC"
+    else:
+        verdict = "NON_DETERMINISTIC"
+
+    return {
+        "count1": count1,
+        "count2": count2,
+        "count_match": count_match,
+        "max_delta_sec": max_delta,
+        "verdict": verdict,
+    }
