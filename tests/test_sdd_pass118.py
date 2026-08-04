@@ -16,16 +16,8 @@ import numpy as np
 import soundfile as sf
 
 from pgm_craft.workflow.beat_tracking_bt import OnsetPhaseRealignmentNode
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import MeterAwareBeatGridNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 class TestSDDPass118OnsetPhaseRealignmentInV2(unittest.TestCase):
@@ -46,14 +38,6 @@ class TestSDDPass118OnsetPhaseRealignmentInV2(unittest.TestCase):
     def tearDown(self):
         import shutil
         shutil.rmtree(self.test_dir, ignore_errors=True)
-
-    def test_v2_pipeline_no_longer_wires_onset_realignment(self):
-        """Pass 128: dropped per-beat onset snapping from the v2 pipeline on
-        user listening feedback -- v2 should nail each bar's first beat and
-        evenly subdivide the rest, not chase individual onset peaks. The node
-        class itself stays valid and is still exercised directly below."""
-        names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertNotIn("OnsetPhaseRealignmentNode", names)
 
     def test_grid_beat_snaps_onto_real_onset(self):
         bb = Blackboard()

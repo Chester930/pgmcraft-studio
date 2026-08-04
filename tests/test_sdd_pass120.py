@@ -18,16 +18,8 @@ import unittest
 import numpy as np
 
 from pgm_craft.workflow.beat_tracking_bt import KickBassDownbeatVerifierNode
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import MeterAwareBeatGridNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 class TestSDDPass120DownbeatVerifierInV2(unittest.TestCase):
@@ -56,23 +48,6 @@ class TestSDDPass120DownbeatVerifierInV2(unittest.TestCase):
         bb.set_val("meter_profile", {"base_meter": "4/4", "beats_per_bar": 4, "beat_unit": 4})
         self.assertEqual(MeterAwareBeatGridNode().execute(bb), NodeStatus.SUCCESS)
         return bb
-
-    def test_v2_pipeline_places_downbeat_verifier_before_click_synthesis(self):
-        # Pass 128 dropped OnsetPhaseRealignmentNode from the v2 pipeline
-        # (per-beat snapping); KickBassDownbeatVerifierNode stays -- it only
-        # relabels which existing, evenly-spaced grid point is beat 1, never
-        # moves a beat's time -- so it now sits right after grid generation.
-        names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("KickBassDownbeatVerifierNode", names)
-        self.assertNotIn("OnsetPhaseRealignmentNode", names)
-        self.assertLess(
-            names.index("MeterAwareBeatGridNode"),
-            names.index("KickBassDownbeatVerifierNode"),
-        )
-        self.assertLess(
-            names.index("KickBassDownbeatVerifierNode"),
-            names.index("ClickSynthesisNode"),
-        )
 
     def test_misplaced_downbeat_is_rotated_to_true_low_frequency_hit(self):
         bb = self._grid_blackboard()

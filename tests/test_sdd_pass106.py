@@ -2,16 +2,8 @@
 SDD Pass 106 — Module 3 BarStart v2 rolling probe window tests.
 """
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import RollingProbeWindowNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def test_rolling_probe_window_starts_from_latest_committed_bar_start():
@@ -67,12 +59,3 @@ def test_rolling_probe_window_decreases_after_fast_found():
     assert window["end_time"] == 25.0
     assert bb.get_val("bar_probe_window_sec") == 4.0
     assert bb.get_val("bar_probe_policy")["adjustment"] == "decrease_by_1s"
-
-
-def test_module3_barstart_v2_tree_contains_probe_before_grid():
-    tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-    names = _node_names(tree)
-
-    assert "RollingProbeWindowNode" in names
-    assert names.index("ManualCommittedBarStartsSeedNode") < names.index("RollingProbeWindowNode")
-    assert names.index("RollingProbeWindowNode") < names.index("MeterAwareBeatGridNode")

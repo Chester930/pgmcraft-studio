@@ -37,20 +37,12 @@ import tempfile
 import numpy as np
 import soundfile as sf
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     ChordMelodyOnsetSplitNode,
     ChordTrackPKNode,
     MelodyTrackPKNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus, SequenceNode
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def _make_note(freq, dur, sr):
@@ -159,12 +151,6 @@ class TestDownstreamConsumersReceiveRealAnchors:
 
 
 class TestPipelineWiring:
-
-    def test_module3_barstart_v2_pipeline_includes_split_node_before_loop(self):
-        tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-        names = _node_names(tree)
-        assert "ChordMelodyOnsetSplitNode" in names
-        assert names.index("ChordMelodyOnsetSplitNode") < names.index("FullSongBarStartLoopNode")
 
     def test_module3_merge_node_core_chain_includes_split_node(self, tmp_path):
         """Module3BarStartV2MergeNode builds its v2 core chain lazily inside

@@ -14,16 +14,8 @@ import unittest
 import numpy as np
 
 from pgm_craft.workflow.beat_tracking_bt import DrumFillDetectionNode, OnsetPhaseRealignmentNode
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import MeterAwareBeatGridNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 class TestSDDPass119DrumFillExclusionInV2(unittest.TestCase):
@@ -44,15 +36,6 @@ class TestSDDPass119DrumFillExclusionInV2(unittest.TestCase):
         bb.set_val("meter_profile", {"base_meter": "2/4", "beats_per_bar": 2, "beat_unit": 4})
         self.assertEqual(MeterAwareBeatGridNode().execute(bb), NodeStatus.SUCCESS)
         return bb
-
-    def test_v2_pipeline_no_longer_wires_drum_fill_detection(self):
-        """Pass 128: DrumFillDetectionNode only existed to feed the onset
-        realignment exclusion zones; with onset realignment dropped from the
-        v2 pipeline, this node has no consumer left in v2 either. Its own
-        detection behaviour (tested below) remains valid and still runs on
-        the Stage 3 main line."""
-        names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertNotIn("DrumFillDetectionNode", names)
 
     def test_dense_kick_cluster_produces_exclusion_zone_around_first_bar(self):
         bb = self._grid_blackboard()

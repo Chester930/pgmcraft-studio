@@ -3057,6 +3057,12 @@ class Module3BarStartV2SummaryNode(BaseNode):
                 unresolved_bar_spans=blackboard.get_val("unresolved_bar_spans", []),
             ),
         }
+        outputs["barstart_v2_report"] = report
+        blackboard.set_val("barstart_v2_report", report)
+        blackboard.set_val("module3_outputs", outputs)
+        return NodeStatus.SUCCESS
+
+
 class TwoWayAnchorBacktraceNode(BaseNode):
     """
     Pass 168: 雙向確定錨點跳過與拍位反推節點 (TwoWayAnchorBacktraceNode)
@@ -3517,6 +3523,8 @@ class FullSongBarStartLoopNode(BaseNode):
 
 
 def build_module3_barstart_v2_pipeline_tree() -> BaseNode:
-    """Pass 166: 委派呼叫主樹 build_module3_pipeline_tree()，確保獲得 Stage 3 完整的 BeatNet / v1 網格與融合資料。"""
+    """Pass 166: 委派呼叫主樹 build_module3_pipeline_tree()，確保獲得 Stage 3 完整的 BeatNet / v1 網格與融合資料。
+    Pass 175: 委派時強制 stem_mode='beat_only'，恢復 Pass 166 之前 standalone module3_barstart_v2
+    呼叫該有的輕量分軌行為（只分出節拍分析必要音色），不影響 target_stage="module3" 仍走 'full'。"""
     from pgm_craft.workflow.module3_bt import build_module3_pipeline_tree
-    return build_module3_pipeline_tree()
+    return build_module3_pipeline_tree(stem_mode="beat_only")
