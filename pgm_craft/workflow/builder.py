@@ -130,6 +130,7 @@ class BTWorkflowEngine:
         manual_bar_starts=None,
         user_meter_selection=None,
         allow_temporary_bar_delta=None,
+        barstart_v2_postprocess_flags=None,
     ):
         if target_stage is not None and target_stage != self.target_stage:
             self.target_stage = target_stage
@@ -150,6 +151,9 @@ class BTWorkflowEngine:
             blackboard.set_val("user_meter_selection", user_meter_selection)
         if allow_temporary_bar_delta is not None:
             blackboard.set_val("allow_temporary_bar_delta", allow_temporary_bar_delta)
+        if barstart_v2_postprocess_flags is not None:
+            # Pass 171: 讓多版本比較 harness 能獨立開關 Pass 168/169/170 後處理節點
+            blackboard.set_val("barstart_v2_postprocess_flags", barstart_v2_postprocess_flags)
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow (Target: {self.target_stage}) for {audio_path} ===")
         status = self.tree.run(blackboard)

@@ -52,6 +52,7 @@ class PGMCraftEngine:
         manual_bar_starts=None,
         user_meter_selection=None,
         allow_temporary_bar_delta=None,
+        barstart_v2_postprocess_flags=None,
     ):
         os.makedirs(output_dir, exist_ok=True)
         if enable_stem is not None:
@@ -70,6 +71,7 @@ class PGMCraftEngine:
             manual_bar_starts=manual_bar_starts,
             user_meter_selection=user_meter_selection,
             allow_temporary_bar_delta=allow_temporary_bar_delta,
+            barstart_v2_postprocess_flags=barstart_v2_postprocess_flags,
         )
 
         original_beats_raw = blackboard.get_val("beats")

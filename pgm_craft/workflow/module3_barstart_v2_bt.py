@@ -3486,12 +3486,20 @@ class FullSongBarStartLoopNode(BaseNode):
             stop_reason = "stalled_no_recovery"
             break
 
+        # Pass 171: 後處理節點旗標開關，供多版本比較 harness 獨立開關 Pass 168/169/170，
+        # 藉此在同一份程式碼上跑出多個變體、用實測數據 (而非臆測) 定位回歸來源。
+        # 未指定時三者皆預設為 True，行為與 Pass 170 完全相同。
+        postprocess_flags = blackboard.get_val("barstart_v2_postprocess_flags", {}) or {}
+
         # Pass 168: 執行雙向確信錨點跳過與拍位反推，修復切分音搶拍導致的第 1 拍位移
-        TwoWayAnchorBacktraceNode().execute(blackboard)
+        if postprocess_flags.get("twoway_backtrace", True):
+            TwoWayAnchorBacktraceNode().execute(blackboard)
         # Pass 169: 執行鼓型拍位解碼與雙聲部和弦鎖定，修復重音不在第 1 拍 (反拍/雷鬼) 的相位位移
-        GroovePatternPhaseDecoderNode().execute(blackboard)
+        if postprocess_flags.get("groove_phase_decode", True):
+            GroovePatternPhaseDecoderNode().execute(blackboard)
         # Pass 170: 過濾 Ghost 殘片小節 (duration < 0.6 * global_median)，消除 BPM 跳動超過 35% 問題
-        BarGridSanityPrunerNode().execute(blackboard)
+        if postprocess_flags.get("sanity_pruner", True):
+            BarGridSanityPrunerNode().execute(blackboard)
 
         final = self._normalize(blackboard.get_val("committed_bar_starts"))
         blackboard.set_val("full_song_loop_report", {
