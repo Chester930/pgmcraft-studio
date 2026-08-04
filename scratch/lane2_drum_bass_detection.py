@@ -30,26 +30,15 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-CONFIRM_TOLERANCE_SEC = 0.06
-WINDOW_SEC = 4.0
-CONFIRM_RATIO_THRESHOLD = 0.5
-SAMPLE_STEP_SEC = 0.5
-MIN_SEGMENT_SEC = 1.5
+from lane_common import load_mono, escalation_ranges, splice_beats, build_confidence_blocks
 
 BASS_STEM_PRIORITY = ("synth_bass_808.wav", "electric_bass.wav", "bass.wav")
 
 
 def _load_mono(path, target_sr=None):
-    import soundfile as sf
-    import librosa
-    y, sr = sf.read(path)
-    if y.ndim > 1:
-        y = y.mean(axis=1)
-    if target_sr is not None and sr != target_sr:
-        y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
-        sr = target_sr
-    return y, sr
+    return load_mono(path, target_sr=target_sr)
 
 
 def _find_bass_stem(project_dir: str):
@@ -59,35 +48,6 @@ def _find_bass_stem(project_dir: str):
         if os.path.exists(p):
             return p
     return None
-
-
-def _escalation_ranges(source_lane_dir: str):
-    """回傳 [(start, end), ...]：Lane 1 裡標記 fail（或還沒標記，保守也算需要
-    複核）的區塊時間範圍，合併相鄰/重疊的範圍。pass/auto_pass 的區塊不列入，
-    維持不動。"""
-    blocks_path = os.path.join(source_lane_dir, "blocks.json")
-    marks_path = os.path.join(source_lane_dir, "marks.json")
-    with open(blocks_path, "r", encoding="utf-8") as f:
-        blocks = json.load(f)
-    marks = {}
-    if os.path.exists(marks_path):
-        with open(marks_path, "r", encoding="utf-8") as f:
-            marks = json.load(f)
-
-    ranges = []
-    for b in blocks:
-        state = marks.get(b["id"], "unmarked")
-        if state not in ("pass", "auto_pass"):
-            ranges.append((b["start"], b["end"]))
-
-    ranges.sort()
-    merged = []
-    for s, e in ranges:
-        if merged and s <= merged[-1][1] + 1e-6:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-        else:
-            merged.append((s, e))
-    return merged
 
 
 def detect_lane2_beats(kick_path, snare_path, bass_path):
@@ -122,68 +82,6 @@ def detect_lane2_beats(kick_path, snare_path, bass_path):
     }
 
 
-def splice_beats(source_beats, candidate_beat_times, escalation_ranges):
-    """保留 source_beats 落在 escalation_ranges 之外的部分，範圍內的一律換成
-    candidate_beat_times 裡落在同一範圍的拍點，合併排序後重新循環標記拍號。"""
-    def in_any_range(t):
-        return any(s <= t < e for s, e in escalation_ranges)
-
-    kept = [row for row in source_beats if not in_any_range(row[0])]
-    inserted = [float(t) for t in candidate_beat_times if in_any_range(float(t))]
-
-    merged_times = sorted([row[0] for row in kept] + inserted)
-    return [[round(t, 6), (i % 4) + 1] for i, t in enumerate(merged_times)]
-
-
-def build_confidence_blocks(beats, real_onsets, duration):
-    import numpy as np
-
-    times = np.arange(0.0, duration, SAMPLE_STEP_SEC)
-    beat_times = np.array([b[0] for b in beats]) if beats else np.array([])
-
-    confirmed_per_beat = []
-    for t in beat_times:
-        nearest = float(np.min(np.abs(real_onsets - t))) if len(real_onsets) else float("inf")
-        confirmed_per_beat.append(nearest <= CONFIRM_TOLERANCE_SEC)
-    confirmed_per_beat = np.array(confirmed_per_beat, dtype=bool)
-
-    flags = []
-    for t in times:
-        lo, hi = t - WINDOW_SEC / 2, t + WINDOW_SEC / 2
-        mask = (beat_times >= lo) & (beat_times < hi)
-        window_beats = confirmed_per_beat[mask]
-        if len(window_beats) == 0:
-            flags.append(True)
-            continue
-        flags.append(float(np.mean(window_beats)) < CONFIRM_RATIO_THRESHOLD)
-
-    raw_segments = []
-    seg_start_idx = 0
-    for i in range(1, len(times) + 1):
-        if i == len(times) or flags[i] != flags[seg_start_idx]:
-            seg_end = duration if i == len(times) else times[i]
-            raw_segments.append({"start": float(times[seg_start_idx]), "end": float(seg_end), "needs_review": flags[seg_start_idx]})
-            seg_start_idx = i
-
-    merged = []
-    for seg in raw_segments:
-        if merged and (seg["end"] - seg["start"]) < MIN_SEGMENT_SEC:
-            merged[-1]["end"] = seg["end"]
-        else:
-            merged.append(seg)
-    final_segments = []
-    for seg in merged:
-        if final_segments and final_segments[-1]["needs_review"] == seg["needs_review"]:
-            final_segments[-1]["end"] = seg["end"]
-        else:
-            final_segments.append(seg)
-
-    return [
-        {"id": f"seg-{i}", "start": s["start"], "end": s["end"], "needs_review": bool(s["needs_review"])}
-        for i, s in enumerate(final_segments)
-    ]
-
-
 def main():
     parser = argparse.ArgumentParser(description="Pass 177 Lane 2 鼓+貝斯疊加偵測")
     parser.add_argument("--project-dir", required=True)
@@ -214,9 +112,9 @@ def main():
     with open(source_beats_path, "r", encoding="utf-8") as f:
         source_beats = json.load(f)["beats"]
 
-    escalation_ranges = _escalation_ranges(source_lane_dir)
-    total_escalated_sec = sum(e - s for s, e in escalation_ranges)
-    print(f"[Lane2] 來源 Lane：{args.source_lane}，需要重新分析的區間共 {len(escalation_ranges)} 段、"
+    ranges = escalation_ranges(source_lane_dir)
+    total_escalated_sec = sum(e - s for s, e in ranges)
+    print(f"[Lane2] 來源 Lane：{args.source_lane}，需要重新分析的區間共 {len(ranges)} 段、"
           f"合計 {total_escalated_sec:.1f} 秒。")
 
     print(f"[Lane2] 用 {os.path.basename(bass_path)} 疊加鼓軌，重新分析全曲拍點...")
@@ -224,11 +122,11 @@ def main():
     print(f"[Lane2] 鼓+貝斯估計節奏 {result['tempo']:.1f} BPM。")
 
     def in_any_range(t):
-        return any(s <= t < e for s, e in escalation_ranges)
+        return any(s <= t < e for s, e in ranges)
 
     kept_count = sum(1 for row in source_beats if not in_any_range(row[0]))
     inserted_count = sum(1 for t in result["beat_times"] if in_any_range(float(t)))
-    final_beats = splice_beats(source_beats, result["beat_times"], escalation_ranges)
+    final_beats = splice_beats(source_beats, result["beat_times"], ranges)
     print(f"[Lane2] 拼接後共 {len(final_beats)} 拍（沿用 Lane 1：{kept_count} 拍，新分析：{inserted_count} 拍）。")
 
     blocks = build_confidence_blocks(final_beats, result["real_onsets"], result["duration"])

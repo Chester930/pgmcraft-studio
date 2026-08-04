@@ -31,26 +31,22 @@ def load_mono(path, target_sr=None):
 
 
 def escalation_ranges(source_lane_dir: str):
-    """回傳 [(start, end), ...]：上一條 Lane 裡標記 fail（或還沒標記，保守也算
-    需要複核）的區塊時間範圍，合併相鄰/重疊的範圍。pass/auto_pass 的區塊
-    不列入，維持不動。"""
+    """回傳 [(start, end), ...]：上一條 Lane 自己的信心評分判定 needs_review
+    的區塊時間範圍，合併相鄰/重疊的範圍。
+
+    這條逐輪疊加證據的鏈路完全由每一層自己的信心評分（build_confidence_
+    blocks 算出來、寫死在 blocks.json 裡的 needs_review 欄位）自動驅動，跟
+    人工標記（marks.json）無關——人工在審查介面上標的 pass/fail 只是回饋
+    紀錄，用來在下一次調整信心評分的門檻參數（CONFIRM_RATIO_THRESHOLD 等）
+    後，把整條鏈路重新跑一次，不會即時介入、改變這一輪要不要重新分析哪些
+    區塊。故意不讀 marks.json。"""
     import json
 
     blocks_path = os.path.join(source_lane_dir, "blocks.json")
-    marks_path = os.path.join(source_lane_dir, "marks.json")
     with open(blocks_path, "r", encoding="utf-8") as f:
         blocks = json.load(f)
-    marks = {}
-    if os.path.exists(marks_path):
-        with open(marks_path, "r", encoding="utf-8") as f:
-            marks = json.load(f)
 
-    ranges = []
-    for b in blocks:
-        state = marks.get(b["id"], "unmarked")
-        if state not in ("pass", "auto_pass"):
-            ranges.append((b["start"], b["end"]))
-
+    ranges = [(b["start"], b["end"]) for b in blocks if b["needs_review"]]
     ranges.sort()
     merged = []
     for s, e in ranges:

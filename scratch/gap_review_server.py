@@ -549,6 +549,14 @@ def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
     標準判定通過，但人工在後面某個 Lane 重新聽覺得不通過——這個不通過要往後
     所有 Lane 都同步套用在同一個時間區段上，不能因為前面一次自動通過就被排除
     在後續複核之外。只往後傳遞 fail，不往前傳遞，也不用 pass 覆蓋既有標記。
+
+    重要：這純粹是審查介面上的「回饋一致性」輔助，只是讓人工在複核後面的
+    Lane 時，不會漏看前面某個 Lane 已經指出的問題。它完全不影響任何一條
+    Lane 實際重新分析哪些區塊——那件事只由每一層自己的信心評分（blocks.json
+    的 needs_review 欄位）決定，見 lane_common.escalation_ranges()。人工在
+    這裡標的 pass/fail 是回饋紀錄，只會在下一次調整信心評分門檻參數、重新
+    整條鏈路重跑時才發揮作用，不會即時介入這一輪的自動分析結果。
+
     回傳被影響到的 lane id 清單。"""
     affected = []
     for j in range(lane_index + 1, len(lanes)):
