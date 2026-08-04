@@ -82,10 +82,6 @@ PAGE_HTML = r"""<!doctype html>
   }
   .block.submeasure { border-right: 1px solid rgba(0,0,0,0.55); }
   .block.submeasure .label { display: none; }
-  .expand-hint {
-    position: absolute; top: 1px; right: 2px; font-size: 8px; color: rgba(255,255,255,0.55);
-    pointer-events: none;
-  }
   .block {
     position: absolute; top: 0; bottom: 0; box-sizing: border-box;
     border-right: 1px solid rgba(0,0,0,0.35);
@@ -129,7 +125,7 @@ PAGE_HTML = r"""<!doctype html>
     <span><i class="swatch" style="background:#4a4a55"></i>待複核（黃框＝標準判定可疑）</span>
     <span><i class="swatch" style="background:#2f8f4e"></i>人工通過</span>
     <span><i class="swatch" style="background:#b23b3b"></i>人工不通過</span>
-    <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態；雙擊已通過的區塊＝展開/收合小節細標；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
+    <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態；已通過的區段會自動依小節切成細塊，可單獨標記某小節不通過；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
   </div>
 
   <div id="multi-timeline"><div id="lane-rows"><div id="playhead"></div></div></div>
@@ -221,66 +217,41 @@ function activateLane(laneId, seekFrac) {
   }
 }
 
-function renderLaneBlocks(laneId) {
-  const timelineEl = document.querySelector(`.lane-timeline[data-lane="${laneId}"]`);
+async function ensureSubmeasures(laneId, blockId) {
   const data = lanesData[laneId];
-  timelineEl.querySelectorAll('.block').forEach(el => el.remove());
-  for (const b of data.blocks) {
-    const st = stateOf(laneId, b.id);
-    const isPassed = (st === 'pass' || st === 'auto_pass');
-    if (isPassed && data.expandedBlocks.has(b.id) && data.submeasureCache[b.id]) {
-      renderSubmeasures(laneId, b, data.submeasureCache[b.id]);
-      continue;
-    }
-
-    const el = document.createElement('div');
-    el.className = 'block ' + st + (b.needs_review ? ' needs-review' : '');
-    el.style.left = (b.start / duration * 100) + '%';
-    el.style.width = Math.max(0.15, (b.end - b.start) / duration * 100) + '%';
-    el.title = `[${laneId}] ${b.start.toFixed(2)}s ~ ${b.end.toFixed(2)}s  [${st}]` +
-               (b.needs_review ? '\n⚠ 需複核' : '') +
-               (isPassed ? '\n（雙擊展開小節細標）' : '');
-    if ((b.end - b.start) / duration > 0.012) {
-      const label = document.createElement('div');
-      label.className = 'label';
-      label.textContent = `${b.start.toFixed(0)}s`;
-      el.appendChild(label);
-    }
-    if (isPassed) {
-      const hint = document.createElement('div');
-      hint.className = 'expand-hint';
-      hint.textContent = '⋯';
-      el.appendChild(hint);
-    }
-    el.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      data.marks[b.id] = nextState(stateOf(laneId, b.id));
-      el.className = 'block ' + data.marks[b.id] + (b.needs_review ? ' needs-review' : '');
-      activateLane(laneId, Math.max(0, b.start - 2.0) / duration);
-      player.play().catch(() => {});
-      saveMarks(laneId);
-    });
-    if (isPassed) {
-      el.addEventListener('dblclick', async (ev) => {
-        ev.stopPropagation();
-        if (!data.submeasureCache[b.id]) {
-          const resp = await fetch(`/submeasures?lane=${encodeURIComponent(laneId)}&block=${encodeURIComponent(b.id)}`);
-          data.submeasureCache[b.id] = await resp.json();
-        }
-        if (data.submeasureCache[b.id].length) {
-          data.expandedBlocks.add(b.id);
-          renderLaneBlocks(laneId);
-        } else {
-          statusEl.textContent = `[${laneId}] 這個區塊找不到拍點資料，無法展開小節。`;
-        }
-      });
-    }
-    timelineEl.appendChild(el);
-  }
+  if (data.submeasureCache[blockId] !== undefined) return data.submeasureCache[blockId];
+  const resp = await fetch(`/submeasures?lane=${encodeURIComponent(laneId)}&block=${encodeURIComponent(blockId)}`);
+  const measures = await resp.json();
+  data.submeasureCache[blockId] = measures;
+  return measures;
 }
 
-function renderSubmeasures(laneId, parentBlock, measures) {
-  const timelineEl = document.querySelector(`.lane-timeline[data-lane="${laneId}"]`);
+function renderWholeBlock(laneId, timelineEl, b, st) {
+  const data = lanesData[laneId];
+  const el = document.createElement('div');
+  el.className = 'block ' + st + (b.needs_review ? ' needs-review' : '');
+  el.style.left = (b.start / duration * 100) + '%';
+  el.style.width = Math.max(0.15, (b.end - b.start) / duration * 100) + '%';
+  el.title = `[${laneId}] ${b.start.toFixed(2)}s ~ ${b.end.toFixed(2)}s  [${st}]` +
+             (b.needs_review ? '\n⚠ 需複核' : '');
+  if ((b.end - b.start) / duration > 0.012) {
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = `${b.start.toFixed(0)}s`;
+    el.appendChild(label);
+  }
+  el.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    data.marks[b.id] = nextState(stateOf(laneId, b.id));
+    activateLane(laneId, Math.max(0, b.start - 2.0) / duration);
+    player.play().catch(() => {});
+    saveMarks(laneId);
+    renderLaneBlocks(laneId);
+  });
+  timelineEl.appendChild(el);
+}
+
+function renderSubmeasures(laneId, timelineEl, measures) {
   const data = lanesData[laneId];
   for (const m of measures) {
     const el = document.createElement('div');
@@ -288,7 +259,7 @@ function renderSubmeasures(laneId, parentBlock, measures) {
     el.className = 'block submeasure ' + st;
     el.style.left = (m.start / duration * 100) + '%';
     el.style.width = Math.max(0.08, (m.end - m.start) / duration * 100) + '%';
-    el.title = `[${laneId}] ${m.start.toFixed(2)}s ~ ${m.end.toFixed(2)}s  小節 [${st}]（雙擊收合回上一層）`;
+    el.title = `[${laneId}] ${m.start.toFixed(2)}s ~ ${m.end.toFixed(2)}s  小節 [${st}]`;
     el.addEventListener('click', (ev) => {
       ev.stopPropagation();
       data.marks[m.id] = nextState(stateOf(laneId, m.id));
@@ -297,12 +268,35 @@ function renderSubmeasures(laneId, parentBlock, measures) {
       player.play().catch(() => {});
       saveMarks(laneId);
     });
-    el.addEventListener('dblclick', (ev) => {
-      ev.stopPropagation();
-      data.expandedBlocks.delete(parentBlock.id);
-      renderLaneBlocks(laneId);
-    });
     timelineEl.appendChild(el);
+  }
+}
+
+function renderLaneBlocks(laneId) {
+  const timelineEl = document.querySelector(`.lane-timeline[data-lane="${laneId}"]`);
+  const data = lanesData[laneId];
+  timelineEl.querySelectorAll('.block').forEach(el => el.remove());
+  for (const b of data.blocks) {
+    const st = stateOf(laneId, b.id);
+    const isPassed = (st === 'pass' || st === 'auto_pass');
+
+    if (isPassed) {
+      const cached = data.submeasureCache[b.id];
+      if (cached === undefined) {
+        // 還沒抓過小節資料：先照整塊畫，抓回來之後自動重畫成小節細標
+        ensureSubmeasures(laneId, b.id).then(measures => {
+          if (measures.length) renderLaneBlocks(laneId);
+        });
+        renderWholeBlock(laneId, timelineEl, b, st);
+        continue;
+      }
+      if (cached.length) {
+        renderSubmeasures(laneId, timelineEl, cached);
+        continue;
+      }
+      // 有查過但這條 Lane 找不到拍點資料（例如缺 beats.json）：退回整塊顯示
+    }
+    renderWholeBlock(laneId, timelineEl, b, st);
   }
 }
 
@@ -327,8 +321,6 @@ function buildLaneRows() {
       const resp = await fetch('/reset?lane=' + encodeURIComponent(lane.id), { method: 'POST' });
       const result = await resp.json();
       lanesData[lane.id].marks = result.marks;
-      lanesData[lane.id].expandedBlocks.clear();
-      lanesData[lane.id].submeasureCache = {};
       renderLaneBlocks(lane.id);
       renderSummary();
       statusEl.textContent = `[${lane.id}] 已重設為自動評分基準線。`;
@@ -413,7 +405,7 @@ async function init() {
     return { id: lane.id, blocks: await blocksResp.json(), marks: await marksResp.json() };
   }));
   for (const r of results) {
-    lanesData[r.id] = { blocks: r.blocks, marks: r.marks, expandedBlocks: new Set(), submeasureCache: {} };
+    lanesData[r.id] = { blocks: r.blocks, marks: r.marks, submeasureCache: {} };
     duration = Math.max(duration, 0, ...r.blocks.map(b => b.end));
   }
 
