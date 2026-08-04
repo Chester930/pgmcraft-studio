@@ -30,6 +30,29 @@ def load_mono(path, target_sr=None):
     return y, sr
 
 
+def resolve_base_audio_path(project_dir: str) -> str:
+    """回傳這首歌『純音檔、完全沒有混過任何 click』的路徑，用來當
+    synth.synthesize_click() 的底——絕對不能用 click/mix_with_click.wav，
+    那個檔案本身已經混了 V1 正式管線自己的 click，疊上去等於兩層 click
+    同時響、互相打架，讓人聽不出這條 Lane 自己準不準（Pass 177 實測發現
+    的真實 bug：在只有 V1 有拍、這條 Lane 沒有拍的時間點，仍能量到 V1
+    click 的殘留脈衝）。這裡跟正式管線 ClickSynthesisNode 用的 audio_path
+    blackboard 值（音質正規化階段的輸出）保持一致，維持全部 Lane 用同一個
+    底本公平比較。"""
+    import glob
+
+    source_dir = os.path.join(project_dir, "source")
+    if os.path.isdir(source_dir):
+        for suffix in ("_normalized.wav", "_denoised.wav", "_raw.wav"):
+            matches = sorted(glob.glob(os.path.join(source_dir, f"*{suffix}")))
+            if matches:
+                return matches[0]
+    raise FileNotFoundError(
+        f"找不到 {project_dir} 底下乾淨的原始音檔（source/*_normalized.wav 等），"
+        f"不能拿 click/mix_with_click.wav 頂替，那樣會把 V1 自己的 click 混進去。"
+    )
+
+
 def escalation_ranges(source_lane_dir: str):
     """回傳 [(start, end), ...]：上一條 Lane 自己的信心評分判定 needs_review
     的區塊時間範圍，合併相鄰/重疊的範圍。

@@ -25,6 +25,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from lane_common import resolve_base_audio_path
 
 CONFIRM_TOLERANCE_SEC = 0.06     # 拍點附近多近才算「有真實音頭佐證」
 WINDOW_SEC = 4.0                 # 信心度滾動窗口
@@ -147,7 +150,7 @@ def main():
     project_dir = args.project_dir
     kick_path = os.path.join(project_dir, "stems", "drums", "kick.wav")
     snare_path = os.path.join(project_dir, "stems", "drums", "snare.wav")
-    audio_path = os.path.join(project_dir, "click", "mix_with_click.wav")
+    audio_path = resolve_base_audio_path(project_dir)
 
     for p in (kick_path, snare_path, audio_path):
         if not os.path.exists(p):

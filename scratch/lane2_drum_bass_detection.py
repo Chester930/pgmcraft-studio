@@ -32,7 +32,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lane_common import load_mono, escalation_ranges, splice_beats, build_confidence_blocks
+from lane_common import load_mono, escalation_ranges, splice_beats, build_confidence_blocks, resolve_base_audio_path
 
 BASS_STEM_PRIORITY = ("synth_bass_808.wav", "electric_bass.wav", "bass.wav")
 
@@ -92,7 +92,7 @@ def main():
     project_dir = args.project_dir
     kick_path = os.path.join(project_dir, "stems", "drums", "kick.wav")
     snare_path = os.path.join(project_dir, "stems", "drums", "snare.wav")
-    audio_path = os.path.join(project_dir, "click", "mix_with_click.wav")
+    audio_path = resolve_base_audio_path(project_dir)
     bass_path = _find_bass_stem(project_dir)
     source_lane_dir = os.path.join(project_dir, "lanes", args.source_lane)
     source_beats_path = os.path.join(source_lane_dir, "beats.json")
