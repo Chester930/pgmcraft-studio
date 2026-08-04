@@ -121,3 +121,24 @@ def compare_beat_outputs(output1, output2, tolerance_sec: float = 1e-6) -> dict:
         "max_delta_sec": max_delta,
         "verdict": verdict,
     }
+
+
+def compare_audio_arrays(arr1, arr2) -> dict:
+    """Pass 173: compare two raw audio arrays (e.g. two Demucs separation runs
+    on the same input) for bit-exact reproducibility.
+
+    Used by scratch/pass173_demucs_determinism_check.py, which found that
+    Demucs's default `shifts=1` random-shift test-time augmentation makes
+    htdemucs_ft non-reproducible run-to-run (max_abs_diff ~0.234) even under
+    enable_deterministic_mode(), while `shifts=0` is bit-exact.
+    """
+    import numpy as np
+
+    arr1 = np.asarray(arr1)
+    arr2 = np.asarray(arr2)
+    if arr1.shape != arr2.shape:
+        return {"bit_exact": False, "max_abs_diff": None, "shape_mismatch": True}
+
+    bit_exact = bool(np.array_equal(arr1, arr2))
+    max_abs_diff = float(np.max(np.abs(arr1 - arr2))) if arr1.size else 0.0
+    return {"bit_exact": bit_exact, "max_abs_diff": max_abs_diff, "shape_mismatch": False}
