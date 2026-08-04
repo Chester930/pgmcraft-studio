@@ -60,8 +60,19 @@ PAGE_HTML = r"""<!doctype html>
   .legend { font-size: 12px; color: #aaa; margin-bottom: 10px; display: flex; gap: 16px; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
-  #timeline {
-    position: relative; height: 64px; background: #2a2a30; border-radius: 6px;
+  #lane-rows { position: relative; }
+  .lane-row { margin-bottom: 10px; }
+  .lane-label {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc;
+    margin-bottom: 4px; cursor: pointer; padding: 3px 8px; border-radius: 4px;
+    background: #29292f; border: 1px solid transparent; width: fit-content;
+  }
+  .lane-label:hover { background: #34343c; }
+  .lane-label.active { background: #2f6fb2; color: #fff; border-color: #4a90d9; }
+  .lane-label .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; flex: none; }
+  .lane-label.active .dot { background: #7fd67f; }
+  .lane-timeline {
+    position: relative; height: 46px; background: #2a2a30; border-radius: 6px;
     cursor: pointer; overflow: hidden; border: 1px solid #3a3a42;
   }
   .block {
@@ -81,7 +92,7 @@ PAGE_HTML = r"""<!doctype html>
   }
   #playhead {
     position: absolute; top: 0; bottom: 0; width: 2px; background: #ffd54a;
-    pointer-events: none; z-index: 5;
+    pointer-events: none; z-index: 5; left: 0;
   }
   #status { margin-top: 14px; font-size: 13px; color: #bbb; }
   #summary { margin-top: 6px; font-size: 12px; color: #888; }
@@ -97,28 +108,26 @@ PAGE_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-  <h1>缺口校準審查工具</h1>
+  <h1>缺口校準審查工具（多軌同時檢視）</h1>
   <div class="sub" id="project-path"></div>
-
-  <select class="tool" id="lane-select"></select>
 
   <audio id="player" controls preload="metadata"></audio>
 
   <div class="legend">
     <span><i class="swatch" style="background:#3a5a7a"></i>既有標準自動通過</span>
-    <span><i class="swatch" style="background:#4a4a55"></i>待複核（黃框＝既有標準判定可疑）</span>
+    <span><i class="swatch" style="background:#4a4a55"></i>待複核（黃框＝標準判定可疑）</span>
     <span><i class="swatch" style="background:#2f8f4e"></i>人工通過</span>
     <span><i class="swatch" style="background:#b23b3b"></i>人工不通過</span>
-    <span style="margin-left:auto">點時間軸空白處＝跳轉播放；點區塊＝循環切換狀態（同時跳到該區塊前 2 秒）</span>
+    <span style="margin-left:auto">點軌道標籤＝切換目前播放的 Lane；點時間軸空白處＝跳轉播放；點區塊＝循環切換狀態（同時跳到該區塊前 2 秒並切換到該 Lane）</span>
   </div>
 
-  <div id="timeline"><div id="playhead"></div></div>
+  <div id="multi-timeline"><div id="lane-rows"><div id="playhead"></div></div></div>
 
-  <div>
-    <button class="tool" id="btn-prev">← 上一個待複核</button>
+  <div style="margin-top:10px">
+    <button class="tool" id="btn-prev">← 上一個待複核（目前播放中的 Lane）</button>
     <button class="tool" id="btn-next">下一個待複核 →</button>
-    <button class="tool" id="btn-export">匯出標記 JSON</button>
-    <button class="tool" id="btn-submit" style="background:#2f6fb2;border-color:#3a7fc2">送出複核結果</button>
+    <button class="tool" id="btn-export">匯出目前 Lane 標記 JSON</button>
+    <button class="tool" id="btn-submit-all" style="background:#2f6fb2;border-color:#3a7fc2">送出全部 Lane 複核結果</button>
   </div>
 
   <div id="status">載入中...</div>
@@ -126,67 +135,88 @@ PAGE_HTML = r"""<!doctype html>
   <div id="submit-status" style="margin-top:8px;font-size:13px;color:#7fc27f"></div>
 
 <script>
-let blocks = [];
-let marks = {};
+let lanesMeta = [];   // [{id, name}]
+let lanesData = {};   // id -> {blocks, marks}
 let duration = 0;
-let currentLane = null;
+let activeLane = null;
 
 const player = document.getElementById('player');
-const timeline = document.getElementById('timeline');
+const laneRows = document.getElementById('lane-rows');
 const playhead = document.getElementById('playhead');
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
-const laneSelect = document.getElementById('lane-select');
 
-function laneQS() {
-  return '?lane=' + encodeURIComponent(currentLane);
-}
-
-function stateOf(id) {
-  return marks[id] || 'unmarked';
+function stateOf(laneId, blockId) {
+  return lanesData[laneId].marks[blockId] || 'unmarked';
 }
 
 function nextState(s) {
   return { unmarked: 'pass', pass: 'fail', fail: 'unmarked', auto_pass: 'pass' }[s] || 'unmarked';
 }
 
-async function saveMarks() {
-  const resp = await fetch('/marks' + laneQS(), {
+async function saveMarks(laneId) {
+  const resp = await fetch('/marks?lane=' + encodeURIComponent(laneId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(marks),
+    body: JSON.stringify(lanesData[laneId].marks),
   });
   const result = await resp.json();
   if (result.propagated_to && result.propagated_to.length) {
-    statusEl.textContent = `不通過已往後傳遞到 Lane：${result.propagated_to.join(', ')}`;
+    statusEl.textContent = `[${laneId}] 不通過已往後傳遞到 Lane：${result.propagated_to.join(', ')}`;
+    for (const affectedId of result.propagated_to) {
+      const r = await fetch('/marks?lane=' + encodeURIComponent(affectedId));
+      lanesData[affectedId].marks = await r.json();
+      renderLaneBlocks(affectedId);
+    }
   }
   renderSummary();
 }
 
 function renderSummary() {
-  const total = blocks.length;
-  const needReview = blocks.filter(b => b.needs_review).length;
-  const passCount = Object.values(marks).filter(v => v === 'pass').length;
-  const failCount = Object.values(marks).filter(v => v === 'fail').length;
-  const autoCount = Object.values(marks).filter(v => v === 'auto_pass').length;
-  const unmarked = blocks.filter(b => b.needs_review && !marks[b.id]).length;
-  summaryEl.textContent =
-    `共 ${total} 個區塊（自動合併，非小節切塊）| 既有標準判定可疑需複核: ${needReview} | ` +
-    `人工通過 ${passCount} | 人工不通過 ${failCount} | 既有標準自動通過 ${autoCount} | 待複核 ${unmarked}`;
+  const lines = lanesMeta.map(lane => {
+    const data = lanesData[lane.id];
+    const total = data.blocks.length;
+    const needReview = data.blocks.filter(b => b.needs_review).length;
+    const passCount = Object.values(data.marks).filter(v => v === 'pass').length;
+    const failCount = Object.values(data.marks).filter(v => v === 'fail').length;
+    const autoCount = Object.values(data.marks).filter(v => v === 'auto_pass').length;
+    const unmarked = data.blocks.filter(b => b.needs_review && !data.marks[b.id]).length;
+    return `[${lane.name}] 共 ${total} 塊 | 需複核 ${needReview} | 通過 ${passCount} | ` +
+           `不通過 ${failCount} | 自動通過 ${autoCount} | 待複核 ${unmarked}`;
+  });
+  summaryEl.innerHTML = lines.join('<br>');
 }
 
-function renderBlocks() {
-  timeline.querySelectorAll('.block').forEach(el => el.remove());
-  for (const b of blocks) {
+function activateLane(laneId, seekFrac) {
+  const wasActive = activeLane === laneId;
+  activeLane = laneId;
+  document.querySelectorAll('.lane-label').forEach(el => {
+    el.classList.toggle('active', el.dataset.lane === laneId);
+  });
+  const targetTime = seekFrac != null ? seekFrac * duration : player.currentTime;
+  if (!wasActive) {
+    player.src = '/audio/mix_with_click.wav?lane=' + encodeURIComponent(laneId);
+    player.addEventListener('loadedmetadata', function onLoaded() {
+      player.currentTime = Math.max(0, Math.min(player.duration, targetTime));
+      player.removeEventListener('loadedmetadata', onLoaded);
+    });
+  } else if (seekFrac != null) {
+    player.currentTime = Math.max(0, Math.min(duration, targetTime));
+  }
+}
+
+function renderLaneBlocks(laneId) {
+  const timelineEl = document.querySelector(`.lane-timeline[data-lane="${laneId}"]`);
+  const data = lanesData[laneId];
+  timelineEl.querySelectorAll('.block').forEach(el => el.remove());
+  for (const b of data.blocks) {
     const el = document.createElement('div');
-    const st = stateOf(b.id);
+    const st = stateOf(laneId, b.id);
     el.className = 'block ' + st + (b.needs_review ? ' needs-review' : '');
     el.style.left = (b.start / duration * 100) + '%';
     el.style.width = Math.max(0.15, (b.end - b.start) / duration * 100) + '%';
-    const rmsTxt = b.rhythm_rms != null ? b.rhythm_rms.toFixed(4) : 'n/a';
-    const jumpTxt = b.bpm_jump_ratio != null ? (b.bpm_jump_ratio * 100).toFixed(0) + '%' : 'n/a';
-    el.title = `${b.start.toFixed(2)}s ~ ${b.end.toFixed(2)}s  [${st}]\n` +
-               `既有標準：節奏能量=${rmsTxt}  BPM跳動=${jumpTxt}  ${b.needs_review ? '⚠ 標準判定可疑' : '標準判定正常'}`;
+    el.title = `[${laneId}] ${b.start.toFixed(2)}s ~ ${b.end.toFixed(2)}s  [${st}]` +
+               (b.needs_review ? '\n⚠ 需複核' : '');
     if ((b.end - b.start) / duration > 0.012) {
       const label = document.createElement('div');
       label.className = 'label';
@@ -195,100 +225,122 @@ function renderBlocks() {
     }
     el.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      marks[b.id] = nextState(stateOf(b.id));
-      el.className = 'block ' + marks[b.id] + (b.needs_review ? ' needs-review' : '');
-      const seekTo = Math.max(0, b.start - 2.0);
-      player.currentTime = seekTo;
+      data.marks[b.id] = nextState(stateOf(laneId, b.id));
+      el.className = 'block ' + data.marks[b.id] + (b.needs_review ? ' needs-review' : '');
+      activateLane(laneId, Math.max(0, b.start - 2.0) / duration);
       player.play().catch(() => {});
-      saveMarks();
+      saveMarks(laneId);
     });
-    timeline.appendChild(el);
+    timelineEl.appendChild(el);
   }
-  renderSummary();
 }
 
-timeline.addEventListener('click', (ev) => {
-  const rect = timeline.getBoundingClientRect();
-  const frac = (ev.clientX - rect.left) / rect.width;
-  player.currentTime = Math.max(0, Math.min(duration, frac * duration));
-});
+function buildLaneRows() {
+  for (const lane of lanesMeta) {
+    const row = document.createElement('div');
+    row.className = 'lane-row';
+
+    const label = document.createElement('div');
+    label.className = 'lane-label';
+    label.dataset.lane = lane.id;
+    label.innerHTML = `<span class="dot"></span><span>${lane.name}</span>`;
+    label.addEventListener('click', () => activateLane(lane.id, duration ? player.currentTime / duration : 0));
+
+    const tl = document.createElement('div');
+    tl.className = 'lane-timeline';
+    tl.dataset.lane = lane.id;
+    tl.addEventListener('click', (ev) => {
+      const rect = tl.getBoundingClientRect();
+      const frac = (ev.clientX - rect.left) / rect.width;
+      activateLane(lane.id, frac);
+    });
+
+    row.appendChild(label);
+    row.appendChild(tl);
+    laneRows.appendChild(row);
+  }
+}
 
 player.addEventListener('timeupdate', () => {
   if (!duration) return;
-  const pct = (player.currentTime / duration) * 100;
-  playhead.style.left = pct + '%';
+  playhead.style.left = (player.currentTime / duration * 100) + '%';
 });
 
-function needsAttention(b) {
-  return b.needs_review && stateOf(b.id) === 'unmarked';
+function needsAttention(laneId, b) {
+  return b.needs_review && stateOf(laneId, b.id) === 'unmarked';
 }
 document.getElementById('btn-prev').addEventListener('click', () => {
+  if (!activeLane) return;
   const cur = player.currentTime;
-  const candidates = blocks.filter(b => needsAttention(b) && b.start < cur - 0.5);
+  const candidates = lanesData[activeLane].blocks.filter(b => needsAttention(activeLane, b) && b.start < cur - 0.5);
   if (candidates.length) {
     const b = candidates[candidates.length - 1];
     player.currentTime = Math.max(0, b.start - 2.0);
   }
 });
 document.getElementById('btn-next').addEventListener('click', () => {
+  if (!activeLane) return;
   const cur = player.currentTime;
-  const candidates = blocks.filter(b => needsAttention(b) && b.start > cur + 0.5);
+  const candidates = lanesData[activeLane].blocks.filter(b => needsAttention(activeLane, b) && b.start > cur + 0.5);
   if (candidates.length) {
     const b = candidates[0];
     player.currentTime = Math.max(0, b.start - 2.0);
   }
 });
 document.getElementById('btn-export').addEventListener('click', async () => {
-  const resp = await fetch('/marks' + laneQS());
+  if (!activeLane) return;
+  const resp = await fetch('/marks?lane=' + encodeURIComponent(activeLane));
   const data = await resp.json();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `gap_review_marks_${currentLane}.json`; a.click();
+  a.href = url; a.download = `gap_review_marks_${activeLane}.json`; a.click();
 });
 
-document.getElementById('btn-submit').addEventListener('click', async () => {
-  const resp = await fetch('/submit' + laneQS(), { method: 'POST' });
-  const report = await resp.json();
-  const el = document.getElementById('submit-status');
-  el.textContent =
-    `[${currentLane}] 已送出：共 ${report.segments.length} 個區塊，通過 ${report.pass_count}、` +
-    `不通過 ${report.fail_count}、自動通過 ${report.auto_pass_count}、` +
-    `待複核 ${report.unmarked_count} —— 已存到 gap_review_report${currentLane === 'current' ? '' : '_' + currentLane}.json`;
+document.getElementById('btn-submit-all').addEventListener('click', async () => {
+  const lines = [];
+  for (const lane of lanesMeta) {
+    const resp = await fetch('/submit?lane=' + encodeURIComponent(lane.id), { method: 'POST' });
+    const report = await resp.json();
+    lines.push(`[${lane.name}] 共 ${report.segments.length} 塊，通過 ${report.pass_count}、` +
+               `不通過 ${report.fail_count}、自動通過 ${report.auto_pass_count}、待複核 ${report.unmarked_count}`);
+  }
+  document.getElementById('submit-status').innerHTML = '已送出全部 Lane：<br>' + lines.join('<br>');
 });
-
-async function loadLane(laneId) {
-  currentLane = laneId;
-  laneSelect.value = laneId;
-  document.getElementById('project-path').textContent = `Lane: ${laneId}`;
-  statusEl.textContent = '載入中...';
-  duration = 0;
-
-  const [blocksResp, marksResp] = await Promise.all([
-    fetch('/blocks' + laneQS()),
-    fetch('/marks' + laneQS()),
-  ]);
-  blocks = await blocksResp.json();
-  marks = await marksResp.json();
-
-  player.src = '/audio/mix_with_click.wav' + laneQS();
-  player.addEventListener('loadedmetadata', function onLoaded() {
-    duration = player.duration;
-    renderBlocks();
-    statusEl.textContent = `[${laneId}] 已載入 ${blocks.length} 個自動合併區塊，總長 ${duration.toFixed(1)} 秒。`;
-    player.removeEventListener('loadedmetadata', onLoaded);
-  });
-}
-
-laneSelect.addEventListener('change', () => loadLane(laneSelect.value));
 
 async function init() {
   const lanesResp = await fetch('/lanes');
-  const lanes = await lanesResp.json();
-  laneSelect.innerHTML = lanes.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
-  if (lanes.length) {
-    await loadLane(lanes[0].id);
+  lanesMeta = await lanesResp.json();
+  if (!lanesMeta.length) {
+    statusEl.textContent = '沒有可用的 Lane。';
+    return;
   }
+
+  const results = await Promise.all(lanesMeta.map(async lane => {
+    const [blocksResp, marksResp] = await Promise.all([
+      fetch('/blocks?lane=' + encodeURIComponent(lane.id)),
+      fetch('/marks?lane=' + encodeURIComponent(lane.id)),
+    ]);
+    return { id: lane.id, blocks: await blocksResp.json(), marks: await marksResp.json() };
+  }));
+  for (const r of results) {
+    lanesData[r.id] = { blocks: r.blocks, marks: r.marks };
+    duration = Math.max(duration, 0, ...r.blocks.map(b => b.end));
+  }
+
+  document.getElementById('project-path').textContent = `共 ${lanesMeta.length} 條 Lane，同時顯示於下方，可直接比對／修正。`;
+
+  buildLaneRows();
+  for (const lane of lanesMeta) renderLaneBlocks(lane.id);
+  renderSummary();
+
+  activeLane = lanesMeta[0].id;
+  document.querySelector(`.lane-label[data-lane="${activeLane}"]`).classList.add('active');
+  player.src = '/audio/mix_with_click.wav?lane=' + encodeURIComponent(activeLane);
+  player.addEventListener('loadedmetadata', function onLoaded() {
+    statusEl.textContent = `已載入 ${lanesMeta.length} 條 Lane，總長 ${duration.toFixed(1)} 秒。`;
+    player.removeEventListener('loadedmetadata', onLoaded);
+  });
 }
 init();
 </script>
