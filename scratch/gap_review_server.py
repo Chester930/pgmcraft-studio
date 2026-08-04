@@ -1,0 +1,698 @@
+r"""
+Pass 176 — 缺口校準審查工具（本地網頁播放器）
+
+背景：使用者需要能「完整播放歌曲 + click，時間軸上疊區塊，可以拖拉播放位置聽
+前後脈絡，也可以直接點區塊切換通過/不通過」，不是丟一堆切好的短音檔片段讓人手動比對。
+
+重要設計原則（使用者明確要求）：
+1. 區塊**不是**照 measure_map 的小節邊界切——分析當下小節本來就還沒確認，用小節
+   切塊等於預設小節邊界已經是對的，違背了「複核小節邊界本身可能有問題」這個目的。
+   改成對節奏能量訊號（跟 BeatFusionArbitratorNode 判斷「有沒有鼓」同一份訊號）
+   連續取樣，依信心門檻自動判定，相鄰同狀態的取樣點自動合併成一個區塊。
+2. **不用每個區塊都人工標記**——既有標準（節奏能量門檻）判定「正常」的區塊，
+   啟動時就自動標成 auto_pass，不佔用複核時間；只有既有標準也判定「可疑」
+   （黃框標示）的區塊才需要人工複核。
+
+用法：
+    python scratch/gap_review_server.py --project-dir "<專案資料夾路徑>" [--port 8765]
+
+<專案資料夾路徑> 必須是一個 module3 專案輸出資料夾，例如：
+    d:\Users\666\Desktop\UVR5 音檔\自動節拍器\outputs\pass175_current_pipeline_check\【Hatsune_Miku】_World_is_Mine_ryo（supercell）【初音ミク】
+
+裡面要有 click/mix_with_click.wav；stems/submix/track_a_rhythm.wav 有的話會拿來自動判斷。
+
+啟動後在瀏覽器打開 http://127.0.0.1:<port> 即可使用：
+- 完整歌曲 + click 播放器（支援拖拉進度條）
+- 時間軸下方疊自動合併出來的區塊，顏色代表狀態
+  （藍=既有標準自動通過／灰=待複核／綠=人工通過／紅=人工不通過，黃框=標準判定可疑）
+- 點時間軸空白處 → 跳到該時間點播放
+- 點區塊 → 循環切換該區塊狀態，並自動跳到該區塊開始前 2 秒，方便聽清楚接縫
+- 「上一個/下一個待複核」按鈕只會跳到還沒人工確認、且既有標準也判定可疑的區塊
+- 每次切換狀態都會即時 POST 存到 <專案資料夾>/reports/gap_review_marks.json，
+  關掉重開也不會遺失
+
+只用 Python 標準庫，不需要額外安裝套件。支援 HTTP Range 請求，大檔案也能順暢拖拉進度。
+"""
+
+import argparse
+import json
+import mimetypes
+import os
+import re
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PAGE_HTML = r"""<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>缺口校準審查工具</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+    margin: 0; padding: 24px; background: #1e1e22; color: #eee;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #999; font-size: 13px; margin-bottom: 20px; }
+  audio { width: 100%; margin-bottom: 8px; }
+  .legend { font-size: 12px; color: #aaa; margin-bottom: 10px; display: flex; gap: 16px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+  #timeline {
+    position: relative; height: 64px; background: #2a2a30; border-radius: 6px;
+    cursor: pointer; overflow: hidden; border: 1px solid #3a3a42;
+  }
+  .block {
+    position: absolute; top: 0; bottom: 0; box-sizing: border-box;
+    border-right: 1px solid rgba(0,0,0,0.35);
+    transition: background 0.15s;
+  }
+  .block.unmarked { background: #4a4a55; }
+  .block.auto_pass { background: #3a5a7a; }
+  .block.pass { background: #2f8f4e; }
+  .block.fail { background: #b23b3b; }
+  .block.needs-review { outline: 2px solid #ffd54a; outline-offset: -2px; z-index: 2; }
+  .block:hover { filter: brightness(1.25); }
+  .block .label {
+    position: absolute; bottom: 2px; left: 3px; font-size: 9px; color: rgba(255,255,255,0.7);
+    pointer-events: none; white-space: nowrap;
+  }
+  #playhead {
+    position: absolute; top: 0; bottom: 0; width: 2px; background: #ffd54a;
+    pointer-events: none; z-index: 5;
+  }
+  #status { margin-top: 14px; font-size: 13px; color: #bbb; }
+  #summary { margin-top: 6px; font-size: 12px; color: #888; }
+  button.tool {
+    background: #333; color: #eee; border: 1px solid #555; border-radius: 4px;
+    padding: 4px 10px; font-size: 12px; cursor: pointer; margin-right: 8px;
+  }
+  button.tool:hover { background: #444; }
+  select.tool {
+    background: #333; color: #eee; border: 1px solid #555; border-radius: 4px;
+    padding: 4px 10px; font-size: 13px; margin-bottom: 12px;
+  }
+</style>
+</head>
+<body>
+  <h1>缺口校準審查工具</h1>
+  <div class="sub" id="project-path"></div>
+
+  <select class="tool" id="lane-select"></select>
+
+  <audio id="player" controls preload="metadata"></audio>
+
+  <div class="legend">
+    <span><i class="swatch" style="background:#3a5a7a"></i>既有標準自動通過</span>
+    <span><i class="swatch" style="background:#4a4a55"></i>待複核（黃框＝既有標準判定可疑）</span>
+    <span><i class="swatch" style="background:#2f8f4e"></i>人工通過</span>
+    <span><i class="swatch" style="background:#b23b3b"></i>人工不通過</span>
+    <span style="margin-left:auto">點時間軸空白處＝跳轉播放；點區塊＝循環切換狀態（同時跳到該區塊前 2 秒）</span>
+  </div>
+
+  <div id="timeline"><div id="playhead"></div></div>
+
+  <div>
+    <button class="tool" id="btn-prev">← 上一個待複核</button>
+    <button class="tool" id="btn-next">下一個待複核 →</button>
+    <button class="tool" id="btn-export">匯出標記 JSON</button>
+    <button class="tool" id="btn-submit" style="background:#2f6fb2;border-color:#3a7fc2">送出複核結果</button>
+  </div>
+
+  <div id="status">載入中...</div>
+  <div id="summary"></div>
+  <div id="submit-status" style="margin-top:8px;font-size:13px;color:#7fc27f"></div>
+
+<script>
+let blocks = [];
+let marks = {};
+let duration = 0;
+let currentLane = null;
+
+const player = document.getElementById('player');
+const timeline = document.getElementById('timeline');
+const playhead = document.getElementById('playhead');
+const statusEl = document.getElementById('status');
+const summaryEl = document.getElementById('summary');
+const laneSelect = document.getElementById('lane-select');
+
+function laneQS() {
+  return '?lane=' + encodeURIComponent(currentLane);
+}
+
+function stateOf(id) {
+  return marks[id] || 'unmarked';
+}
+
+function nextState(s) {
+  return { unmarked: 'pass', pass: 'fail', fail: 'unmarked', auto_pass: 'pass' }[s] || 'unmarked';
+}
+
+async function saveMarks() {
+  const resp = await fetch('/marks' + laneQS(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(marks),
+  });
+  const result = await resp.json();
+  if (result.propagated_to && result.propagated_to.length) {
+    statusEl.textContent = `不通過已往後傳遞到 Lane：${result.propagated_to.join(', ')}`;
+  }
+  renderSummary();
+}
+
+function renderSummary() {
+  const total = blocks.length;
+  const needReview = blocks.filter(b => b.needs_review).length;
+  const passCount = Object.values(marks).filter(v => v === 'pass').length;
+  const failCount = Object.values(marks).filter(v => v === 'fail').length;
+  const autoCount = Object.values(marks).filter(v => v === 'auto_pass').length;
+  const unmarked = blocks.filter(b => b.needs_review && !marks[b.id]).length;
+  summaryEl.textContent =
+    `共 ${total} 個區塊（自動合併，非小節切塊）| 既有標準判定可疑需複核: ${needReview} | ` +
+    `人工通過 ${passCount} | 人工不通過 ${failCount} | 既有標準自動通過 ${autoCount} | 待複核 ${unmarked}`;
+}
+
+function renderBlocks() {
+  timeline.querySelectorAll('.block').forEach(el => el.remove());
+  for (const b of blocks) {
+    const el = document.createElement('div');
+    const st = stateOf(b.id);
+    el.className = 'block ' + st + (b.needs_review ? ' needs-review' : '');
+    el.style.left = (b.start / duration * 100) + '%';
+    el.style.width = Math.max(0.15, (b.end - b.start) / duration * 100) + '%';
+    const rmsTxt = b.rhythm_rms != null ? b.rhythm_rms.toFixed(4) : 'n/a';
+    const jumpTxt = b.bpm_jump_ratio != null ? (b.bpm_jump_ratio * 100).toFixed(0) + '%' : 'n/a';
+    el.title = `${b.start.toFixed(2)}s ~ ${b.end.toFixed(2)}s  [${st}]\n` +
+               `既有標準：節奏能量=${rmsTxt}  BPM跳動=${jumpTxt}  ${b.needs_review ? '⚠ 標準判定可疑' : '標準判定正常'}`;
+    if ((b.end - b.start) / duration > 0.012) {
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = `${b.start.toFixed(0)}s`;
+      el.appendChild(label);
+    }
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      marks[b.id] = nextState(stateOf(b.id));
+      el.className = 'block ' + marks[b.id] + (b.needs_review ? ' needs-review' : '');
+      const seekTo = Math.max(0, b.start - 2.0);
+      player.currentTime = seekTo;
+      player.play().catch(() => {});
+      saveMarks();
+    });
+    timeline.appendChild(el);
+  }
+  renderSummary();
+}
+
+timeline.addEventListener('click', (ev) => {
+  const rect = timeline.getBoundingClientRect();
+  const frac = (ev.clientX - rect.left) / rect.width;
+  player.currentTime = Math.max(0, Math.min(duration, frac * duration));
+});
+
+player.addEventListener('timeupdate', () => {
+  if (!duration) return;
+  const pct = (player.currentTime / duration) * 100;
+  playhead.style.left = pct + '%';
+});
+
+function needsAttention(b) {
+  return b.needs_review && stateOf(b.id) === 'unmarked';
+}
+document.getElementById('btn-prev').addEventListener('click', () => {
+  const cur = player.currentTime;
+  const candidates = blocks.filter(b => needsAttention(b) && b.start < cur - 0.5);
+  if (candidates.length) {
+    const b = candidates[candidates.length - 1];
+    player.currentTime = Math.max(0, b.start - 2.0);
+  }
+});
+document.getElementById('btn-next').addEventListener('click', () => {
+  const cur = player.currentTime;
+  const candidates = blocks.filter(b => needsAttention(b) && b.start > cur + 0.5);
+  if (candidates.length) {
+    const b = candidates[0];
+    player.currentTime = Math.max(0, b.start - 2.0);
+  }
+});
+document.getElementById('btn-export').addEventListener('click', async () => {
+  const resp = await fetch('/marks' + laneQS());
+  const data = await resp.json();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `gap_review_marks_${currentLane}.json`; a.click();
+});
+
+document.getElementById('btn-submit').addEventListener('click', async () => {
+  const resp = await fetch('/submit' + laneQS(), { method: 'POST' });
+  const report = await resp.json();
+  const el = document.getElementById('submit-status');
+  el.textContent =
+    `[${currentLane}] 已送出：共 ${report.segments.length} 個區塊，通過 ${report.pass_count}、` +
+    `不通過 ${report.fail_count}、自動通過 ${report.auto_pass_count}、` +
+    `待複核 ${report.unmarked_count} —— 已存到 gap_review_report${currentLane === 'current' ? '' : '_' + currentLane}.json`;
+});
+
+async function loadLane(laneId) {
+  currentLane = laneId;
+  laneSelect.value = laneId;
+  document.getElementById('project-path').textContent = `Lane: ${laneId}`;
+  statusEl.textContent = '載入中...';
+  duration = 0;
+
+  const [blocksResp, marksResp] = await Promise.all([
+    fetch('/blocks' + laneQS()),
+    fetch('/marks' + laneQS()),
+  ]);
+  blocks = await blocksResp.json();
+  marks = await marksResp.json();
+
+  player.src = '/audio/mix_with_click.wav' + laneQS();
+  player.addEventListener('loadedmetadata', function onLoaded() {
+    duration = player.duration;
+    renderBlocks();
+    statusEl.textContent = `[${laneId}] 已載入 ${blocks.length} 個自動合併區塊，總長 ${duration.toFixed(1)} 秒。`;
+    player.removeEventListener('loadedmetadata', onLoaded);
+  });
+}
+
+laneSelect.addEventListener('change', () => loadLane(laneSelect.value));
+
+async function init() {
+  const lanesResp = await fetch('/lanes');
+  const lanes = await lanesResp.json();
+  laneSelect.innerHTML = lanes.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+  if (lanes.length) {
+    await loadLane(lanes[0].id);
+  }
+}
+init();
+</script>
+</body>
+</html>
+"""
+
+
+RMS_LOW_ENERGY_THRESHOLD = 0.02   # 沿用先前分析用過的門檻：低於此值視為「鼓聲稀疏/無鼓」
+SAMPLE_STEP_SEC = 0.5             # 連續取樣間隔——跟小節切法完全無關
+MIN_SEGMENT_SEC = 1.5             # 短於此長度的區段併入前一段，避免切得太碎
+
+
+def load_blocks(project_dir: str, audio_path: str):
+    """區塊是對節奏能量訊號連續取樣、依「既有標準判定可疑與否」自動合併出來的，
+    不是照 measure_map 的小節邊界切——分析當下小節本來就還沒確認，用小節切塊等於
+    預設小節邊界已經是對的，違背了「複核小節邊界本身可能有問題」這個目的。
+
+    節奏能量訊號就是 BeatFusionArbitratorNode 判斷「這裡有沒有鼓」用的同一份
+    stems/submix/track_a_rhythm.wav，不是另外發明一套標準。找不到這份訊號時，
+    整首歌會變成一個「待複核」的大區塊（不假裝能判斷）。
+    """
+    import numpy as np
+    import soundfile as sf
+
+    info = sf.info(audio_path)
+    duration = info.frames / float(info.samplerate)
+
+    rhythm_path = os.path.join(project_dir, "stems", "submix", "track_a_rhythm.wav")
+    if not os.path.exists(rhythm_path):
+        return [{"id": "seg-0", "start": 0.0, "end": duration, "rhythm_rms": None,
+                 "bpm_jump_ratio": None, "needs_review": True}]
+
+    y, sr = sf.read(rhythm_path)
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+
+    def rms_at(t, win=0.5):
+        s = int(max(0, (t - win / 2)) * sr)
+        e = int(min(len(y), (t + win / 2)) * sr)
+        return float(np.sqrt(np.mean(y[s:e] ** 2))) if e > s else 0.0
+
+    times = np.arange(0.0, duration, SAMPLE_STEP_SEC)
+    samples = [rms_at(t) for t in times]
+    flags = [r < RMS_LOW_ENERGY_THRESHOLD for r in samples]
+
+    # 連續同狀態的取樣點合併成一個區段（run-length merge）
+    raw_segments = []
+    seg_start_idx = 0
+    for i in range(1, len(times) + 1):
+        if i == len(times) or flags[i] != flags[seg_start_idx]:
+            seg_end = duration if i == len(times) else times[i]
+            raw_segments.append({
+                "start": float(times[seg_start_idx]),
+                "end": float(seg_end),
+                "needs_review": flags[seg_start_idx],
+                "rms_values": samples[seg_start_idx:i],
+            })
+            seg_start_idx = i
+
+    # 太短的區段併入前一段，避免雜訊把時間軸切得太碎
+    merged = []
+    for seg in raw_segments:
+        if merged and (seg["end"] - seg["start"]) < MIN_SEGMENT_SEC:
+            merged[-1]["end"] = seg["end"]
+            merged[-1]["rms_values"].extend(seg["rms_values"])
+        else:
+            merged.append(seg)
+    # 再合併一次相鄰、狀態相同的區段（併短區段可能讓兩個同狀態區段變相鄰）
+    final_segments = []
+    for seg in merged:
+        if final_segments and final_segments[-1]["needs_review"] == seg["needs_review"]:
+            final_segments[-1]["end"] = seg["end"]
+            final_segments[-1]["rms_values"].extend(seg["rms_values"])
+        else:
+            final_segments.append(seg)
+
+    blocks = []
+    for i, seg in enumerate(final_segments):
+        avg_rms = float(np.mean(seg["rms_values"])) if seg["rms_values"] else None
+        blocks.append({
+            "id": f"seg-{i}",
+            "start": seg["start"],
+            "end": seg["end"],
+            "rhythm_rms": round(avg_rms, 5) if avg_rms is not None else None,
+            "bpm_jump_ratio": None,
+            "needs_review": bool(seg["needs_review"]),
+        })
+    return blocks
+
+
+def _initial_marks(blocks, marks_path: str) -> dict:
+    """既有標準（節奏能量門檻）判定不可疑的區塊，預設直接標成 auto_pass，
+    不佔用人工複核的時間；只有 needs_review 的區塊才留白等人工判斷。
+    已經存在的標記（不管是人工標的還是上次啟動時自動填的）一律保留，不覆蓋。"""
+    marks = {}
+    if os.path.exists(marks_path):
+        try:
+            with open(marks_path, "r", encoding="utf-8") as f:
+                marks = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            marks = {}
+
+    changed = False
+    for b in blocks:
+        if b["id"] not in marks and not b["needs_review"]:
+            marks[b["id"]] = "auto_pass"
+            changed = True
+
+    if changed:
+        os.makedirs(os.path.dirname(marks_path), exist_ok=True)
+        with open(marks_path, "w", encoding="utf-8") as f:
+            json.dump(marks, f, ensure_ascii=False, indent=2)
+    return marks
+
+
+def _build_report(blocks, marks: dict, lane_id: str) -> dict:
+    """把區塊資料跟目前的標記狀態整理成一份自成一體的報告，不用另外對照
+    blocks.json——這是給使用者「送出複核結果」時明確的完成訊號，也是後續
+    （例如針對「不通過」的區塊跑 GapReinforcementNode 候選重建）要讀取的來源。"""
+    import datetime
+
+    segments = []
+    counts = {"pass": 0, "fail": 0, "auto_pass": 0, "unmarked": 0}
+    for b in blocks:
+        state = marks.get(b["id"], "unmarked")
+        counts[state] = counts.get(state, 0) + 1
+        segments.append({
+            "id": b["id"],
+            "start": b["start"],
+            "end": b["end"],
+            "rhythm_rms": b.get("rhythm_rms"),
+            "needs_review": b["needs_review"],
+            "state": state,
+        })
+
+    return {
+        "lane_id": lane_id,
+        "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "segments": segments,
+        "pass_count": counts["pass"],
+        "fail_count": counts["fail"],
+        "auto_pass_count": counts["auto_pass"],
+        "unmarked_count": counts["unmarked"],
+    }
+
+
+def discover_lanes(project_dir: str) -> list:
+    """Pass 177：Lane 0 永遠是既有的「目前管線 (V1)」輸出（沿用 Pass 176 的
+    rhythm-RMS 判斷邏輯、沿用原本的 marks 路徑，向下相容）。
+    <project_dir>/lanes/<lane_id>/ 底下只要同時有 blocks.json 跟
+    click/mix_with_click.wav，就自動被收進來當後續 Lane（依資料夾名稱排序）。"""
+    lanes = []
+
+    base_audio = os.path.join(project_dir, "click", "mix_with_click.wav")
+    if os.path.exists(base_audio):
+        lanes.append({
+            "id": "current",
+            "name": "目前管線 (V1)",
+            "audio_path": base_audio,
+            "blocks": load_blocks(project_dir, base_audio),
+            "marks_path": os.path.join(project_dir, "reports", "gap_review_marks.json"),
+        })
+
+    lanes_root = os.path.join(project_dir, "lanes")
+    if os.path.isdir(lanes_root):
+        for name in sorted(os.listdir(lanes_root)):
+            lane_dir = os.path.join(lanes_root, name)
+            blocks_path = os.path.join(lane_dir, "blocks.json")
+            audio_path = os.path.join(lane_dir, "click", "mix_with_click.wav")
+            if os.path.isfile(blocks_path) and os.path.isfile(audio_path):
+                with open(blocks_path, "r", encoding="utf-8") as f:
+                    blocks = json.load(f)
+                lanes.append({
+                    "id": name,
+                    "name": name,
+                    "audio_path": audio_path,
+                    "blocks": blocks,
+                    "marks_path": os.path.join(lane_dir, "marks.json"),
+                })
+    return lanes
+
+
+def _load_marks_file(marks_path: str) -> dict:
+    if os.path.exists(marks_path):
+        try:
+            with open(marks_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_marks_file(marks_path: str, marks: dict) -> None:
+    os.makedirs(os.path.dirname(marks_path), exist_ok=True)
+    with open(marks_path, "w", encoding="utf-8") as f:
+        json.dump(marks, f, ensure_ascii=False, indent=2)
+
+
+def _overlaps(a_start, a_end, b_start, b_end) -> bool:
+    return a_start < b_end and b_start < a_end
+
+
+def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
+    """否決往後傳遞規則（使用者明確要求）：某個區塊在較前面的 Lane 被系統評分
+    標準判定通過，但人工在後面某個 Lane 重新聽覺得不通過——這個不通過要往後
+    所有 Lane 都同步套用在同一個時間區段上，不能因為前面一次自動通過就被排除
+    在後續複核之外。只往後傳遞 fail，不往前傳遞，也不用 pass 覆蓋既有標記。
+    回傳被影響到的 lane id 清單。"""
+    affected = []
+    for j in range(lane_index + 1, len(lanes)):
+        lane = lanes[j]
+        marks = _load_marks_file(lane["marks_path"])
+        changed = False
+        for b in lane["blocks"]:
+            if _overlaps(failed_block["start"], failed_block["end"], b["start"], b["end"]):
+                if marks.get(b["id"]) != "fail":
+                    marks[b["id"]] = "fail"
+                    changed = True
+        if changed:
+            _save_marks_file(lane["marks_path"], marks)
+            affected.append(lane["id"])
+    return affected
+
+
+def make_handler(lanes: list):
+    lane_by_id = {lane["id"]: (i, lane) for i, lane in enumerate(lanes)}
+    for lane in lanes:
+        _initial_marks(lane["blocks"], lane["marks_path"])
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            pass  # keep terminal quiet
+
+        def _send_json(self, obj, status=200):
+            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _query_lane(self):
+            from urllib.parse import urlsplit, parse_qs
+            qs = parse_qs(urlsplit(self.path).query)
+            lane_id = qs.get("lane", [lanes[0]["id"]])[0]
+            return lane_by_id.get(lane_id)
+
+        def _path_only(self):
+            from urllib.parse import urlsplit
+            return urlsplit(self.path).path
+
+        def do_GET(self):
+            path = self._path_only()
+            if path == "/" or path == "/index.html":
+                body = PAGE_HTML.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif path == "/lanes":
+                self._send_json([{"id": l["id"], "name": l["name"]} for l in lanes])
+            elif path == "/blocks":
+                found = self._query_lane()
+                if not found:
+                    self.send_error(404, "unknown lane")
+                    return
+                _, lane = found
+                self._send_json(lane["blocks"])
+            elif path == "/marks":
+                found = self._query_lane()
+                if not found:
+                    self.send_error(404, "unknown lane")
+                    return
+                _, lane = found
+                self._send_json(_load_marks_file(lane["marks_path"]))
+            elif path == "/info":
+                self._send_json({"lanes": [l["id"] for l in lanes]})
+            elif path.startswith("/audio/"):
+                self._serve_audio()
+            else:
+                self.send_error(404)
+
+        def _serve_audio(self):
+            found = self._query_lane()
+            if not found:
+                self.send_error(404, "unknown lane")
+                return
+            _, lane = found
+            audio_path = lane["audio_path"]
+            if not os.path.exists(audio_path):
+                self.send_error(404, "audio file not found")
+                return
+            file_size = os.path.getsize(audio_path)
+            content_type = mimetypes.guess_type(audio_path)[0] or "audio/wav"
+            range_header = self.headers.get("Range")
+
+            if range_header:
+                match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+                if match:
+                    start = int(match.group(1))
+                    end = int(match.group(2)) if match.group(2) else file_size - 1
+                    end = min(end, file_size - 1)
+                    length = end - start + 1
+                    self.send_response(206)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Length", str(length))
+                    self.end_headers()
+                    with open(audio_path, "rb") as f:
+                        f.seek(start)
+                        remaining = length
+                        chunk_size = 1024 * 1024
+                        while remaining > 0:
+                            chunk = f.read(min(chunk_size, remaining))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    return
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(file_size))
+            self.end_headers()
+            with open(audio_path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+
+        def do_POST(self):
+            path = self._path_only()
+            found = self._query_lane()
+            if not found:
+                self.send_error(404, "unknown lane")
+                return
+            lane_index, lane = found
+
+            if path == "/marks":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    new_marks = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self.send_error(400, "invalid json")
+                    return
+                old_marks = _load_marks_file(lane["marks_path"])
+                _save_marks_file(lane["marks_path"], new_marks)
+
+                affected_lanes = []
+                for b in lane["blocks"]:
+                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail":
+                        affected_lanes.extend(propagate_fail(lanes, lane_index, b))
+                self._send_json({"status": "OK", "count": len(new_marks), "propagated_to": sorted(set(affected_lanes))})
+            elif path == "/submit":
+                marks = _load_marks_file(lane["marks_path"])
+                marks_dir = os.path.dirname(lane["marks_path"])
+                report_name = "gap_review_report.json" if lane["id"] == "current" else f"gap_review_report_{lane['id']}.json"
+                report_path = os.path.join(marks_dir, report_name)
+                report = _build_report(lane["blocks"], marks, lane["id"])
+                os.makedirs(marks_dir, exist_ok=True)
+                with open(report_path, "w", encoding="utf-8") as f:
+                    json.dump(report, f, ensure_ascii=False, indent=2)
+                self._send_json(report)
+            else:
+                self.send_error(404)
+
+    return Handler
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Pass 176/177 多軌審查工具")
+    parser.add_argument("--project-dir", required=True, help="module3 專案輸出資料夾路徑")
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args()
+
+    project_dir = args.project_dir
+
+    lanes = discover_lanes(project_dir)
+    if not lanes:
+        print(f"[FATAL] 找不到任何可用的 Lane（至少要有 {project_dir}\\click\\mix_with_click.wav）")
+        sys.exit(1)
+    if not os.path.exists(os.path.join(project_dir, "stems", "submix", "track_a_rhythm.wav")):
+        print("[WARN] 找不到 stems/submix/track_a_rhythm.wav，Lane 0（目前管線）"
+              "無法自動判斷節奏能量，整首歌會先全部標成待複核。")
+
+    handler_cls = make_handler(lanes)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_cls)
+    url = f"http://127.0.0.1:{args.port}"
+    print(f"[Pass177 GapReview] 伺服器啟動：{url}")
+    print(f"[Pass177 GapReview] 專案資料夾：{project_dir}")
+    print(f"[Pass177 GapReview] 已載入 {len(lanes)} 條 Lane：{[l['id'] for l in lanes]}")
+    print("[Pass177 GapReview] 按 Ctrl+C 停止伺服器。")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[Pass177 GapReview] 停止。")
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    main()
