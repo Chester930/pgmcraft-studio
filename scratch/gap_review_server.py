@@ -154,7 +154,14 @@ const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
 
 function stateOf(laneId, blockId) {
-  return lanesData[laneId].marks[blockId] || 'unmarked';
+  const marks = lanesData[laneId].marks;
+  if (marks[blockId]) return marks[blockId];
+  // 小節細標（例如 seg-0-m1）在還沒被單獨點過之前，繼承母區塊（seg-0）的
+  // 狀態，不能重置成「未標記」——母區塊本來就是通過驗證才會被切成小節，
+  // 沒理由展開後看起來像完全沒有任何區塊通過。
+  const parentMatch = /^(.*)-m\d+$/.exec(blockId);
+  if (parentMatch && marks[parentMatch[1]]) return marks[parentMatch[1]];
+  return 'unmarked';
 }
 
 function nextState(s) {
