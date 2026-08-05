@@ -76,6 +76,13 @@ PAGE_HTML = r"""<!doctype html>
     border: 1px solid #555; border-radius: 3px; padding: 1px 6px; cursor: pointer;
   }
   .lane-reset-btn:hover { color: #eee; border-color: #888; }
+  .lane-badge {
+    font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .cat-final { background: #4a3a6a; color: #d8c8ff; }
+  .cat-chain { background: #1f4a3a; color: #a8f0c8; }
+  .cat-ref { background: #4a3a1f; color: #f0d0a0; }
   .lane-desc { font-size: 10px; color: #777; margin: 0 0 4px 4px; max-width: 900px; line-height: 1.4; }
   .lane-timeline {
     position: relative; height: 46px; background: #2a2a30; border-radius: 6px;
@@ -131,7 +138,10 @@ PAGE_HTML = r"""<!doctype html>
 
   <div style="font-size:12px;color:#999;background:#26262c;border:1px solid #3a3a42;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
     所有 Lane 實際聽到的「歌曲本體」都相同（乾淨原始音檔，沒混過任何 click）；差異只在疊上去的 click 是用哪一組音色、哪一種演算法算出來的。
-    Lane1→2→3→4 是逐輪疊加證據鏈（每一層只重新分析上一層判定可疑的區段，其餘沿用不動）；Track A／Track B 是 V1 正式雙軌融合的原始輸入，全曲獨立分析，不吃這條鏈。
+    每條 Lane 標籤旁的色塊代表分類：
+    <span class="lane-badge cat-final">V1 最終結果</span> 正式管線融合後的輸出；
+    <span class="lane-badge cat-chain">疊加證據鏈</span> 這個工具正在測試/校準的 Lane1→2→3→4 機制，每一層只重新分析上一層判定可疑的區段；
+    <span class="lane-badge cat-ref">V1 既有機制・僅供參考</span> Track A／Track B，V1 正式雙軌融合的原始輸入，全曲獨立分析——<b>沒有加入疊加證據鏈，標記結果不影響、也不被 Lane1-4 任何一層使用</b>，純粹讓你對照理解 V1 最終結果的成因。
     各 Lane 組成見下方軌道標籤旁的說明文字。
   </div>
 
@@ -320,8 +330,18 @@ const LANE_DESCRIPTIONS = {
   lane2_drum_bass: '沿用 Lane1 通過的拍點，加上 bass stem（synth_bass_808 > electric_bass > bass），只重新分析 Lane1 判定可疑的區段。',
   lane3_drum_bass_chord: '沿用 Lane2 通過的拍點，加上吉他/鋼琴的「和弦」onset（ChordMelodyOnsetSplitNode），只重新分析 Lane2 判定可疑的區段。',
   lane4_melody: '沿用 Lane3 通過的拍點，加上吉他/鋼琴的「旋律」onset ＋ 主唱人聲 onset（VocalMelodyEvidenceExtractNode，lead_vocal.wav 優先），只重新分析 Lane3 判定可疑的區段。',
-  trackA_v1_rhythm: 'V1 正式雙軌融合的 A 軌原始輸入：stems/submix/track_a_rhythm.wav（鼓+貝斯節奏骨幹軌），V1 正式 BeatNet 全曲獨立分析（失敗才 fallback Librosa）。不吃 Lane1-4 的疊加證據鏈，融合前的原始結果。',
-  trackB_v1_instrumental: 'V1 正式雙軌融合的 B 軌原始輸入：stems/no_vocals.wav（無人聲全樂器伴奏軌），V1 正式 BeatNet 全曲獨立分析。不吃 Lane1-4 的疊加證據鏈，融合前的原始結果。',
+  trackA_v1_rhythm: 'V1 正式雙軌融合的 A 軌原始輸入：stems/submix/track_a_rhythm.wav（鼓+貝斯節奏骨幹軌），V1 正式 BeatNet 全曲獨立分析（失敗才 fallback Librosa）。融合前的原始結果，僅供參考對照，不影響 Lane1-4 任何一層的分析或標記。',
+  trackB_v1_instrumental: 'V1 正式雙軌融合的 B 軌原始輸入：stems/no_vocals.wav（無人聲全樂器伴奏軌），V1 正式 BeatNet 全曲獨立分析。融合前的原始結果，僅供參考對照，不影響 Lane1-4 任何一層的分析或標記。',
+};
+
+const LANE_CATEGORY = {
+  current: { label: 'V1 最終結果', cls: 'cat-final' },
+  lane1_drum_only: { label: '疊加證據鏈', cls: 'cat-chain' },
+  lane2_drum_bass: { label: '疊加證據鏈', cls: 'cat-chain' },
+  lane3_drum_bass_chord: { label: '疊加證據鏈', cls: 'cat-chain' },
+  lane4_melody: { label: '疊加證據鏈', cls: 'cat-chain' },
+  trackA_v1_rhythm: { label: 'V1 既有機制・僅供參考', cls: 'cat-ref' },
+  trackB_v1_instrumental: { label: 'V1 既有機制・僅供參考', cls: 'cat-ref' },
 };
 
 function buildLaneRows() {
@@ -329,10 +349,12 @@ function buildLaneRows() {
     const row = document.createElement('div');
     row.className = 'lane-row';
 
+    const cat = LANE_CATEGORY[lane.id] || { label: '未分類', cls: 'cat-ref' };
     const label = document.createElement('div');
     label.className = 'lane-label';
     label.dataset.lane = lane.id;
-    label.innerHTML = `<span class="dot"></span><span>${lane.name}</span>`;
+    label.innerHTML = `<span class="dot"></span><span>${lane.name}</span>` +
+                       `<span class="lane-badge ${cat.cls}">${cat.label}</span>`;
     label.addEventListener('click', () => activateLane(lane.id, duration ? player.currentTime / duration : 0));
 
     const resetBtn = document.createElement('button');
