@@ -605,3 +605,36 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 - 新增規劃節點：`ReliableBarAnchorNode`、`NoDrumPhaseCarryNode`、`LookaheadDrumAnchorSearchNode`、`InterveningBarCountEstimatorNode`、`BidirectionalBarAlignmentNode`、`TransitionConfidenceNode`。
 - 驗收：4 小節無鼓段、pickup、弱拍進鼓、tempo 漂移、lookahead pending 五組案例。
 - 狀態：第一版已實作並通過 6 項 SDD 測試；仍維持 v2 experimental，不替換既有 `module3`。
+
+### Pass 178：GapReinforcementNode 正式整合（V3 = V1 骨架 + 逐輪疊加證據）
+
+- 目標：把 Pass 176 設計、Pass 177 在多軌審查工具（scratch Lane1-5）實測驗證過
+  （跨演算法重疊率 90-95%）的「逐輪疊加證據，只補救信心不足的缺口」機制，
+  正式整合進 V1 產線，成為 `BeatFusionArbitratorNode` 之後、精修守衛鏈最前面
+  的新節點，同時保留人工微調校準迴圈，跟正式生產職責分離。
+- 新增節點：`GapReinforcementNode`（`pgm_craft/workflow/beat_tracking_bt.py`），
+  放在 `build_beat_refinement_nodes()` 最前面、`DownbeatRefineNode` 之前——刻意
+  不在節點內處理相位修正，讓既有相位精修鏈直接對補強出的拍點生效（對應 Pass
+  177 發現的 `fail_phase` 缺口）。
+- 缺口偵測：`beat_fusion_report["track_b_spans"]` 聯集音頭確認比例信心評分
+  （`_confirmation_gap_ranges`，跟 `scratch/lane_common.py:build_confidence_
+  blocks()` 邏輯一致）。
+- 逐輪疊加：+貝斯 → +和弦 → +旋律 → 完整無人聲混音直接分析（第 4 輪是 Pass 177
+  Lane5 驗證後新增的，抓分軌疊加 onset 漏掉的聲學交互作用），複用
+  `ChordMelodyOnsetSplitNode` / `VocalMelodyEvidenceExtractNode` 既有 onset
+  抽取邏輯，不重新發明。
+- 缺口銜接：已確信（kept）的拍點沿用原本拍號，新補強（inserted）的拍點接續前
+  一個拍號的循環往後推，比單純模除重編更連續。
+- 品質守門：補強後在缺口區段的音頭確認比例，優先用完整無人聲混音本身的 onset
+  當中性真相（沒有才退回鼓聲），沒有比原始融合結果更好（+ `improvement_margin`
+  容錯）就整段退回原始結果。
+- 門檻參數外部化：`pgm_craft/config/gap_reinforcement_thresholds.json`，供
+  `scripts/calibrate_gap_reinforcement_thresholds.py` 讀累積的人工標記資料
+  （假陽性/假陰性率）提出調整建議（不自動套用）。
+- 測試：`tests/test_sdd_pass178.py`，3 項合成音訊測試全過（無缺口不動拍點、
+  有貝斯證據時正確補強、完全沒證據時安全退回原始結果）；既有 Stage 3 相關
+  測試（`test_sdd_pass23/28/42/102/103/104/141`、`test_commercial_beat_
+  quality`）共 38 項全數通過，插入新節點沒有造成任何回歸。
+- 狀態：正式產線邏輯已實作並通過單元測試；黃金基準真實資料回歸比對尚未執行
+  （見 `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第 2
+  節，成本較高，排在後續驗證）。
