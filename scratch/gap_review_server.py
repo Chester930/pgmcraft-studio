@@ -726,12 +726,15 @@ def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
     所有 Lane 都同步套用在同一個時間區段上，不能因為前面一次自動通過就被排除
     在後續複核之外。只往後傳遞 fail，不往前傳遞，也不用 pass 覆蓋既有標記。
 
-    這個函式本身不檢查「原本狀態是不是 pass/auto_pass」——呼叫端（/marks 的
-    POST handler）已經先篩過，只有原本狀態是 pass/auto_pass、被人工推翻成
-    fail 才會呼叫這裡。原本就是 needs_review/unmarked，人工只是確認信心
-    機制本來就已經抓到的問題，不會呼叫這裡——因為下一層本來就會用新證據
-    重新分析那個區段，不該被前面的失敗結果提前判死刑，那樣會讓「後面證據
-    有沒有真的解決問題」這件事永遠測不出來。
+    這個函式本身不檢查「該不該傳遞」——呼叫端（/marks 的 POST handler）已經
+    先篩過，只有這個區塊自己的 needs_review 是 False（信心機制原本判定沒
+    問題）、被人工推翻成 fail 才會呼叫這裡。判斷依據是 blocks.json 裡固定
+    的 needs_review 欄位，不是點擊前一刻的標記狀態——因為前端是 未標記→
+    通過→不通過 三態循環，一個本來就 needs_review 的區塊要標成不通過得點
+    兩下，中途會經過「通過」這個循環中間態，不能拿那個當「原本自動通過」
+    的證據。原本就是 needs_review 的區塊被人工確認為 fail，不會呼叫這裡：
+    下一層本來就會用新證據重新分析那個區段，不該被前面的失敗結果提前判
+    死刑，那樣會讓「後面證據有沒有真的解決問題」這件事永遠測不出來。
 
     重要：這純粹是審查介面上的「回饋一致性」輔助，只是讓人工在複核後面的
     Lane 時，不會漏看前面某個 Lane 已經指出的問題。它完全不影響任何一條
@@ -903,12 +906,15 @@ def make_handler(lanes: list):
 
                 affected_lanes = []
                 for b in lane["blocks"]:
-                    # 只有「信心機制原本判定通過（pass/auto_pass），人工推翻」才傳遞——
-                    # 這代表信心機制的盲點，後面每一層都會原封不動沿用這段拍點，不會
-                    # 重新檢查，所以必須往後傳遞警示。原本就是 needs_review/unmarked
-                    # 被人工確認為 fail，不傳遞：下一層本來就會用新證據重新分析這段，
-                    # 可能已經修好了，不該被前面的失敗結果提前判死刑。
-                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) in ("pass", "auto_pass"):
+                    # 只有「信心機制原本判定沒問題（needs_review=False），人工推翻」才
+                    # 傳遞——這代表信心機制的盲點，後面每一層都會原封不動沿用這段拍點，
+                    # 不會重新檢查，所以必須往後傳遞警示。needs_review 是區塊自己在
+                    # blocks.json 裡固定的判定，不受標記狀態影響；不能用「點擊前一刻的
+                    # 標記狀態」判斷，因為前端是 未標記→通過→不通過 三態循環，一個本來
+                    # 就 needs_review 的區塊要標成不通過得點兩下，第二下的舊狀態剛好會
+                    # 經過「通過」這個循環中間態，不是使用者真的表達過「這裡沒問題」，
+                    # 用那個當判斷依據會誤觸發傳遞（Pass 177 實測發現的真實 bug）。
+                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail" and not b.get("needs_review", True):
                         affected_lanes.extend(propagate_fail(lanes, lane_index, b))
                 self._send_json({"status": "OK", "count": len(new_marks), "propagated_to": sorted(set(affected_lanes))})
             elif path == "/reset":
