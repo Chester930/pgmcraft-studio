@@ -99,6 +99,7 @@ PAGE_HTML = r"""<!doctype html>
   .block.auto_pass { background: #3a5a7a; }
   .block.pass { background: #2f8f4e; }
   .block.fail { background: #b23b3b; }
+  .block.fail_phase { background: #c27a1e; }
   .block.needs-review { outline: 2px solid #ffd54a; outline-offset: -2px; z-index: 2; }
   .block:hover { filter: brightness(1.25); }
   .block .label {
@@ -132,8 +133,9 @@ PAGE_HTML = r"""<!doctype html>
     <span><i class="swatch" style="background:#3a5a7a"></i>既有標準自動通過</span>
     <span><i class="swatch" style="background:#4a4a55"></i>待複核（黃框＝標準判定可疑）</span>
     <span><i class="swatch" style="background:#2f8f4e"></i>人工通過</span>
-    <span><i class="swatch" style="background:#b23b3b"></i>人工不通過</span>
-    <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態；已通過的區段會自動依小節切成細塊，可單獨標記某小節不通過；不通過會自動往後（沿用區段）跟往前（原封不動繼承來源的區段）雙向傳遞；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
+    <span><i class="swatch" style="background:#b23b3b"></i>不通過：不在拍點上</span>
+    <span><i class="swatch" style="background:#c27a1e"></i>不通過：有在拍點上，第一拍標錯</span>
+    <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態（未標記→通過→不在拍點上→第一拍標錯→未標記）；已通過的區段會自動依小節切成細塊，可單獨標記某小節不通過；不通過會自動往後（沿用區段）跟往前（原封不動繼承來源的區段）雙向傳遞；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
   </div>
 
   <div style="font-size:12px;color:#999;background:#26262c;border:1px solid #3a3a42;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
@@ -182,7 +184,9 @@ function stateOf(laneId, blockId) {
 }
 
 function nextState(s) {
-  return { unmarked: 'pass', pass: 'fail', fail: 'unmarked', auto_pass: 'pass' }[s] || 'unmarked';
+  // fail＝根本不在拍點上（timing 錯，需要重新偵測）
+  // fail_phase＝有在拍點上，只是第一拍標錯（相位/downbeat 錯，不用重新偵測）
+  return { unmarked: 'pass', pass: 'fail', fail: 'fail_phase', fail_phase: 'unmarked', auto_pass: 'pass' }[s] || 'unmarked';
 }
 
 async function saveMarks(laneId) {
@@ -212,11 +216,12 @@ function renderSummary() {
     const blockMarkValues = Object.entries(data.marks).filter(([k]) => blockIds.has(k)).map(([, v]) => v);
     const passCount = blockMarkValues.filter(v => v === 'pass').length;
     const failCount = blockMarkValues.filter(v => v === 'fail').length;
+    const failPhaseCount = blockMarkValues.filter(v => v === 'fail_phase').length;
     const autoCount = blockMarkValues.filter(v => v === 'auto_pass').length;
     const unmarked = data.blocks.filter(b => b.needs_review && !data.marks[b.id]).length;
-    const submeasureFail = Object.entries(data.marks).filter(([k, v]) => !blockIds.has(k) && v === 'fail').length;
+    const submeasureFail = Object.entries(data.marks).filter(([k, v]) => !blockIds.has(k) && (v === 'fail' || v === 'fail_phase')).length;
     let line = `[${lane.name}] 共 ${total} 塊 | 需複核 ${needReview} | 通過 ${passCount} | ` +
-           `不通過 ${failCount} | 自動通過 ${autoCount} | 待複核 ${unmarked}`;
+           `不在拍點上 ${failCount} | 第一拍標錯 ${failPhaseCount} | 自動通過 ${autoCount} | 待複核 ${unmarked}`;
     if (submeasureFail > 0) line += ` | 小節細標不通過 ${submeasureFail}`;
     return line;
   });
@@ -449,7 +454,8 @@ document.getElementById('btn-submit-all').addEventListener('click', async () => 
     const resp = await fetch('/submit?lane=' + encodeURIComponent(lane.id), { method: 'POST' });
     const report = await resp.json();
     lines.push(`[${lane.name}] 共 ${report.segments.length} 塊，通過 ${report.pass_count}、` +
-               `不通過 ${report.fail_count}、自動通過 ${report.auto_pass_count}、待複核 ${report.unmarked_count}`);
+               `不在拍點上 ${report.fail_count}、第一拍標錯 ${report.fail_phase_count}、` +
+               `自動通過 ${report.auto_pass_count}、待複核 ${report.unmarked_count}`);
   }
   document.getElementById('submit-status').innerHTML = '已送出全部 Lane：<br>' + lines.join('<br>');
 });
@@ -610,7 +616,7 @@ def _build_report(blocks, marks: dict, lane_id: str) -> dict:
     import datetime
 
     segments = []
-    counts = {"pass": 0, "fail": 0, "auto_pass": 0, "unmarked": 0}
+    counts = {"pass": 0, "fail": 0, "fail_phase": 0, "auto_pass": 0, "unmarked": 0}
     for b in blocks:
         state = marks.get(b["id"], "unmarked")
         counts[state] = counts.get(state, 0) + 1
@@ -629,6 +635,7 @@ def _build_report(blocks, marks: dict, lane_id: str) -> dict:
         "segments": segments,
         "pass_count": counts["pass"],
         "fail_count": counts["fail"],
+        "fail_phase_count": counts["fail_phase"],
         "auto_pass_count": counts["auto_pass"],
         "unmarked_count": counts["unmarked"],
     }
@@ -756,7 +763,10 @@ def _reset_marks_baseline(blocks: list) -> dict:
     return {b["id"]: "auto_pass" for b in blocks if not b["needs_review"]}
 
 
-def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
+FAIL_STATES = {"fail", "fail_phase"}
+
+
+def propagate_fail(lanes: list, lane_index: int, failed_block: dict, state: str = "fail") -> list:
     """否決往後傳遞規則（使用者明確要求）：某個區塊在較前面的 Lane 被系統評分
     標準判定通過（pass/auto_pass），但人工重新聽覺得不通過——這個不通過要往後
     所有 Lane 都同步套用在同一個時間區段上，不能因為前面一次自動通過就被排除
@@ -779,6 +789,10 @@ def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
     這裡標的 pass/fail 是回饋紀錄，只會在下一次調整信心評分門檻參數、重新
     整條鏈路重跑時才發揮作用，不會即時介入這一輪的自動分析結果。
 
+    state 保留觸發時的不通過子類型（fail＝根本不在拍點上／fail_phase＝有在
+    拍點上但第一拍標錯）一起往後傳，不是都寫死成同一種——後面那層繼承的
+    是同一個問題，不是重新產生一個籠統的「不通過」。
+
     回傳被影響到的 lane id 清單。"""
     affected = []
     for j in range(lane_index + 1, len(lanes)):
@@ -787,8 +801,8 @@ def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
         changed = False
         for b in lane["blocks"]:
             if _overlaps(failed_block["start"], failed_block["end"], b["start"], b["end"]):
-                if marks.get(b["id"]) != "fail":
-                    marks[b["id"]] = "fail"
+                if marks.get(b["id"]) != state:
+                    marks[b["id"]] = state
                     changed = True
         if changed:
             _save_marks_file(lane["marks_path"], marks)
@@ -806,7 +820,7 @@ LANE_LINEAGE = {
 }
 
 
-def propagate_fail_backward(lanes: list, lane_index: int, failed_block: dict) -> list:
+def propagate_fail_backward(lanes: list, lane_index: int, failed_block: dict, state: str = "fail") -> list:
     """反向傳遞規則（對稱於 propagate_fail，使用者明確要求）：人工在某一層
     發現的錯誤，如果這個時間區段根本不是這一層自己重新分析出來的——而是
     原封不動沿用上一層的拍點（不在這一層自己的 escalation_ranges 裡）——
@@ -815,7 +829,9 @@ def propagate_fail_backward(lanes: list, lane_index: int, failed_block: dict) ->
     不用再往回傳，避免超出真正有問題的範圍誤傷更早的層）。
 
     只沿著 Lane1→2→3→4 這條鏈往回走（見 LANE_LINEAGE）；current／Track A／
-    Track B 不在這條鏈上。回傳被影響到的 lane id 清單。"""
+    Track B 不在這條鏈上。state 保留不通過的子類型（fail／fail_phase）一起
+    往回傳——更早那一層的拍點就是這個問題的源頭，類型是同一個，不是籠統的
+    「不通過」。回傳被影響到的 lane id 清單。"""
     from lane_common import escalation_ranges as _lane_escalation_ranges
 
     lane_by_id = {lane["id"]: (i, lane) for i, lane in enumerate(lanes)}
@@ -839,8 +855,8 @@ def propagate_fail_backward(lanes: list, lane_index: int, failed_block: dict) ->
         marks = _load_marks_file(source_lane["marks_path"])
         for b in source_lane["blocks"]:
             if _overlaps(cur_range[0], cur_range[1], b["start"], b["end"]):
-                if marks.get(b["id"]) != "fail":
-                    marks[b["id"]] = "fail"
+                if marks.get(b["id"]) != state:
+                    marks[b["id"]] = state
                     changed = True
         if changed:
             _save_marks_file(source_lane["marks_path"], marks)
@@ -997,22 +1013,26 @@ def make_handler(lanes: list):
 
                 affected_lanes = []
                 for b in lane["blocks"]:
+                    new_state = new_marks.get(b["id"])
+                    old_state = old_marks.get(b["id"])
                     # 只有「信心機制原本判定沒問題（needs_review=False），人工推翻」才
                     # 傳遞——這代表信心機制的盲點，後面每一層都會原封不動沿用這段拍點，
                     # 不會重新檢查，所以必須往後傳遞警示。needs_review 是區塊自己在
                     # blocks.json 裡固定的判定，不受標記狀態影響；不能用「點擊前一刻的
-                    # 標記狀態」判斷，因為前端是 未標記→通過→不通過 三態循環，一個本來
-                    # 就 needs_review 的區塊要標成不通過得點兩下，第二下的舊狀態剛好會
-                    # 經過「通過」這個循環中間態，不是使用者真的表達過「這裡沒問題」，
-                    # 用那個當判斷依據會誤觸發傳遞（Pass 177 實測發現的真實 bug）。
-                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail":
+                    # 標記狀態」判斷，因為前端是 未標記→通過→不通過→相位錯誤 四態循環，
+                    # 一個本來就 needs_review 的區塊要標成不通過得點兩下，第二下的舊狀態
+                    # 剛好會經過「通過」這個循環中間態，不是使用者真的表達過「這裡沒
+                    # 問題」，用那個當判斷依據會誤觸發傳遞（Pass 177 實測發現的真實
+                    # bug）。new_state != old_state 才觸發，避免同一個沒變動的既有
+                    # fail/fail_phase 標記在每次送出時被重複傳遞。
+                    if new_state in FAIL_STATES and new_state != old_state:
                         if not b.get("needs_review", True):
-                            affected_lanes.extend(propagate_fail(lanes, lane_index, b))
+                            affected_lanes.extend(propagate_fail(lanes, lane_index, b, state=new_state))
                         # 反向規則（使用者明確要求）：跟「該不該往後傳」是兩個獨立判斷，
                         # 都要各自檢查，不是二選一——這段拍點如果根本是這一層原封不動
                         # 沿用上一層的（不在這一層自己的 escalation_ranges 裡），錯誤源頭
                         # 在更早那一層，要往回標記，見 propagate_fail_backward()。
-                        affected_lanes.extend(propagate_fail_backward(lanes, lane_index, b))
+                        affected_lanes.extend(propagate_fail_backward(lanes, lane_index, b, state=new_state))
 
                 # 小節細標層級的同一條規則：小節細標只會出現在母區塊已通過驗證
                 # （needs_review=False）的情況下——那個母區塊本來就不會被任何後續
@@ -1020,17 +1040,17 @@ def make_handler(lanes: list):
                 # 細標裡發現的錯誤，跟整塊層級被推翻一樣，是信心機制的盲點，必須
                 # 往後傳遞——用小節自己精確的時間範圍傳遞，不是母區塊整段的範圍，
                 # 否則範圍太寬會誤傷後面 Lane 裡完全不相關的區塊。
-                for mark_id, new_state in new_marks.items():
-                    if new_state != "fail" or SUBMEASURE_ID_RE.match(mark_id) is None:
+                for mark_id, sub_new_state in new_marks.items():
+                    if sub_new_state not in FAIL_STATES or SUBMEASURE_ID_RE.match(mark_id) is None:
                         continue
                     parent, submeasure = _resolve_submeasure(lane, mark_id)
                     if not submeasure:
                         continue
                     old_effective = old_marks.get(mark_id, old_marks.get(parent["id"]))
-                    if old_effective == "fail":
+                    if old_effective == sub_new_state:
                         continue
-                    affected_lanes.extend(propagate_fail(lanes, lane_index, submeasure))
-                    affected_lanes.extend(propagate_fail_backward(lanes, lane_index, submeasure))
+                    affected_lanes.extend(propagate_fail(lanes, lane_index, submeasure, state=sub_new_state))
+                    affected_lanes.extend(propagate_fail_backward(lanes, lane_index, submeasure, state=sub_new_state))
 
                 self._send_json({"status": "OK", "count": len(new_marks), "propagated_to": sorted(set(affected_lanes))})
             elif path == "/reset":
