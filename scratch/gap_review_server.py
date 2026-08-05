@@ -714,6 +714,28 @@ def _measures_for_block(beats: list, block: dict, beats_per_measure: int = 4) ->
     return measures
 
 
+SUBMEASURE_ID_RE = re.compile(r"^(.*)-m\d+$")
+
+
+def _resolve_submeasure(lane: dict, mark_id: str):
+    """給定像 seg-0-m1 這種小節細標 id，算出它自己精確的時間範圍——小節
+    細標本身不存在於 blocks.json，是從母區塊的拍點資料即時切出來的。回傳
+    (parent_block, submeasure_range) 或 (None, None)（不是小節細標 id、
+    找不到母區塊、或母區塊本身還沒通過驗證）。"""
+    match = SUBMEASURE_ID_RE.match(mark_id)
+    if not match:
+        return None, None
+    parent_id = match.group(1)
+    parent = next((b for b in lane["blocks"] if b["id"] == parent_id), None)
+    if not parent or parent.get("needs_review", True):
+        return None, None
+    beats = _load_beats_file(lane.get("beats_path", ""))
+    for m in _measures_for_block(beats, parent):
+        if m["id"] == mark_id:
+            return parent, m
+    return None, None
+
+
 def _reset_marks_baseline(blocks: list) -> dict:
     """回到最乾淨的自動評分基準線：needs_review=False 的區塊自動通過，其餘
     留白等待真正複核。會清掉這條 Lane 的所有人工標記，包含小節細標。"""
@@ -916,6 +938,24 @@ def make_handler(lanes: list):
                     # 用那個當判斷依據會誤觸發傳遞（Pass 177 實測發現的真實 bug）。
                     if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail" and not b.get("needs_review", True):
                         affected_lanes.extend(propagate_fail(lanes, lane_index, b))
+
+                # 小節細標層級的同一條規則：小節細標只會出現在母區塊已通過驗證
+                # （needs_review=False）的情況下——那個母區塊本來就不會被任何後續
+                # Lane 重新分析，不管是整塊還是小節層級都一樣不會重跑。人工在小節
+                # 細標裡發現的錯誤，跟整塊層級被推翻一樣，是信心機制的盲點，必須
+                # 往後傳遞——用小節自己精確的時間範圍傳遞，不是母區塊整段的範圍，
+                # 否則範圍太寬會誤傷後面 Lane 裡完全不相關的區塊。
+                for mark_id, new_state in new_marks.items():
+                    if new_state != "fail" or SUBMEASURE_ID_RE.match(mark_id) is None:
+                        continue
+                    parent, submeasure = _resolve_submeasure(lane, mark_id)
+                    if not submeasure:
+                        continue
+                    old_effective = old_marks.get(mark_id, old_marks.get(parent["id"]))
+                    if old_effective == "fail":
+                        continue
+                    affected_lanes.extend(propagate_fail(lanes, lane_index, submeasure))
+
                 self._send_json({"status": "OK", "count": len(new_marks), "propagated_to": sorted(set(affected_lanes))})
             elif path == "/reset":
                 new_marks = _reset_marks_baseline(lane["blocks"])
