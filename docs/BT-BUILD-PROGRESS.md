@@ -638,3 +638,25 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 - 狀態：正式產線邏輯已實作並通過單元測試；黃金基準真實資料回歸比對尚未執行
   （見 `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第 2
   節，成本較高，排在後續驗證）。
+
+### Pass 179：GapReinforcementNode 診斷輸出落盤，接通校準迴圈
+
+- 目標：補上 Pass 178 設計文件寫了、但實作時漏掉的一塊——沒有這一塊，校準迴圈
+  完全接不上正式生產迴圈，人工標記永遠餵不到門檻調整。
+- 重構：把 `_confirmation_gap_ranges` 拆出共用的 `_confidence_segments`，回傳
+  **全曲完整**的 `[(start, end, needs_review), ...]`（不是只有可疑區段），同時
+  供缺口偵測（濾出 `needs_review=True`）跟新的診斷輸出（全部保留）使用。
+- 新增 `GapReinforcementNode._export_diagnostic()`：對最終決定採用的 beats
+  （`APPLIED` 用補強後的、`REJECTED_NOT_BETTER` 用原始融合結果）套用信心評分，
+  落盤 `reports/gap_reinforcement/blocks.json`（`[{id,start,end,needs_review}]`）
+  與 `beats.json`（`{tempo,beats}`），格式跟審查工具原生格式完全一致。沒有
+  `project_dir` 時安全跳過，不影響節點本身結果。
+- `scratch/gap_review_server.py:discover_lanes()` 新增 `gap_reinforcement` Lane
+  來源：偵測到 `reports/gap_reinforcement/blocks.json` 就加一條 Lane，**音檔
+  沿用「目前管線 (V1)」那條的 `mix_with_click.wav`**，不另外渲染——補強出的
+  拍點最終會流進同一條 pipeline、變成同一份音檔的一部分，不是獨立產物。
+- 測試：`tests/test_sdd_pass179.py` 3 項全過（落盤格式相容性、沒有
+  project_dir 時安全跳過、無缺口情境也照樣落盤）；`test_sdd_pass178.py` 3 項
+  重跑確認重構沒有回歸；手動驗證 `discover_lanes()` 正確找到新 Lane 且音檔
+  路徑跟 `current` 共用。
+- 狀態：完成，兩條迴圈（正式生產 / 人工校準）現在真的接通了。

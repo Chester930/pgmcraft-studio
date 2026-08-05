@@ -2306,11 +2306,12 @@ def _load_gap_reinforcement_thresholds(config_path: str = None) -> dict:
     return thresholds
 
 
-def _confirmation_gap_ranges(beat_times, real_onsets, duration, thresholds):
+def _confidence_segments(beat_times, real_onsets, duration, thresholds):
     """Pass 177 在多軌審查工具裡實測驗證過的信心評分方法（跨演算法重疊率
     90-95%）：每一拍附近有沒有真實音頭佐證，滾動窗口內佐證比例低於門檻的
-    區段標記為需要強化。這裡是正式管線版本，跟
-    scratch/lane_common.py:build_confidence_blocks() 邏輯一致。"""
+    區段標記為需要複核。回傳**全曲完整**的 [(start, end, needs_review), ...]，
+    不是只有可疑的部分——跟 scratch/lane_common.py:build_confidence_blocks()
+    邏輯一致，也是 Pass 179 審查工具診斷輸出（blocks.json）的資料來源。"""
     tol = thresholds["confirm_tolerance_sec"]
     window = thresholds["window_sec"]
     ratio_threshold = thresholds["confirm_ratio_threshold"]
@@ -2354,7 +2355,18 @@ def _confirmation_gap_ranges(beat_times, real_onsets, duration, thresholds):
         else:
             merged.append((s, e, flag))
 
-    return [(s, e) for s, e, flag in merged if flag]
+    final = []
+    for s, e, flag in merged:
+        if final and final[-1][2] == flag:
+            final[-1] = (final[-1][0], e, flag)
+        else:
+            final.append((s, e, flag))
+    return final
+
+
+def _confirmation_gap_ranges(beat_times, real_onsets, duration, thresholds):
+    """需要強化的區段（見 _confidence_segments）——只取 needs_review=True 的部分。"""
+    return [(s, e) for s, e, flag in _confidence_segments(beat_times, real_onsets, duration, thresholds) if flag]
 
 
 class GapReinforcementNode(BaseNode):
@@ -2422,6 +2434,7 @@ class GapReinforcementNode(BaseNode):
         )
         if not gaps:
             blackboard.set_val("gap_reinforcement_report", {"status": "NO_GAPS", "gap_count": 0})
+            self._export_diagnostic(blackboard, beats, drum_onsets, duration)
             return NodeStatus.SUCCESS
 
         bass_path = _resolve_stem_path(
@@ -2464,8 +2477,40 @@ class GapReinforcementNode(BaseNode):
             blackboard.set_val("beats", reinforced_beats)
             blackboard.set_val("refined_beats", reinforced_beats)
         blackboard.set_val("gap_reinforcement_report", report)
+        self._export_diagnostic(
+            blackboard, reinforced_beats if improved else beats, ground_truth_onsets, duration
+        )
         print(f"[{self.name}] 缺口強化：{len(gaps)} 段，{'已採用' if improved else '未改善，保留原始融合結果'}。")
         return NodeStatus.SUCCESS
+
+    def _export_diagnostic(self, blackboard, final_beats, ground_truth_onsets, duration):
+        """Pass 179：落盤成審查工具（scratch/gap_review_server.py）原生看得懂
+        的 blocks.json/beats.json 格式，讓正式生產的輸出可以直接被複核，不需要
+        scratch 腳本重跑——見 docs/PASS-179-GAP-REINFORCEMENT-DIAGNOSTIC-
+        EXPORT-TASK.md。沒有 project_dir（例如單元測試環境）時安全跳過，不影響
+        節點本身的結果。"""
+        project_dir = blackboard.get_val("project_dir")
+        if not project_dir:
+            return
+        try:
+            import json
+            segments = _confidence_segments(final_beats[:, 0], ground_truth_onsets, duration, self.thresholds)
+            blocks = [
+                {"id": f"seg-{i}", "start": round(float(s), 3), "end": round(float(e), 3), "needs_review": bool(flag)}
+                for i, (s, e, flag) in enumerate(segments)
+            ]
+            times = final_beats[:, 0]
+            intervals = np.diff(times)
+            tempo = float(60.0 / np.median(intervals)) if len(intervals) else 0.0
+
+            out_dir = os.path.join(project_dir, "reports", "gap_reinforcement")
+            os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, "blocks.json"), "w", encoding="utf-8") as f:
+                json.dump(blocks, f, ensure_ascii=False, indent=2)
+            with open(os.path.join(out_dir, "beats.json"), "w", encoding="utf-8") as f:
+                json.dump({"tempo": tempo, "beats": final_beats.tolist()}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[{self.name}] 診斷輸出落盤失敗（不影響節點本身結果）: {e}")
 
     def _load_drum_signal(self, kick_path, snare_path):
         import librosa

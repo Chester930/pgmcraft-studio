@@ -338,6 +338,7 @@ const LANE_DESCRIPTIONS = {
   lane5_full_instrumental: '沿用 Lane4 通過的拍點，改用 stems/no_vocals.wav（無人聲完整混音，非分軌疊加）直接分析，只重新分析 Lane4 判定可疑的區段——跟前面各層把分軌音頭疊加成合成訊號不同，這層用真正的完整混音本身，能捕捉分軌疊加方式漏掉的聲學交互作用。',
   trackA_v1_rhythm: 'V1 正式雙軌融合的 A 軌原始輸入：stems/submix/track_a_rhythm.wav（鼓+貝斯節奏骨幹軌），V1 正式 BeatNet 全曲獨立分析（失敗才 fallback Librosa）。融合前的原始結果，僅供參考對照，不影響 Lane1-4 任何一層的分析或標記。',
   trackB_v1_instrumental: 'V1 正式雙軌融合的 B 軌原始輸入：stems/no_vocals.wav（無人聲全樂器伴奏軌），V1 正式 BeatNet 全曲獨立分析。融合前的原始結果，僅供參考對照，不影響 Lane1-4 任何一層的分析或標記。',
+  gap_reinforcement: 'Pass 179：GapReinforcementNode 正式生產跑出來的診斷輸出，不是 scratch 腳本模擬——音檔就是「目前管線 (V1)」那條的 mix_with_click.wav（補強出的拍點已經流進同一條 pipeline，變成同一份音檔的一部分）。在這裡標記的 pass/fail 會回饋給 scripts/calibrate_gap_reinforcement_thresholds.py 的門檻校準。',
 };
 
 const LANE_CATEGORY = {
@@ -347,6 +348,7 @@ const LANE_CATEGORY = {
   lane3_drum_bass_chord: { label: '疊加證據鏈', cls: 'cat-chain' },
   lane4_melody: { label: '疊加證據鏈', cls: 'cat-chain' },
   lane5_full_instrumental: { label: '疊加證據鏈', cls: 'cat-chain' },
+  gap_reinforcement: { label: '疊加證據鏈（正式生產）', cls: 'cat-chain' },
   trackA_v1_rhythm: { label: 'V1 既有機制・僅供參考', cls: 'cat-ref' },
   trackB_v1_instrumental: { label: 'V1 既有機制・僅供參考', cls: 'cat-ref' },
 };
@@ -657,6 +659,23 @@ def discover_lanes(project_dir: str) -> list:
             "blocks": load_blocks(project_dir, base_audio),
             "marks_path": os.path.join(project_dir, "reports", "gap_review_marks.json"),
             "beats_path": os.path.join(project_dir, "reports", "module3_pipeline_report.json"),
+        })
+
+    # Pass 179：GapReinforcementNode 正式生產跑完會落盤這份診斷輸出。音檔沿用
+    # 「目前管線 (V1)」那條的 mix_with_click.wav，不是另外渲染一份——補強出的
+    # 拍點最終會流進同一條 pipeline 繼續跑完精修鏈、變成同一份音檔的一部分，
+    # 不是獨立產物，沒有必要也不應該另外渲染。
+    gap_reinforcement_blocks_path = os.path.join(project_dir, "reports", "gap_reinforcement", "blocks.json")
+    if os.path.exists(gap_reinforcement_blocks_path) and os.path.exists(base_audio):
+        with open(gap_reinforcement_blocks_path, "r", encoding="utf-8") as f:
+            blocks = json.load(f)
+        lanes.append({
+            "id": "gap_reinforcement",
+            "name": "gap_reinforcement（正式生產）",
+            "audio_path": base_audio,
+            "blocks": blocks,
+            "marks_path": os.path.join(project_dir, "reports", "gap_reinforcement", "marks.json"),
+            "beats_path": os.path.join(project_dir, "reports", "gap_reinforcement", "beats.json"),
         })
 
     lanes_root = os.path.join(project_dir, "lanes")
