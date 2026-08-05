@@ -700,9 +700,16 @@ def _reset_marks_baseline(blocks: list) -> dict:
 
 def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
     """否決往後傳遞規則（使用者明確要求）：某個區塊在較前面的 Lane 被系統評分
-    標準判定通過，但人工在後面某個 Lane 重新聽覺得不通過——這個不通過要往後
+    標準判定通過（pass/auto_pass），但人工重新聽覺得不通過——這個不通過要往後
     所有 Lane 都同步套用在同一個時間區段上，不能因為前面一次自動通過就被排除
     在後續複核之外。只往後傳遞 fail，不往前傳遞，也不用 pass 覆蓋既有標記。
+
+    這個函式本身不檢查「原本狀態是不是 pass/auto_pass」——呼叫端（/marks 的
+    POST handler）已經先篩過，只有原本狀態是 pass/auto_pass、被人工推翻成
+    fail 才會呼叫這裡。原本就是 needs_review/unmarked，人工只是確認信心
+    機制本來就已經抓到的問題，不會呼叫這裡——因為下一層本來就會用新證據
+    重新分析那個區段，不該被前面的失敗結果提前判死刑，那樣會讓「後面證據
+    有沒有真的解決問題」這件事永遠測不出來。
 
     重要：這純粹是審查介面上的「回饋一致性」輔助，只是讓人工在複核後面的
     Lane 時，不會漏看前面某個 Lane 已經指出的問題。它完全不影響任何一條
@@ -874,7 +881,12 @@ def make_handler(lanes: list):
 
                 affected_lanes = []
                 for b in lane["blocks"]:
-                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail":
+                    # 只有「信心機制原本判定通過（pass/auto_pass），人工推翻」才傳遞——
+                    # 這代表信心機制的盲點，後面每一層都會原封不動沿用這段拍點，不會
+                    # 重新檢查，所以必須往後傳遞警示。原本就是 needs_review/unmarked
+                    # 被人工確認為 fail，不傳遞：下一層本來就會用新證據重新分析這段，
+                    # 可能已經修好了，不該被前面的失敗結果提前判死刑。
+                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) in ("pass", "auto_pass"):
                         affected_lanes.extend(propagate_fail(lanes, lane_index, b))
                 self._send_json({"status": "OK", "count": len(new_marks), "propagated_to": sorted(set(affected_lanes))})
             elif path == "/reset":
