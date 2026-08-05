@@ -398,6 +398,18 @@ player.addEventListener('timeupdate', () => {
   playhead.style.left = (player.currentTime / duration * 100) + '%';
 });
 
+document.addEventListener('keydown', (ev) => {
+  if (ev.code !== 'Space' && ev.key !== ' ') return;
+  const tag = (ev.target.tagName || '').toLowerCase();
+  if (tag === 'button' || tag === 'input' || tag === 'textarea' || ev.target.isContentEditable) return;
+  ev.preventDefault();
+  if (player.paused) {
+    player.play().catch(() => {});
+  } else {
+    player.pause();
+  }
+});
+
 function needsAttention(laneId, b) {
   return b.needs_review && stateOf(laneId, b.id) === 'unmarked';
 }
