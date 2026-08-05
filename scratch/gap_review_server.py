@@ -133,7 +133,7 @@ PAGE_HTML = r"""<!doctype html>
     <span><i class="swatch" style="background:#4a4a55"></i>待複核（黃框＝標準判定可疑）</span>
     <span><i class="swatch" style="background:#2f8f4e"></i>人工通過</span>
     <span><i class="swatch" style="background:#b23b3b"></i>人工不通過</span>
-    <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態；已通過的區段會自動依小節切成細塊，可單獨標記某小節不通過；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
+    <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態；已通過的區段會自動依小節切成細塊，可單獨標記某小節不通過；不通過會自動往後（沿用區段）跟往前（原封不動繼承來源的區段）雙向傳遞；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
   </div>
 
   <div style="font-size:12px;color:#999;background:#26262c;border:1px solid #3a3a42;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
