@@ -76,6 +76,7 @@ PAGE_HTML = r"""<!doctype html>
     border: 1px solid #555; border-radius: 3px; padding: 1px 6px; cursor: pointer;
   }
   .lane-reset-btn:hover { color: #eee; border-color: #888; }
+  .lane-desc { font-size: 10px; color: #777; margin: 0 0 4px 4px; max-width: 900px; line-height: 1.4; }
   .lane-timeline {
     position: relative; height: 46px; background: #2a2a30; border-radius: 6px;
     cursor: pointer; overflow: hidden; border: 1px solid #3a3a42;
@@ -126,6 +127,12 @@ PAGE_HTML = r"""<!doctype html>
     <span><i class="swatch" style="background:#2f8f4e"></i>人工通過</span>
     <span><i class="swatch" style="background:#b23b3b"></i>人工不通過</span>
     <span style="margin-left:auto">點軌道標籤＝切換播放；點時間軸空白處＝跳轉；點區塊＝循環切換狀態；已通過的區段會自動依小節切成細塊，可單獨標記某小節不通過；標籤旁「重設」＝清空這條 Lane 的人工標記</span>
+  </div>
+
+  <div style="font-size:12px;color:#999;background:#26262c;border:1px solid #3a3a42;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
+    所有 Lane 實際聽到的「歌曲本體」都相同（乾淨原始音檔，沒混過任何 click）；差異只在疊上去的 click 是用哪一組音色、哪一種演算法算出來的。
+    Lane1→2→3→4 是逐輪疊加證據鏈（每一層只重新分析上一層判定可疑的區段，其餘沿用不動）；Track A／Track B 是 V1 正式雙軌融合的原始輸入，全曲獨立分析，不吃這條鏈。
+    各 Lane 組成見下方軌道標籤旁的說明文字。
   </div>
 
   <div id="multi-timeline"><div id="lane-rows"><div id="playhead"></div></div></div>
@@ -307,6 +314,16 @@ function renderLaneBlocks(laneId) {
   }
 }
 
+const LANE_DESCRIPTIONS = {
+  current: '正式 Stage 0-6 全流程跑完、雙軌融合＋精修鏈之後的最終結果。',
+  lane1_drum_only: '只用 kick.wav + snare.wav（librosa 拍點追蹤）。逐輪疊加證據鏈第 1 層，全曲重新分析（沒有上一層可繼承）。',
+  lane2_drum_bass: '沿用 Lane1 通過的拍點，加上 bass stem（synth_bass_808 > electric_bass > bass），只重新分析 Lane1 判定可疑的區段。',
+  lane3_drum_bass_chord: '沿用 Lane2 通過的拍點，加上吉他/鋼琴的「和弦」onset（ChordMelodyOnsetSplitNode），只重新分析 Lane2 判定可疑的區段。',
+  lane4_melody: '沿用 Lane3 通過的拍點，加上吉他/鋼琴的「旋律」onset ＋ 主唱人聲 onset（VocalMelodyEvidenceExtractNode，lead_vocal.wav 優先），只重新分析 Lane3 判定可疑的區段。',
+  trackA_v1_rhythm: 'V1 正式雙軌融合的 A 軌原始輸入：stems/submix/track_a_rhythm.wav（鼓+貝斯節奏骨幹軌），V1 正式 BeatNet 全曲獨立分析（失敗才 fallback Librosa）。不吃 Lane1-4 的疊加證據鏈，融合前的原始結果。',
+  trackB_v1_instrumental: 'V1 正式雙軌融合的 B 軌原始輸入：stems/no_vocals.wav（無人聲全樂器伴奏軌），V1 正式 BeatNet 全曲獨立分析。不吃 Lane1-4 的疊加證據鏈，融合前的原始結果。',
+};
+
 function buildLaneRows() {
   for (const lane of lanesMeta) {
     const row = document.createElement('div');
@@ -334,6 +351,10 @@ function buildLaneRows() {
     });
     label.appendChild(resetBtn);
 
+    const desc = document.createElement('div');
+    desc.className = 'lane-desc';
+    desc.textContent = LANE_DESCRIPTIONS[lane.id] || '（此 Lane 尚無組成說明）';
+
     const tl = document.createElement('div');
     tl.className = 'lane-timeline';
     tl.dataset.lane = lane.id;
@@ -344,6 +365,7 @@ function buildLaneRows() {
     });
 
     row.appendChild(label);
+    row.appendChild(desc);
     row.appendChild(tl);
     laneRows.appendChild(row);
   }
