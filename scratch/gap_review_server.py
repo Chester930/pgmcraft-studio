@@ -330,6 +330,7 @@ const LANE_DESCRIPTIONS = {
   lane2_drum_bass: '沿用 Lane1 通過的拍點，加上 bass stem（synth_bass_808 > electric_bass > bass），只重新分析 Lane1 判定可疑的區段。',
   lane3_drum_bass_chord: '沿用 Lane2 通過的拍點，加上吉他/鋼琴的「和弦」onset（ChordMelodyOnsetSplitNode），只重新分析 Lane2 判定可疑的區段。',
   lane4_melody: '沿用 Lane3 通過的拍點，加上吉他/鋼琴的「旋律」onset ＋ 主唱人聲 onset（VocalMelodyEvidenceExtractNode，lead_vocal.wav 優先），只重新分析 Lane3 判定可疑的區段。',
+  lane5_full_instrumental: '沿用 Lane4 通過的拍點，改用 stems/no_vocals.wav（無人聲完整混音，非分軌疊加）直接分析，只重新分析 Lane4 判定可疑的區段——跟前面各層把分軌音頭疊加成合成訊號不同，這層用真正的完整混音本身，能捕捉分軌疊加方式漏掉的聲學交互作用。',
   trackA_v1_rhythm: 'V1 正式雙軌融合的 A 軌原始輸入：stems/submix/track_a_rhythm.wav（鼓+貝斯節奏骨幹軌），V1 正式 BeatNet 全曲獨立分析（失敗才 fallback Librosa）。融合前的原始結果，僅供參考對照，不影響 Lane1-4 任何一層的分析或標記。',
   trackB_v1_instrumental: 'V1 正式雙軌融合的 B 軌原始輸入：stems/no_vocals.wav（無人聲全樂器伴奏軌），V1 正式 BeatNet 全曲獨立分析。融合前的原始結果，僅供參考對照，不影響 Lane1-4 任何一層的分析或標記。',
 };
@@ -340,6 +341,7 @@ const LANE_CATEGORY = {
   lane2_drum_bass: { label: '疊加證據鏈', cls: 'cat-chain' },
   lane3_drum_bass_chord: { label: '疊加證據鏈', cls: 'cat-chain' },
   lane4_melody: { label: '疊加證據鏈', cls: 'cat-chain' },
+  lane5_full_instrumental: { label: '疊加證據鏈', cls: 'cat-chain' },
   trackA_v1_rhythm: { label: 'V1 既有機制・僅供參考', cls: 'cat-ref' },
   trackB_v1_instrumental: { label: 'V1 既有機制・僅供參考', cls: 'cat-ref' },
 };
@@ -800,6 +802,7 @@ LANE_LINEAGE = {
     "lane2_drum_bass": "lane1_drum_only",
     "lane3_drum_bass_chord": "lane2_drum_bass",
     "lane4_melody": "lane3_drum_bass_chord",
+    "lane5_full_instrumental": "lane4_melody",
 }
 
 
