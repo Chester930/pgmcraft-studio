@@ -782,6 +782,60 @@ def propagate_fail(lanes: list, lane_index: int, failed_block: dict) -> list:
     return affected
 
 
+# Lane1→2→3→4 疊加證據鏈的血緣關係：值＝來源 Lane（splice_beats 拼接時的
+# source-lane）。current／Track A／Track B 不在這條鏈上，沒有反向傳遞對象。
+LANE_LINEAGE = {
+    "lane2_drum_bass": "lane1_drum_only",
+    "lane3_drum_bass_chord": "lane2_drum_bass",
+    "lane4_melody": "lane3_drum_bass_chord",
+}
+
+
+def propagate_fail_backward(lanes: list, lane_index: int, failed_block: dict) -> list:
+    """反向傳遞規則（對稱於 propagate_fail，使用者明確要求）：人工在某一層
+    發現的錯誤，如果這個時間區段根本不是這一層自己重新分析出來的——而是
+    原封不動沿用上一層的拍點（不在這一層自己的 escalation_ranges 裡）——
+    代表錯誤的源頭其實在更早那一層，要往回標記，而且要一路往回追溯，直到
+    追到「真正重新分析過這段」的那一層為止（那一層才是錯誤真正的源頭，
+    不用再往回傳，避免超出真正有問題的範圍誤傷更早的層）。
+
+    只沿著 Lane1→2→3→4 這條鏈往回走（見 LANE_LINEAGE）；current／Track A／
+    Track B 不在這條鏈上。回傳被影響到的 lane id 清單。"""
+    from lane_common import escalation_ranges as _lane_escalation_ranges
+
+    lane_by_id = {lane["id"]: (i, lane) for i, lane in enumerate(lanes)}
+    affected = []
+    cur_id = lanes[lane_index]["id"]
+    cur_range = (failed_block["start"], failed_block["end"])
+
+    while cur_id in LANE_LINEAGE:
+        source_id = LANE_LINEAGE[cur_id]
+        if source_id not in lane_by_id:
+            break
+        _, source_lane = lane_by_id[source_id]
+        source_dir = os.path.dirname(source_lane["beats_path"])
+
+        fresh_ranges = _lane_escalation_ranges(source_dir)  # 這一層自己重新分析過的範圍
+        was_freshly_analyzed = any(cur_range[0] < e and s < cur_range[1] for s, e in fresh_ranges)
+        if was_freshly_analyzed:
+            break  # 這一層自己重新分析過這段，錯誤源頭就是這一層，不用再往回追
+
+        changed = False
+        marks = _load_marks_file(source_lane["marks_path"])
+        for b in source_lane["blocks"]:
+            if _overlaps(cur_range[0], cur_range[1], b["start"], b["end"]):
+                if marks.get(b["id"]) != "fail":
+                    marks[b["id"]] = "fail"
+                    changed = True
+        if changed:
+            _save_marks_file(source_lane["marks_path"], marks)
+            affected.append(source_id)
+
+        cur_id = source_id  # 繼續往回追溯
+
+    return affected
+
+
 def make_handler(lanes: list):
     lane_by_id = {lane["id"]: (i, lane) for i, lane in enumerate(lanes)}
     for lane in lanes:
@@ -936,8 +990,14 @@ def make_handler(lanes: list):
                     # 就 needs_review 的區塊要標成不通過得點兩下，第二下的舊狀態剛好會
                     # 經過「通過」這個循環中間態，不是使用者真的表達過「這裡沒問題」，
                     # 用那個當判斷依據會誤觸發傳遞（Pass 177 實測發現的真實 bug）。
-                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail" and not b.get("needs_review", True):
-                        affected_lanes.extend(propagate_fail(lanes, lane_index, b))
+                    if new_marks.get(b["id"]) == "fail" and old_marks.get(b["id"]) != "fail":
+                        if not b.get("needs_review", True):
+                            affected_lanes.extend(propagate_fail(lanes, lane_index, b))
+                        # 反向規則（使用者明確要求）：跟「該不該往後傳」是兩個獨立判斷，
+                        # 都要各自檢查，不是二選一——這段拍點如果根本是這一層原封不動
+                        # 沿用上一層的（不在這一層自己的 escalation_ranges 裡），錯誤源頭
+                        # 在更早那一層，要往回標記，見 propagate_fail_backward()。
+                        affected_lanes.extend(propagate_fail_backward(lanes, lane_index, b))
 
                 # 小節細標層級的同一條規則：小節細標只會出現在母區塊已通過驗證
                 # （needs_review=False）的情況下——那個母區塊本來就不會被任何後續
@@ -955,6 +1015,7 @@ def make_handler(lanes: list):
                     if old_effective == "fail":
                         continue
                     affected_lanes.extend(propagate_fail(lanes, lane_index, submeasure))
+                    affected_lanes.extend(propagate_fail_backward(lanes, lane_index, submeasure))
 
                 self._send_json({"status": "OK", "count": len(new_marks), "propagated_to": sorted(set(affected_lanes))})
             elif path == "/reset":
