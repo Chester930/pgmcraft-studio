@@ -755,5 +755,17 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   `C:/Python313/python.exe`，這台機器的 `python3` 預設指向沒裝 madmom 的
   Python 3.11，跑 Stage 3 測試會因環境問題誤判失敗，跟這次改動無關）。
 - 任務書：`docs/PASS-180-VITERBI-ISOLATED-OUTLIER-FIX-TASK.md`。
-- 狀態：已完成。真實音訊 A/B 回歸重跑（確認 click 消失問題在真實資料上解決）
-  尚未執行，需要使用者同意才進行（約 20-30 分鐘）。
+- 真實音訊 A/B 回歸重跑結果（`scratch/run_pass180_reverify_gap_reinforcement.py`，
+  《World is Mine》，GapReinforcementNode 啟用）：click 消失問題確認解決——
+  原本 7.1s-13.5s、16.1s-19.2s 完全靜音，這次逐 0.05 秒重新掃描，3-25 秒
+  區間最大相鄰 click 間隔只有 0.5 秒（正常拍距）；BPM 跳動次數從 6 次降到 0
+  次，回到跟黃金基準/對照組一致的水準；小節數 116（舊問題版本 109、對照組
+  117、黃金基準 121），比舊版好很多、接近對照組。不規則小節數仍是 1，但是
+  歌曲收尾淡出提早截斷的既有現象（兩次跑法都有），跟這次修的 bug 無關。
+  總長度 169.69s 跟舊版本數字巧合相近，比對過 measure_map.json 確認是全曲
+  最後一個真實拍點位置本來就在那附近，不是報告抓到舊資料。詳見任務書第
+  4.3 節。
+- 狀態：已完成，真實資料驗證確認修復有效。`GapReinforcementNode` 的
+  `enabled` 生產預設值維持 `False`——這次驗證解決的是 Viterbi 這個下游 bug，
+  `GapReinforcementNode` 自己的邊界連貫性檢查跟升格條件仍未滿足（見任務書
+  第 3 節）。
