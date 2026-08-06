@@ -845,3 +845,29 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 - 範圍界定：`KickSnarePulseNode`、`DrumFillDetectionNode` 有同樣的架構
   缺口，是分開、還沒排入的後續工作，不在這次任務內。
 - 狀態：已實作，測試皆通過。
+
+### Pass 183：`KickSnarePulseNode` 補上整個鼓軌交叉確認
+
+- 背景：Pass 182 只修了 `SteadyPercussionCountAnchorNode`，使用者同意順便
+  處理其他有同樣架構缺口的節點。`KickSnarePulseNode` 影響範圍最大——它產出
+  的 `kick_anchors`/`snare_anchors` 被 `ReEntryReAnchoringNode`、
+  `DownbeatPhaseConsistencyNode`、`KickAnchorConsensusSnapNode`、
+  `DrumFillDetectionNode` 等一整串下游節點共用，卻完全只看細分軌。
+  `DrumFillDetectionNode` 本身的架構缺口這次不處理——它的錯誤代價較小
+  （排除過門用，錯了頂多保守跳過），且已有部分整軌備援，優先權較低。
+- 實作：kick/snare 細分軌抽取完成後、Sub-Bass 低頻補位邏輯**之前**，插入
+  整個鼓軌交叉確認——用同一套 `_extract_peak_anchors`（跟 kick/snare 一致，
+  不像 Pass 181/182 需要換成 onset 偵測，因為 kick/snare 本身夠「尖峰」）
+  對整軌抽取峰值，濾掉細分軌裡在整軌對應時間（容差 0.15 秒，比 Pass 182
+  的 0.04 秒寬鬆）完全沒有能量的可疑錨點。刻意放在 Sub-Bass 補位邏輯之前，
+  因為補位錨點本來就預期整軌在無鼓區間沒有對應能量，不能被交叉確認反向
+  淘汰。沒有整軌檔案時完全跳過確認，向後相容既有行為。
+- 測試：新增 `tests/test_sdd_pass183.py`（4 項全過）——確認通過、確認拒絕
+  （新情境）、沒有整軌時跳過確認、Sub-Bass 補位不受影響。既有直接測試
+  `KickSnarePulseNode` 的 7 個檔案（`test_sdd_pass39/129/147/148/150/153`、
+  `test_module3_bt`，共 29 項）全數通過，確認既有行為不受影響。既有 Stage 3
+  回歸測試（含 Pass 181/182/183 共 82 項）全數通過。
+- 任務書：
+  `docs/PASS-183-KICKSNAREPULSE-WHOLE-DRUM-TRACK-CROSSCHECK-TASK.md`。
+- 範圍界定：`DrumFillDetectionNode` 的架構缺口仍未處理，留在後續工作清單。
+- 狀態：已實作，測試皆通過。

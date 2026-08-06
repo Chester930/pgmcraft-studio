@@ -175,9 +175,23 @@ class KickSnarePulseNode(BaseNode):
     - 讀取 `stems["kick"]` (40-120Hz) 與 `stems["snare"]` (200-2200Hz)
     - 提取獨立的大鼓撞擊時間點 `kick_anchors` (做為強位第一拍對齊參考)
     - 提取獨立的小鼓撞擊時間點 `snare_anchors` (做為 2/4 拍骨幹對齊參考)
+
+    Pass 183：`kick_anchors`/`snare_anchors` 是 `ReEntryReAnchoringNode`、
+    `DownbeatPhaseConsistencyNode`、`KickAnchorConsensusSnapNode`、
+    `DrumFillDetectionNode` 等一整串下游節點共用的輸入，但原本完全只看細分
+    軌，從未回頭比對整個鼓軌——分軌是 Demucs 頻段分離出來的，細分軌裡看起來
+    乾淨的擊點，有可能是分離殘留的假訊號，真實混音裡根本沒有對應的聲音（跟
+    Pass 182 修 `SteadyPercussionCountAnchorNode` 是同一個問題）。補上：鼓聲
+    細分軌抽取出來的錨點，要用整個 `drums.wav`（同一套 `_extract_peak_
+    anchors`，跟 kick/snare 用的方法一致）做交叉確認，容差內找不到對應能量
+    的視為可疑，濾掉。**這層確認只套用在鼓聲細分軌自己抽取出來的錨點，不
+    套用在後面 Sub-Bass 補位邏輯新增的錨點**——無鼓區間本來就預期整個鼓軌
+    沒有能量，那正是為什麼要用貝斯補位，不能讓交叉確認反向把補位錨點淘汰。
     """
     optional_keys = ["stems", "stems_dir"]
     output_keys = ["kick_anchors", "snare_anchors"]
+
+    WHOLE_TRACK_CONFIRM_TOLERANCE_SEC = 0.15  # _extract_peak_anchors 窗口法本身時間精度較粗，容差放寬
 
     def __init__(self):
         super().__init__("KickSnarePulseNode")
@@ -211,6 +225,23 @@ class KickSnarePulseNode(BaseNode):
             except Exception as e:
                 print(f"[{self.name} Warning] 提取 Snare 脈衝失敗: {e}")
 
+        drums_path = stems.get("drums")
+        if not drums_path and stems_dir:
+            dp = os.path.join(stems_dir, "drums", "drums.wav")
+            if os.path.exists(dp): drums_path = dp
+
+        if drums_path and os.path.exists(drums_path):
+            try:
+                whole_drum_peaks = _extract_peak_anchors(drums_path, threshold_ratio=0.2, min_gap_sec=0.05)
+                before_kick, before_snare = len(kick_anchors), len(snare_anchors)
+                kick_anchors = self._confirmed_by_whole_track(kick_anchors, whole_drum_peaks)
+                snare_anchors = self._confirmed_by_whole_track(snare_anchors, whole_drum_peaks)
+                dropped = (before_kick - len(kick_anchors)) + (before_snare - len(snare_anchors))
+                if dropped > 0:
+                    print(f"[{self.name}] 🛡️ 整個鼓軌交叉確認：濾掉 {dropped} 個真實混音無對應能量的可疑脈衝點。")
+            except Exception as e:
+                print(f"[{self.name} Warning] 整個鼓軌交叉確認失敗: {e}")
+
         # 無鼓區間 Sub-Bass 40-100Hz 低頻脈衝補充對位護航
         bass_path = stems.get("sub_bass_808") or stems.get("electric_bass") or stems.get("bass")
         if not bass_path and stems_dir:
@@ -243,6 +274,15 @@ class KickSnarePulseNode(BaseNode):
         blackboard.set_val("snare_anchors", np.array(snare_anchors))
         print(f"[{self.name}] ✅ 成功提取 {len(kick_anchors)} 個重音脈衝點與 {len(snare_anchors)} 個 Snare 脈衝點。")
         return NodeStatus.SUCCESS
+
+    def _confirmed_by_whole_track(self, anchors: list, whole_track_peaks: list) -> list:
+        """只保留在整個鼓軌裡（容差內）也找得到對應能量的錨點——濾掉細分軌
+        分離殘留的假訊號。整個鼓軌沒有任何峰值時視為無法確認，原樣保留
+        （避免整軌抽取失敗時反而把所有真實錨點都清空）。"""
+        if not whole_track_peaks:
+            return anchors
+        whole_arr = np.asarray(whole_track_peaks, dtype=float)
+        return [a for a in anchors if np.min(np.abs(whole_arr - a)) <= self.WHOLE_TRACK_CONFIRM_TOLERANCE_SEC]
 
 
 class AnchorTransientSnapNode(BaseNode):
