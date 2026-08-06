@@ -871,3 +871,19 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   `docs/PASS-183-KICKSNAREPULSE-WHOLE-DRUM-TRACK-CROSSCHECK-TASK.md`。
 - 範圍界定：`DrumFillDetectionNode` 的架構缺口仍未處理，留在後續工作清單。
 - 狀態：已實作，測試皆通過。
+
+### 追記：`DrumFillDetectionNode` 的架構缺口其實已隨 Pass 183 附帶解決
+
+- 使用者問還有沒有小缺口可以順便處理，查證後發現不需要額外寫程式碼：
+  `DrumFillDetectionNode._collect_event_times()` 優先讀的正是
+  `kick_anchors`/`snare_anchors`——這兩個值就是 `KickSnarePulseNode` 產出的
+  同一份資料，Pass 183 已經讓它在寫回 blackboard **之前**就先做過整軌交叉
+  確認；唯一的備援分支（兩者都完全空時）本來就是直接對整個 `drums.wav`
+  做 `_extract_peak_anchors`，從來沒有「只信細分軌」的問題。
+- 確認過管線順序：`KickSnarePulseNode` 在 `build_beat_tracking_
+  preparation_nodes()`（準備階段）先跑，`DrumFillDetectionNode` 在
+  `build_beat_refinement_nodes()`（精修階段）才跑——`DrumFillDetectionNode`
+  讀到的一定是 Pass 183 已經過濾過的版本。
+- 結論：這個缺口不需要獨立的程式碼修改，Pass 182/183 兩個任務書裡標記的
+  「`DrumFillDetectionNode` 架構缺口未處理」狀態視為已隨 Pass 183 附帶
+  關閉，不再是待辦事項。

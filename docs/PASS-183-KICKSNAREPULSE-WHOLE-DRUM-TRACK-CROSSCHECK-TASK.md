@@ -133,3 +133,13 @@ Sub-Bass 補充邏輯的用途是「無鼓區間用貝斯低頻脈衝補位」�
 - 既有 Stage 3 回歸測試（`test_commercial_beat_quality`、
   `test_sdd_pass23/28/42/87/102/103/104/141/144/178/179/180/181/182`、
   `test_module3_bt`，加上新增的 `test_sdd_pass183`，共 82 項）全數通過。
+
+### 4.3 追記：第 3 節「`DrumFillDetectionNode` 架構缺口未處理」已附帶關閉
+
+實作完成後查證：`DrumFillDetectionNode._collect_event_times()` 優先讀的
+`kick_anchors`/`snare_anchors` 就是 `KickSnarePulseNode` 這次修改後產出的
+同一份資料——寫回 blackboard **之前**已經做過整軌交叉確認；唯一的備援分支
+（兩者都空時）本來就是直接對整個 `drums.wav` 抽取，從來沒有「只信細分軌」
+的問題。管線順序也確認過：`KickSnarePulseNode`（準備階段）先跑，
+`DrumFillDetectionNode`（精修階段）後跑，後者讀到的一定是已過濾版本。
+**不需要獨立的程式碼修改**，第 3 節列的這項後續工作視為已關閉。
