@@ -812,3 +812,25 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 - 任務書：`docs/PASS-181-STEADY-PERCUSSION-COUNT-DOWNBEAT-ANCHOR-TASK.md`。
 - 狀態：已實作、測試皆通過。真實音訊完整管線回歸（確認對《World is Mine》
   18 秒附近實際有幫助）尚未執行，需要使用者同意才進行。
+
+### Pass 182：`SteadyPercussionCountAnchorNode` 補上整個鼓軌比對
+
+- 背景：Pass 181 做完後，使用者提出疑慮：「先從整個鼓軌來辨識，如果有不
+  確定的部分，就透過鼓的細分軌來分析、比對與調整，這是我原先的想法。」
+  盤點現有管線發現這個原則**只有部分節點遵守**：核心拍點/速度偵測
+  （`BeatNetNode_TrackA`）跟 `MicroTimingTransientSnapNode` 已經是整個鼓軌
+  優先，但負責「第一拍在哪」的關鍵節點群（`KickSnarePulseNode` 衍生的
+  `ReEntryReAnchoringNode`/`DownbeatPhaseConsistencyNode`/
+  `KickAnchorConsensusSnapNode`，加上剛做的 `SteadyPercussionCountAnchorNode`）
+  完全只看細分軌，從來不回頭比對整個鼓軌；`DrumFillDetectionNode` 順序還
+  相反（細分軌優先，兩者全空才退回整軌）。
+- 這次任務只修 `SteadyPercussionCountAnchorNode`（最直接踩到問題的節點）：
+  新增整個 `drums.wav` 當第四個候選來源；細分軌候選要拿整個鼓軌的 onset
+  能量做確認（容差 ±40ms，比要求整軌也一樣乾淨更寬鬆），沒通過確認的
+  不採用但記錄進 report（`REJECTED_NO_WHOLE_TRACK_ENERGY`），不是靜默丟掉；
+  整軌自己找到、沒有細分軌候選對應的段落一樣可以採用（`source="drums"`，
+  優先權較低）。
+- 任務書：`docs/PASS-182-WHOLE-DRUM-TRACK-CROSSCHECK-TASK.md`。
+- 範圍界定：`KickSnarePulseNode`、`DrumFillDetectionNode` 有同樣的架構
+  缺口，是分開、還沒排入的後續工作，不在這次任務內。
+- 狀態：設計已確認，待實作。
