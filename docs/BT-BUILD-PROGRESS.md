@@ -635,9 +635,8 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   有貝斯證據時正確補強、完全沒證據時安全退回原始結果）；既有 Stage 3 相關
   測試（`test_sdd_pass23/28/42/102/103/104/141`、`test_commercial_beat_
   quality`）共 38 項全數通過，插入新節點沒有造成任何回歸。
-- 狀態：正式產線邏輯已實作並通過單元測試；黃金基準真實資料回歸比對尚未執行
-  （見 `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第 2
-  節，成本較高，排在後續驗證）。
+- 狀態：正式產線邏輯已實作並通過單元測試；黃金基準真實資料回歸比對已於後續
+  補做，結果為負面，詳見下方「Pass 178（續）」條目。
 
 ### Pass 179：GapReinforcementNode 診斷輸出落盤，接通校準迴圈
 
@@ -660,3 +659,34 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   重跑確認重構沒有回歸；手動驗證 `discover_lanes()` 正確找到新 Lane 且音檔
   路徑跟 `current` 共用。
 - 狀態：完成，兩條迴圈（正式生產 / 人工校準）現在真的接通了。
+
+### Pass 178（續）：真實資料 A/B 回歸測試 —— 發現負面結果，改為預設關閉
+
+- 背景：Pass 178/179 完成後，在真實來源音訊（ryo「World is Mine」，
+  `target_stage="module3"`）上跑了一次啟用 `GapReinforcementNode` 的完整管線
+  回歸，並額外補跑一組停用該節點的對照組，做嚴謹的 A/B 比較（而不是只跟黃金
+  基準單邊比）。
+- **結果（誠實記錄，不是正面結果）**：處理組（啟用）小節數 109（黃金基準
+  121，差 -12；對照組 117，差 -4），BPM 跳動 6 次（黃金基準/對照組皆 0 次），
+  不規則小節 1 個（黃金基準/對照組皆 0 個）。節點自身的品質守門日誌顯示「缺口
+  強化：7 段，已採用」——也就是說，局部守門認為補強有幫助，但套用到完整管線
+  後，整體結果在每一項指標上都比黃金基準、也比完全不跑這個節點的對照組更差。
+- 根因：`_is_improvement` 品質守門只檢查缺口區段**局部**的音頭確認比例，沒有
+  檢查補強出的拍點跟缺口前後「已確信」網格的節奏是否連貫——這正是 Pass 176
+  設計文件規劃要用 `BidirectionalBarAlignmentNode` / `TwoWayAnchorBacktraceNode`
+  做雙向錨定的部分，但 Pass 178 實作時只做了局部標籤延續，沒有真正做跨邊界的
+  連貫性驗證，設計文件跟實作之間的落差直到真實資料測試才暴露出來。
+- 處理：`GapReinforcementNode.__init__` 新增 `enabled: bool = False`，預設
+  關閉時 `execute()` 直接空操作（`{"status": "DISABLED_PENDING_VALIDATION"}`），
+  不修改 beats；節點仍掛在管線裡（診斷輸出、校準迴圈基礎設施保持可用），但
+  預設不執行實際補強。這跟這個專案對 BarStart v2 既有的「比較但不升格」原則
+  一致。校準/複核流程要繼續測試時，明確傳入 `enabled=True`。
+- 測試：`tests/test_sdd_pass178.py` 新增 `test_disabled_by_default_is_a_noop`
+  （4 項全過）；`tests/test_sdd_pass179.py` 3 項改為顯式 `enabled=True` 後
+  重跑仍全過；既有 Stage 3 相關回歸測試（`test_commercial_beat_quality` +
+  `test_sdd_pass23/28/42/102/103/104/141`，共 38 項）重跑全數通過，確認加入
+  `enabled` 開關沒有破壞既有行為。
+- 尚未完成：缺口補強跟周邊網格的節奏連貫性檢查（重新啟用前的前提）；累積更多
+  首歌的真人複核校準資料（目前只有這一首歌有真實複核紀錄）；長期的
+  「V1 legacy vs V3 預設」升格閘門設計。詳見
+  `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第 4 節。

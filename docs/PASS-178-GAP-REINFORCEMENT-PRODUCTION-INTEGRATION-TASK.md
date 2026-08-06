@@ -1,9 +1,11 @@
 # Pass 178 任務書：V3 生產化 — GapReinforcementNode 正式整合 + 人工微調校準迴圈
 
 **狀態**：`GapReinforcementNode` 已實作並整合進 `build_beat_refinement_nodes()`，
-校準腳本已完成，單元測試（`tests/test_sdd_pass178.py` 3 項）與既有 Stage 3 相關
-測試（38 項）全數通過。**尚未完成**：黃金基準真實資料回歸比對（見第 2 節第 4
-項，成本較高，排在後續驗證）。
+校準腳本已完成。黃金基準真實資料回歸比對（《World is Mine》，見第 4 節）已完成，
+**結果是負面的**：節點目前的實作讓整體管線輸出比黃金基準、也比停用時的對照組
+都更差，已改為**預設關閉**（`enabled=False`），詳見第 4 節。單元測試
+（`tests/test_sdd_pass178.py` 4 項，含新增的「預設關閉即空操作」測試）與既有
+Stage 3 相關測試（38 項）在改動後全數通過。
 **目標**：把 Pass 176 設計、Pass 177 在審查工具裡用 Lane1-5 實測驗證過的「逐輪疊加
 證據」機制，正式寫進 V1 正式管線變成 V3——同時保留人工標記微調的能力，但職責
 跟正式生產流程完全分離：**正式生產一次跑完，不需要人工在場；人工複核是隨選的
@@ -183,4 +185,73 @@ Lane 來源**：直接指向任一首歌專案資料夾下 `reports/gap_reinforc
 4. **V1 legacy 跟 V3 的關係**：V3 上線後，V1 原本的行為是否保留成備援（比照
    BarStart v2 現在「比較但不升格」的做法），還是直接變成新的預設路徑——需要
    跟 `evaluate_barstart_v2_completeness()` 現有的升格閘門模式對齊，不要有兩套
-   不一致的升格邏輯並存。
+   不一致的升格邏輯並存。**（本節第 4 點在真實回歸測試後有了明確答案：見第 4
+   節，V3 目前保留成預設關閉的備援，跟 BarStart v2 用同一套保守原則。）**
+
+---
+
+## 4. 真實資料 A/B 回歸測試結果（《World is Mine》）與後續處理
+
+### 4.1 測試方法
+
+在同一份真實來源音訊（ryo「World is Mine」，`target_stage="module3"`，
+`user_meter_selection="4/4"`）上跑兩次完整管線：
+
+- **處理組**（`scratch/run_pass178_gap_reinforcement_regression.py`）：
+  `GapReinforcementNode` 啟用。
+- **對照組**（`scratch/run_pass178_control_no_reinforcement.py`）：
+  `GapReinforcementNode` 停用，其餘管線完全相同。
+
+兩次都是各自獨立重新跑 Demucs 分離（htdemucs_ft ×3 + htdemucs_6s ×1）——原本
+以為可以用既有分離結果的目錄 junction 跳過重新分離，實測發現分離節點的快取是
+用音訊內容雜湊（`cache/`）鍵值，不是看 `stems/` 資料夾是否已有檔案，所以 junction
+沒有跳過 Demucs。這對 A/B 比較反而更嚴謹（兩組都是從頭跑），可重現性則依賴
+Pass 174 `reseed_for_inference()` 的 Demucs 決定性修正。
+
+### 4.2 結果
+
+| 指標 | 黃金基準 | 處理組（啟用） | 對照組（停用） |
+|---|---|---|---|
+| 小節數 | 121 | 109（差 -12） | 117（差 -4） |
+| 總長度 | 175.69s | 169.69s（差 -6.01s） | 172.40s（差 -3.30s） |
+| BPM 跳動次數 | 0 | 6（差 +6） | 0（差 +0） |
+| 不規則小節數 | 0 | 1（差 +1） | 0（差 +0） |
+| 執行耗時 | - | 1650.6s | 1097.3s |
+
+處理組的節點自身日誌顯示：`[GapReinforcementNode] 缺口強化：7 段，已採用。`——
+也就是說，節點內部的品質守門（比對缺口區段內補強前後的音頭確認比例）認為這 7
+段都值得採用，但套用到完整管線後，整體結果在每一項指標上都比黃金基準、也比
+完全不跑這個節點的對照組更差。
+
+### 4.3 根因分析
+
+節點目前的品質守門（`_is_improvement`）只檢查**缺口區段自己局部**的音頭確認
+比例有沒有提升，沒有檢查補強出來的拍點跟缺口前後「已經確信」的網格節奏是否
+連貫。局部看起來合理的補強，接回整體網格時可能引入節奏不連貫——這正是 BPM
+跳動從 0 次變成 6 次的原因。這一塊本來就是 Pass 176 原始設計（見第 0.1 節）
+規劃要做的「用 `BidirectionalBarAlignmentNode` / `TwoWayAnchorBacktraceNode`
+做雙向錨定」，但 Pass 178 實作時只做了局部標籤延續（`_relabel()`），沒有真正
+做跨邊界的節奏連貫性驗證——設計文件跟實作之間的落差，直到真實資料測試才暴露
+出來。
+
+### 4.4 處理方式
+
+`GapReinforcementNode.__init__` 新增 `enabled: bool = False` 參數，預設關閉。
+關閉時 `execute()` 直接回傳 `NodeStatus.SUCCESS`，並在黑板寫入
+`{"status": "DISABLED_PENDING_VALIDATION"}`，不修改 `beats`。
+`build_beat_refinement_nodes()` 呼叫端保持節點掛在管線裡（診斷輸出、校準迴圈
+基礎設施持續可用），但預設不執行實際的缺口強化，直到補上跟周邊網格的連貫性
+檢查、重新驗證過為止。這跟這個專案對 BarStart v2 既有的「比較但不升格」原則
+一致——不因為節點裝進去了就假設它有幫助。
+
+校準/複核流程要繼續測試這個節點時，明確傳入 `enabled=True`。
+
+### 4.5 尚未完成的後續工作
+
+- 設計並實作缺口補強跟周邊「已確信」網格的節奏連貫性檢查（重用
+  `BidirectionalBarAlignmentNode` / `TwoWayAnchorBacktraceNode`），這是重新
+  啟用這個節點前的前提。
+- 累積更多首歌的真人複核校準資料（目前只有這一首歌有真實複核紀錄）。
+- 長期的「V1 legacy vs V3 預設」升格機制設計（類比
+  `evaluate_barstart_v2_completeness()`），目前只是暫時用 `enabled=False`
+  擋住，還沒有正式的升格閘門。

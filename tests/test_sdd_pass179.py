@@ -78,7 +78,7 @@ class TestSDDPass179:
         bb = _build_gap_scenario(tmp_path)
         bb.set_val("project_dir", str(tmp_path))
 
-        node = GapReinforcementNode()
+        node = GapReinforcementNode(enabled=True)
         status = node.execute(bb)
         assert status == NodeStatus.SUCCESS
 
@@ -108,7 +108,7 @@ class TestSDDPass179:
         bb = _build_gap_scenario(tmp_path)
         # 故意不設定 project_dir
 
-        node = GapReinforcementNode()
+        node = GapReinforcementNode(enabled=True)
         status = node.execute(bb)
         assert status == NodeStatus.SUCCESS
         assert not (tmp_path / "reports").exists()
@@ -131,7 +131,7 @@ class TestSDDPass179:
         bb.set_val("stems_dir", str(tmp_path / "stems"))
         bb.set_val("project_dir", str(tmp_path))
 
-        node = GapReinforcementNode()
+        node = GapReinforcementNode(enabled=True)
         status = node.execute(bb)
         assert status == NodeStatus.SUCCESS
         assert bb.get_val("gap_reinforcement_report")["status"] == "NO_GAPS"

@@ -2397,17 +2397,34 @@ class GapReinforcementNode(BaseNode):
 
     品質守門：補強後的拍點在缺口區段的音頭確認比例，沒有比原始融合結果
     的比例（加上 `improvement_margin` 容錯）更好，就整段退回原始結果。
+
+    Pass 178 第一次真實資料回歸測試（《World is Mine》，見
+    docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md 第 4
+    節）發現：這個節點目前的品質守門只看缺口區段自己局部的音頭確認比例，
+    沒有檢查補強出的拍點跟前後「已確信」網格的節奏是否連貫——實測結果整體
+    比黃金基準退步（小節數少 12 vs. 停用時只少 4；BPM 跳動 6 次 vs. 停用時
+    0 次），代表局部看起來合理的補強，可能在跟周邊網格銜接時引入節奏不連
+    貫，現有的品質守門抓不到這種「局部對、整體不連貫」的退步。**預設關閉
+    （enabled=False），直到補上跟周邊網格的連貫性檢查、重新驗證過為止**，
+    不要因為節點裝進去了就假設它有幫助——這正是這個專案對 BarStart v2 用的
+    「比較但不升格」原則，這裡沿用同一個保守態度。校準/複核流程要繼續測試
+    這個節點時，明確傳入 enabled=True。
     """
 
     required_keys = ["beats", "beat_fusion_report"]
     optional_keys = ["stems", "stems_dir", "y_rhythm", "sr_rhythm"]
     output_keys = ["beats", "refined_beats", "gap_reinforcement_report"]
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, enabled: bool = False):
         super().__init__("GapReinforcementNode")
         self.thresholds = _load_gap_reinforcement_thresholds(config_path)
+        self.enabled = enabled
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if not self.enabled:
+            blackboard.set_val("gap_reinforcement_report", {"status": "DISABLED_PENDING_VALIDATION"})
+            return NodeStatus.SUCCESS
+
         beats = blackboard.get_val("beats")
         if beats is None or len(beats) == 0:
             return NodeStatus.SUCCESS
@@ -2715,6 +2732,12 @@ def build_beat_refinement_nodes() -> list:
     """Common post-fusion beat guard nodes used by full PGM and Module 3."""
     from pgm_craft.workflow.audio_nodes import BeatValidationNode, DownbeatRefineNode
     return [
+        # enabled=False: Pass 178 real-audio A/B regression (World is Mine) showed this
+        # node currently makes results WORSE than the V1-only baseline (measures -12 vs
+        # -4, BPM jumps 6 vs 0 -- see docs/PASS-178-...-TASK.md sec. 4). Wired into the
+        # pipeline so the diagnostic export / calibration loop keep working, but inert
+        # by default until it gets a surrounding-grid tempo-consistency check and is
+        # re-validated. Pass enabled=True explicitly to test it.
         GapReinforcementNode(),
         ReEntryReAnchoringNode(),
         BeatValidationNode(),

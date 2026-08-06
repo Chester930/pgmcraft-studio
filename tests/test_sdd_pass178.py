@@ -38,6 +38,44 @@ def _click_train(times, duration_sec, sr=SR, freq=200.0, decay=40.0, amp=0.9):
 
 class TestSDDPass178:
 
+    def test_disabled_by_default_is_a_noop(self, tmp_path):
+        """Real-audio A/B regression (docs/PASS-178-...-TASK.md sec. 4) found this
+        node currently makes results worse than the V1-only baseline, so production
+        must default to enabled=False until it's re-validated with a surrounding-grid
+        tempo-consistency check."""
+        duration = 12.0
+        drum_times = [t for t in np.arange(0.0, duration, 0.5) if t < 4.0 or t >= 8.0]
+        kick_y = _click_train(drum_times, duration, freq=150.0)
+        bass_times = list(np.arange(0.0, duration, 0.5))
+        bass_y = _click_train(bass_times, duration, freq=80.0, decay=25.0)
+
+        drums_dir = tmp_path / "drums"
+        drums_dir.mkdir()
+        sf.write(str(drums_dir / "kick.wav"), kick_y, SR)
+        bass_dir = tmp_path / "bass"
+        bass_dir.mkdir()
+        sf.write(str(bass_dir / "bass.wav"), bass_y, SR)
+
+        good_times = [t for t in np.arange(0.0, duration, 0.5) if t < 4.0 or t >= 8.0]
+        bad_times = [t + 0.2 for t in np.arange(4.0, 8.0, 0.5)]
+        all_times = sorted(good_times + bad_times)
+        beats = np.array([[t, (i % 4) + 1] for i, t in enumerate(all_times)])
+
+        bb = Blackboard()
+        bb.set_val("beats", beats)
+        bb.set_val("beat_fusion_report", {
+            "track_b_spans": [{"start_time": 4.0, "end_time": 8.0, "beat_count": 8, "reason": "low_rhythm_energy"}]
+        })
+        bb.set_val("stems", {})
+        bb.set_val("stems_dir", str(tmp_path))
+
+        node = GapReinforcementNode()  # default enabled=False
+        status = node.execute(bb)
+
+        assert status == NodeStatus.SUCCESS
+        assert bb.get_val("gap_reinforcement_report") == {"status": "DISABLED_PENDING_VALIDATION"}
+        np.testing.assert_array_equal(bb.get_val("beats"), beats)
+
     def test_no_gaps_leaves_beats_untouched(self, tmp_path):
         duration = 8.0
         true_times = list(np.arange(0.0, duration, 0.5))
@@ -55,7 +93,7 @@ class TestSDDPass178:
         bb.set_val("stems", {})
         bb.set_val("stems_dir", str(tmp_path))
 
-        node = GapReinforcementNode()
+        node = GapReinforcementNode(enabled=True)
         status = node.execute(bb)
 
         assert status == NodeStatus.SUCCESS
@@ -98,7 +136,7 @@ class TestSDDPass178:
         bb.set_val("stems", {})
         bb.set_val("stems_dir", str(tmp_path))
 
-        node = GapReinforcementNode()
+        node = GapReinforcementNode(enabled=True)
         status = node.execute(bb)
 
         assert status == NodeStatus.SUCCESS
@@ -140,7 +178,7 @@ class TestSDDPass178:
         bb.set_val("stems", {})
         bb.set_val("stems_dir", str(tmp_path))
 
-        node = GapReinforcementNode()
+        node = GapReinforcementNode(enabled=True)
         status = node.execute(bb)
 
         assert status == NodeStatus.SUCCESS
