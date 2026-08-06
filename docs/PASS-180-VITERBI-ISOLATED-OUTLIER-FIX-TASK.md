@@ -1,6 +1,6 @@
 # Pass 180 任務書：修正 ViterbiTempoSmoothingNode 誤刪連續補強區塊的根本問題
 
-**狀態**：設計已確認（見下方第 1 節），實作中。
+**狀態**：已完成。實作、測試、既有回歸測試皆已通過，見第 4 節。
 **目標**：修正 `ViterbiTempoSmoothingNode`（`pgm_craft/workflow/beat_tracking_bt.py`）
 現有的離群值判斷邏輯——目前用「跟全曲中位數比較」判斷孤立離群值，實際上完全
 沒有檢查「孤不孤立」，導致 `GapReinforcementNode` 補強出的一整段連續拍點（跟
@@ -118,3 +118,56 @@ for interval_index, curr_int in enumerate(intervals):
 - 這次修好後 `GapReinforcementNode` 是否可以把 `enabled` 改回 `True`——不會
   自動變成可以，還是要等邊界連貫性檢查也做完、且有更多首歌的真人複核資料，
   才重新考慮升格問題（見 `docs/PASS-178-...-TASK.md` 第 4.5 節）。
+
+---
+
+## 4. 實作結果
+
+### 4.1 修改內容
+
+`pgm_craft/workflow/beat_tracking_bt.py` 的 `ViterbiTempoSmoothingNode`：
+
+- `__init__` 新增 `window_beats: int = 4`（局部滾動視窗大小，前後各 4 個拍距）。
+- 判斷離群值的基準從「全曲單一中位數」換成「以每個拍距為中心、前後各
+  `window_beats` 個有效拍距算出的局部中位數」。
+- 每個離群拍點的修正值改成 `timestamps[interval_index] + local_medians[interval_index]`
+  ——一律從原始未修改的陣列計算，不再疊加在 `smoothed_beats[beat_index - 1, 0]`
+  （已修正過的時間點）上，消除連鎖漂移。
+- `smoothing_report` 新增 `outlier_indexes`、`window_beats` 欄位；移除全曲單一
+  `median_interval_sec`（不再有單一全曲中位數這個概念）。
+- Class docstring 補上 Pass 180 段落，記錄根因、Pass 144
+  `BarStartTempoSmoothingNode` 已驗證過同一套局部滾動中位數原則、以及這次的
+  修法。
+
+### 4.2 測試結果
+
+- 新增 `tests/test_sdd_pass180.py`（3 項）：
+  1. `test_isolated_single_beat_glitch_still_corrected`——保留舊行為，數值跟
+     Pass 87 既有測試完全一致（`smoothed[2,0] == 1.5`）。
+  2. `test_contiguous_different_tempo_block_not_compressed`——合成一個 16 拍
+     連續不同節奏的區塊，驗證不再被壓縮。
+  3. `test_real_captured_gap_reinforcement_scenario_not_corrupted`——直接節錄
+     這次真實抓到的 21 拍問題區段數值當固定資料，驗證修好後這段維持在原本
+     跨度的 90% 以上、每個拍點位移不超過 0.5 秒（舊 bug 會整段壓縮到只剩約
+     一半跨度）。
+  3 項全過。
+- 直接用真實的 `reports/gap_reinforcement/beats.json`（433 個真實拍點）跑過
+  修好後的節點，驗證原本 idx=5-25（4.389s-18.947s）的 21 個連續拍點現在
+  幾乎完全不動（只有 idx=18 被局部微調 0.16 秒），不再被壓縮進 2.6s-9.8s。
+- 既有回歸測試全數通過（`C:/Python313/python.exe`，含 madmom 的正確環境）：
+  `test_commercial_beat_quality`、`test_sdd_pass23/28/42/87/102/103/104/141/144`、
+  `test_sdd_pass178/179/180`、`test_module3_bt`，共 69 項全過，包含
+  `tests/test_sdd_pass87.py::test_viterbi_tempo_smoothing`（Viterbi 節點原本
+  就有的既有測試）。
+
+  **環境備註**：這台機器的 `python3` 預設指向沒有安裝 `madmom` 的 Python
+  3.11，跑 Stage 3 相關測試會因 BeatNet fallback 到 librosa、拍點數不足而
+  失敗（`test_sdd_pass23.py::test_full_stage3_bt_engine`）——這跟這次改動
+  無關，是環境問題，用 `C:/Python313/python.exe`（已裝 madmom）重跑即可
+  正常通過。
+
+### 4.3 尚未執行
+
+- 第 2 節第 4 項「真實音訊 A/B 回歸」尚未重新跑——需要使用者同意才執行
+  （約 20-30 分鐘），確認 click 消失問題在真實資料上真的解決、BPM 跳動次數
+  下降。

@@ -1222,13 +1222,32 @@ class ViterbiTempoSmoothingNode(BaseNode):
     - 套用 Dynamic Programming 最優轉移路徑約束
     - 過濾拍距變異數超過 ±20% 的孤立突變離群拍點 (Outliers)
     - 確保 Click 打點極致流暢平滑
+
+    Pass 180：原本用「跟全曲單一中位數比較」判斷離群值，且修正值疊加在已經
+    被修正過的時間點上（`smoothed_beats[beat_index - 1, 0] + median_interval`）。
+    一整段連續、內部彼此一致但跟全曲中位數不同的拍點（例如
+    `GapReinforcementNode` 補強出的區塊，或任何真正的漸速/漸慢段落），會被
+    整串誤判成離群值，逐拍疊加修正後連鎖漂移，最終被壓縮/搬移到跟原始位置差
+    很多的地方（實測：連續 21 拍從橫跨 14.5 秒被壓縮進 7.2 秒，click track
+    因此出現數秒完全靜音，見
+    docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md 第 4.3.1
+    節）。
+
+    改用局部滾動中位數（前後各 `window_beats` 個拍距，不是全曲單一中位數）
+    判斷離群值——這是 `module3_barstart_v2_bt.BarStartTempoSmoothingNode`
+    （Pass 144）已經驗證過、且在自己的 docstring 裡明確點名 Viterbi 這個
+    全域中位數缺陷的同一套做法：局部中位數會跟著真正的漸速/漸慢或補強區塊
+    的節奏移動，只有真正跟「當下局部脈絡」不符的孤立雜訊才會被修正。每個
+    離群拍點的修正值一律從原始未修改的 `timestamps`/`local_medians` 陣列
+    計算，不疊加在其他已修正的拍點上，避免連鎖漂移。
     """
     required_keys = ["beats"]
     output_keys = ["beats", "smoothing_report"]
 
-    def __init__(self, tolerance_pct: float = 0.20):
+    def __init__(self, tolerance_pct: float = 0.20, window_beats: int = 4):
         super().__init__("ViterbiTempoSmoothingNode")
         self.tolerance_pct = tolerance_pct
+        self.window_beats = window_beats
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("beats")
@@ -1236,28 +1255,48 @@ class ViterbiTempoSmoothingNode(BaseNode):
             return NodeStatus.SUCCESS
 
         try:
+            beats = np.asarray(beats, dtype=float)
+            beats = beats[np.argsort(beats[:, 0])]
             timestamps = beats[:, 0].astype(float)
             intervals = np.diff(timestamps)
-            median_interval = np.median(intervals)
+            valid_mask = np.isfinite(intervals) & (intervals > 0.05)
+            if not np.any(valid_mask):
+                return NodeStatus.SUCCESS
+
+            n = len(intervals)
+            local_medians = np.empty(n, dtype=float)
+            for i in range(n):
+                lo = max(0, i - self.window_beats)
+                hi = min(n, i + self.window_beats + 1)
+                window_vals = intervals[lo:hi][valid_mask[lo:hi]]
+                local_medians[i] = np.median(window_vals) if len(window_vals) else intervals[i]
+
+            deviation = np.abs(intervals - local_medians) / (local_medians + 1e-6)
+            outlier_mask = valid_mask & (deviation > self.tolerance_pct)
 
             smoothed_beats = beats.copy()
-            outlier_count = 0
-
-            for interval_index, curr_int in enumerate(intervals):
-                if abs(curr_int - median_interval) / (median_interval + 1e-6) > self.tolerance_pct:
-                    beat_index = interval_index + 1
-                    smoothed_beats[beat_index, 0] = smoothed_beats[beat_index - 1, 0] + median_interval
-                    outlier_count += 1
+            outlier_indexes = []
+            for interval_index in np.flatnonzero(outlier_mask):
+                beat_index = interval_index + 1
+                # 修正值一律用原始未修改的 timestamps/local_medians 算，不疊加
+                # 在其他已修正的拍點上，避免連鎖漂移（Pass 180 根因）。
+                smoothed_beats[beat_index, 0] = timestamps[interval_index] + local_medians[interval_index]
+                outlier_indexes.append(int(beat_index))
 
             blackboard.set_val("beats", smoothed_beats)
             blackboard.set_val("refined_beats", smoothed_beats)
             blackboard.set_val("smoothing_report", {
                 "total_beats": len(smoothed_beats),
-                "outlier_count": outlier_count,
-                "median_interval_sec": float(median_interval),
+                "outlier_count": len(outlier_indexes),
+                "outlier_indexes": outlier_indexes,
+                "window_beats": self.window_beats,
+                "tolerance_pct": self.tolerance_pct,
             })
-            if outlier_count > 0:
-                print(f"[{self.name}] ⚡ [BeatNet 2021 Viterbi DP] 成功平滑修復 {outlier_count} 個孤立突變離群拍點！")
+            if outlier_indexes:
+                print(
+                    f"[{self.name}] ⚡ [BeatNet 2021 Viterbi DP] 成功平滑修復 "
+                    f"{len(outlier_indexes)} 個孤立突變離群拍點（局部窗口 ±{self.window_beats} 拍）！"
+                )
 
             return NodeStatus.SUCCESS
         except Exception as e:

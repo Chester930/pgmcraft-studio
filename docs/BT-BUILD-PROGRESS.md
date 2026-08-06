@@ -729,15 +729,31 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   「跟全曲中位數比較」判斷孤立離群值，完全沒有檢查「孤不孤立」，且修正值疊加
   在已修正過的時間點上會連鎖漂移。這次直接修這個節點本身的邏輯，不是加排除
   清單繞過。
-- 修法：把判斷基準換成跟 `TempoOscillationDampingNode`（同檔案裡已經存在、
-  且已有測試驗證的正確參考實作）同一套原則——只有「左右鄰居組成一短接一長、
-  配對總和接近 2×中位數」的訊號才算孤立離群值（真正的漸變速度或
-  GapReinforcementNode 補強出的連續不同節奏區塊，都不會有這種「剛好抵銷」的
-  訊號，天然不會誤判）；修正值一律從原始未修改的陣列算，不連鎖；加品質/離群
-  配對數守門，沒有變好就整批退回；補上排除區檢查跟邊界 guard，跟鏈路上其他
-  節點一致。
+- 修法（實作時從任務書原本規劃的方向調整過）：原本規劃仿照
+  `TempoOscillationDampingNode` 的「左右鄰居配對抵銷」模式，但實測發現這種
+  模式只抓「一短接一長剛好抵銷」的訊號，抓不到 Pass 87 既有測試涵蓋的「單一
+  異常長/短拍距、前後都正常」這種情境（不是配對抵銷型）。改為直接重用
+  `module3_barstart_v2_bt.BarStartTempoSmoothingNode`（Pass 144）已經驗證過
+  的「局部滾動中位數」原則——這個節點的 docstring 本來就明確點名
+  Viterbi 的全域中位數缺陷。判斷基準從全曲單一中位數換成「前後各
+  `window_beats`（預設 4）個拍距的局部中位數」，真正的漸變速度或
+  GapReinforcementNode 補強出的連續不同節奏區塊，局部視窗會跟著它們自己的
+  節奏移動，天然不會被誤判；每個離群點的修正值一律從原始未修改的
+  `timestamps`/`local_medians` 陣列計算，不疊加在其他已修正的拍點上，消除
+  連鎖漂移。
 - 範圍界定：只修 Viterbi 判斷+修正邏輯本身，不動 `GapReinforcementNode` 自己
   的品質守門，也不做 Pass 176 規劃的雙向錨定邊界連貫性檢查——那是另一個獨立、
   還沒開始的工作。
+- 驗證：新增 `tests/test_sdd_pass180.py`（3 項）——保留舊行為（跟 Pass 87
+  既有測試數值一致）、合成的連續不同節奏區塊不再被壓縮、直接節錄這次真實
+  抓到的 21 拍問題區段數值當回歸固定資料。額外用真實的
+  `reports/gap_reinforcement/beats.json`（433 個真實拍點）驗證，原本被壓縮
+  進 2.6s-9.8s 的 21 個連續拍點現在幾乎完全不動。既有回歸測試（含
+  `test_sdd_pass87.py` 既有的 Viterbi 測試、`test_sdd_pass144.py`、
+  `test_commercial_beat_quality`、`test_sdd_pass23/28/42/102/103/104/141`、
+  `test_sdd_pass178/179`、`test_module3_bt`，共 69 項）全數通過（用
+  `C:/Python313/python.exe`，這台機器的 `python3` 預設指向沒裝 madmom 的
+  Python 3.11，跑 Stage 3 測試會因環境問題誤判失敗，跟這次改動無關）。
 - 任務書：`docs/PASS-180-VITERBI-ISOLATED-OUTLIER-FIX-TASK.md`。
-- 狀態：任務書已建立，設計已跟使用者討論確認，實作進行中。
+- 狀態：已完成。真實音訊 A/B 回歸重跑（確認 click 消失問題在真實資料上解決）
+  尚未執行，需要使用者同意才進行（約 20-30 分鐘）。
