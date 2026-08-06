@@ -690,3 +690,34 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   首歌的真人複核校準資料（目前只有這一首歌有真實複核紀錄）；長期的
   「V1 legacy vs V3 預設」升格閘門設計。詳見
   `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第 4 節。
+
+### Pass 178（續二）：實際試聽揪出更嚴重的問題 —— ViterbiTempoSmoothingNode 誤刪整段拍點
+
+- 背景：使用者實際試聽處理組的 `mix_with_click.wav` 後回報 7.1s-13.5s、
+  16.1s-19.2s 兩段完全沒有 click 聲（累計約 9.5 秒）——比先前用統計數字抓到的
+  BPM 跳動更嚴重，不是「拍點跟音樂對不上」，是「拍點整段消失」。這證實了單靠
+  黃金基準/自我一致性統計數字並不足夠，人耳試聽抓到了數字沒抓到的真實缺陷。
+- 追查方法：比對 `GapReinforcementNode` 自己匯出的診斷紀錄
+  （`reports/gap_reinforcement/beats.json`），確認它執行完畢當下 4.4s-21.8s
+  這段其實有連續規律的拍點（433 個）——證明消失不是 GapReinforcementNode 自己
+  刪的。接著把這 433 個真實拍點原封不動丟進 `ViterbiTempoSmoothingNode` 的
+  實際演算法重播（純陣列運算，不需要音訊、不需要重跑 Demucs），精確重現了
+  消失現象。
+- **確切機制**：`ViterbiTempoSmoothingNode` 用全曲拍點間隔中位數判斷「孤立
+  離群值」，抓到跟中位數差超過 20% 的拍點就強制改寫成「前一拍 + 中位數間隔」。
+  這個設計假設離群值是零星孤立的單一雜訊點，但 `GapReinforcementNode` 補強
+  出來的整段缺口，因為局部證據推算的節奏本來就跟全曲中位數不同，產生的是
+  **連續 21 個「跟中位數不同」的拍點**，不是孤立的。節點把整串都當離群值逐拍
+  修正，且修正會疊加在前一次已修正過的時間點上，連鎖效應把原本橫跨 4.4s-18.9s
+  （約 14.5 秒）的一整段拍點壓縮進 2.6s-9.8s（只剩約 7.2 秒），原本的時間窗
+  就變成完全空白——這是兩個節點的假設互相牴觸（GapReinforcementNode 產生「一
+  整段跟全曲節奏不同但內部連貫」的區塊，Viterbi 假設所有離群都是零星雜訊），
+  不是單一節點各自獨立的 bug。
+- 這比 Pass 178（續）條目寫的「品質守門沒檢查邊界連貫性」更精確地指出了下游
+  真正的破壞點：**`ViterbiTempoSmoothingNode`**，而不是泛指「某個精修節點」。
+  詳見 `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第
+  4.3.1 節。
+- 狀態：根因已確認、已用真實資料重播驗證，修法方向討論中（三個候選方向見
+  任務書第 4.5 節），尚未實作修正。目前 `enabled=False` 的預設關閉已經能避免
+  這個問題在生產環境發生（因為 GapReinforcementNode 根本不執行，不會產生
+  Viterbi 誤判的觸發條件）。
