@@ -717,7 +717,27 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   真正的破壞點：**`ViterbiTempoSmoothingNode`**，而不是泛指「某個精修節點」。
   詳見 `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第
   4.3.1 節。
-- 狀態：根因已確認、已用真實資料重播驗證，修法方向討論中（三個候選方向見
-  任務書第 4.5 節），尚未實作修正。目前 `enabled=False` 的預設關閉已經能避免
-  這個問題在生產環境發生（因為 GapReinforcementNode 根本不執行，不會產生
-  Viterbi 誤判的觸發條件）。
+- 狀態：根因已確認、已用真實資料重播驗證。使用者選擇治本（修正
+  `ViterbiTempoSmoothingNode` 本身的判斷邏輯），而非用排除清單繞過——後續實作
+  獨立開一個新 Pass 追蹤，見下方 Pass 180 條目。目前 `enabled=False` 的預設
+  關閉已經能避免這個問題在生產環境發生（因為 GapReinforcementNode 根本不
+  執行，不會產生 Viterbi 誤判的觸發條件）。
+
+### Pass 180：治本修正 ViterbiTempoSmoothingNode 的孤立離群值判斷邏輯
+
+- 目標：修正 Pass 178（續二）抓到的根因——`ViterbiTempoSmoothingNode` 現在用
+  「跟全曲中位數比較」判斷孤立離群值，完全沒有檢查「孤不孤立」，且修正值疊加
+  在已修正過的時間點上會連鎖漂移。這次直接修這個節點本身的邏輯，不是加排除
+  清單繞過。
+- 修法：把判斷基準換成跟 `TempoOscillationDampingNode`（同檔案裡已經存在、
+  且已有測試驗證的正確參考實作）同一套原則——只有「左右鄰居組成一短接一長、
+  配對總和接近 2×中位數」的訊號才算孤立離群值（真正的漸變速度或
+  GapReinforcementNode 補強出的連續不同節奏區塊，都不會有這種「剛好抵銷」的
+  訊號，天然不會誤判）；修正值一律從原始未修改的陣列算，不連鎖；加品質/離群
+  配對數守門，沒有變好就整批退回；補上排除區檢查跟邊界 guard，跟鏈路上其他
+  節點一致。
+- 範圍界定：只修 Viterbi 判斷+修正邏輯本身，不動 `GapReinforcementNode` 自己
+  的品質守門，也不做 Pass 176 規劃的雙向錨定邊界連貫性檢查——那是另一個獨立、
+  還沒開始的工作。
+- 任務書：`docs/PASS-180-VITERBI-ISOLATED-OUTLIER-FIX-TASK.md`。
+- 狀態：任務書已建立，設計已跟使用者討論確認，實作進行中。
