@@ -830,7 +830,18 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   不採用但記錄進 report（`REJECTED_NO_WHOLE_TRACK_ENERGY`），不是靜默丟掉；
   整軌自己找到、沒有細分軌候選對應的段落一樣可以採用（`source="drums"`，
   優先權較低）。
+- 實作：`execute()` 先對整個 `drums.wav` 做 onset 偵測；細分軌候選要求段
+  內每個擊點在整軌都有對應 onset（容差 40ms）才採用，沒通過的記錄進
+  `rejected`（`REJECTED_NO_WHOLE_TRACK_ENERGY`）而不是靜默丟掉；整軌自己
+  找到、沒被任何確認過的細分軌候選涵蓋的段落，一樣可以當 `source="drums"`
+  候選採用；沒有整軌檔案時完全跳過確認檢查（向後相容 Pass 181 行為）。
+- 測試：新增 `tests/test_sdd_pass182.py`（4 項全過）——細分軌候選被整軌
+  確認、細分軌候選被整軌拒絕（新情境，模擬分離殘留假訊號）、整軌獨立候選
+  （kick/snare 各自輪流打半段、疊加起來整軌才有完整四拍）、真實 hi-hat
+  回歸案例補上整軌音檔依然正確辨識。Pass 181 原本 5 項測試（沒提供
+  `drums.wav`）維持不變地通過，確認向後相容設計正確。既有回歸測試（含
+  Pass 181/182 共 78 項）全數通過。
 - 任務書：`docs/PASS-182-WHOLE-DRUM-TRACK-CROSSCHECK-TASK.md`。
 - 範圍界定：`KickSnarePulseNode`、`DrumFillDetectionNode` 有同樣的架構
   缺口，是分開、還沒排入的後續工作，不在這次任務內。
-- 狀態：設計已確認，待實作。
+- 狀態：已實作，測試皆通過。

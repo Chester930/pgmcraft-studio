@@ -936,6 +936,15 @@ class SteadyPercussionCountAnchorNode(BaseNode):
     「無鼓→有鼓的能量邊緣」更直接的相位證據，有衝突時讓這個訊號覆蓋。
 
     找不到任何樂器有這種連續段時，完全不動 `beats`——不是每首歌都有這個訊號。
+
+    Pass 182：使用者指出這個節點違反了原本的設計原則——「先從整個鼓軌辨識，
+    不確定的部分再用細分軌比對調整」，但這個節點一開始只看細分軌，完全沒有
+    回頭比對整個鼓軌（`drums.wav`）。分軌是 Demucs 頻段分離出來的，品質不是
+    絕對的，細分軌裡看起來很乾淨的規律擊點，有可能是分離殘留的假訊號，真實
+    混音裡根本沒有對應的聲音。改成：細分軌找到的候選段，要拿整個鼓軌的
+    onset 能量做確認（容差 ±40ms）——沒有對應能量的不採用，但記錄進 report
+    讓這種情況可以被看見；整個鼓軌自己找到、沒有被任何細分軌候選涵蓋到的
+    段落，一樣可以當作候選採用（優先權較低，因為無法歸因到具體是哪個樂器）。
     """
     required_keys = ["beats"]
     optional_keys = ["stems", "stems_dir", "snap_exclusion_zones", "drum_fill_regions"]
@@ -947,6 +956,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         ("snare", ("drums", "snare.wav")),
         ("hihat_cymbals", ("drums", "hihat_cymbals.wav")),
     ]
+    WHOLE_DRUM_STEM = ("drums", ("drums", "drums.wav"))
 
     def __init__(
         self,
@@ -954,12 +964,14 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         max_interval_cv: float = 0.12,
         beat_length_tolerance_pct: float = 0.25,
         snap_tolerance_sec: float = 0.12,
+        whole_track_confirm_tolerance_sec: float = 0.04,
     ):
         super().__init__("SteadyPercussionCountAnchorNode")
         self.min_run_length = min_run_length
         self.max_interval_cv = max_interval_cv
         self.beat_length_tolerance_pct = beat_length_tolerance_pct
         self.snap_tolerance_sec = snap_tolerance_sec
+        self.whole_track_confirm_tolerance_sec = whole_track_confirm_tolerance_sec
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("beats")
@@ -984,14 +996,19 @@ class SteadyPercussionCountAnchorNode(BaseNode):
             stems = blackboard.get_val("stems", {}) or {}
             stems_dir = blackboard.get_val("stems_dir", "") or ""
 
-            all_runs = []
+            # 整個鼓軌：既是候選來源之一，也用來確認細分軌候選不是分離殘留假訊號。
+            whole_drum_path = self._resolve_stem_path(*self.WHOLE_DRUM_STEM, stems, stems_dir)
+            whole_drum_onsets = []
+            if whole_drum_path:
+                try:
+                    whole_drum_onsets = self._detect_onsets(whole_drum_path)
+                except Exception as e:
+                    print(f"[{self.name} Warning] drums onset 偵測失敗: {e}")
+
+            sub_runs = []
             for stem_key, rel_path in self.STEM_CANDIDATES:
-                path = stems.get(stem_key)
-                if not path and stems_dir:
-                    candidate_path = os.path.join(stems_dir, *rel_path)
-                    if os.path.exists(candidate_path):
-                        path = candidate_path
-                if not path or not os.path.exists(path):
+                path = self._resolve_stem_path(stem_key, rel_path, stems, stems_dir)
+                if not path:
                     continue
 
                 try:
@@ -1004,12 +1021,34 @@ class SteadyPercussionCountAnchorNode(BaseNode):
                     continue
 
                 for run in self._find_steady_runs(onsets, known_beat_length, exclusion_zones):
-                    all_runs.append((stem_key, run))
+                    sub_runs.append((stem_key, run))
+
+            rejected = []
+            confirmed_sub_runs = []
+            for stem_key, run in sub_runs:
+                if whole_drum_path and not self._confirmed_by_whole_track(run, whole_drum_onsets):
+                    rejected.append({
+                        "stem": stem_key,
+                        "start_time": run["start_time"],
+                        "end_time": run["end_time"],
+                        "reason": "REJECTED_NO_WHOLE_TRACK_ENERGY",
+                    })
+                    continue
+                confirmed_sub_runs.append((stem_key, run))
+
+            drum_only_runs = []
+            if len(whole_drum_onsets) >= self.min_run_length:
+                for run in self._find_steady_runs(whole_drum_onsets, known_beat_length, exclusion_zones):
+                    if not any(self._overlaps(run, r) for _, r in confirmed_sub_runs):
+                        drum_only_runs.append(("drums", run))
+
+            all_runs = confirmed_sub_runs + drum_only_runs
 
             if not all_runs:
                 blackboard.set_val("steady_percussion_anchor_report", {
                     "status": "NO_STEADY_RUN_FOUND",
                     "known_beat_length_sec": round(known_beat_length, 6),
+                    "rejected": rejected,
                 })
                 return NodeStatus.SUCCESS
 
@@ -1036,6 +1075,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
                 blackboard.set_val("steady_percussion_anchor_report", {
                     "status": "CANDIDATES_FOUND_BUT_NOT_APPLIED",
                     "known_beat_length_sec": round(known_beat_length, 6),
+                    "rejected": rejected,
                 })
                 return NodeStatus.SUCCESS
 
@@ -1045,6 +1085,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
                 "status": "ANCHORED",
                 "known_beat_length_sec": round(known_beat_length, 6),
                 "applied": applied,
+                "rejected": rejected,
             })
             print(
                 f"[{self.name}] 🥁 偵測到 {len(applied)} 段連續穩定擊點"
@@ -1114,18 +1155,47 @@ class SteadyPercussionCountAnchorNode(BaseNode):
 
     def _dedupe_overlaps(self, all_runs: list) -> list:
         """同一段時間有多個樂器都符合時，取變異係數最低的；同樣乾淨則依
-        STEM_CANDIDATES 順序（kick > snare > hihat_cymbals）決定優先權。"""
+        STEM_CANDIDATES 順序（kick > snare > hihat_cymbals）決定優先權，
+        整個鼓軌（無法歸因到具體樂器）優先權最低。"""
         stem_priority = {key: idx for idx, (key, _) in enumerate(self.STEM_CANDIDATES)}
-        ordered = sorted(all_runs, key=lambda item: (item[1]["cv"], stem_priority[item[0]]))
+        drums_priority = len(self.STEM_CANDIDATES)
+        ordered = sorted(
+            all_runs,
+            key=lambda item: (item[1]["cv"], stem_priority.get(item[0], drums_priority)),
+        )
         accepted = []
         for stem_key, run in ordered:
-            overlap = any(
-                run["start_time"] <= taken["end_time"] and run["end_time"] >= taken["start_time"]
-                for _, taken in accepted
-            )
+            overlap = any(self._overlaps(run, taken) for _, taken in accepted)
             if not overlap:
                 accepted.append((stem_key, run))
         return accepted
+
+    def _overlaps(self, run_a: dict, run_b: dict) -> bool:
+        return run_a["start_time"] <= run_b["end_time"] and run_a["end_time"] >= run_b["start_time"]
+
+    def _resolve_stem_path(self, stem_key: str, rel_path: tuple, stems: dict, stems_dir: str):
+        path = stems.get(stem_key)
+        if not path and stems_dir:
+            candidate_path = os.path.join(stems_dir, *rel_path)
+            if os.path.exists(candidate_path):
+                path = candidate_path
+        if path and os.path.exists(path):
+            return path
+        return None
+
+    def _confirmed_by_whole_track(self, run: dict, whole_drum_onsets: list) -> bool:
+        """細分軌候選的每一個擊點，整個鼓軌裡都要有對應的 onset 能量（容差
+        `whole_track_confirm_tolerance_sec`）——這是比「整軌也要一樣乾淨」更
+        寬鬆的檢查（多樂器疊加天生會讓整軌規律性變差），但至少能排除分離
+        殘留的假訊號：真實混音裡完全沒有對應能量，卻在細分軌裡出現規律
+        擊點的情況。"""
+        whole_arr = np.asarray(whole_drum_onsets, dtype=float)
+        if len(whole_arr) == 0:
+            return False
+        for t in run["onsets"]:
+            if np.min(np.abs(whole_arr - t)) > self.whole_track_confirm_tolerance_sec:
+                return False
+        return True
 
     def _apply_anchor(self, beats: np.ndarray, timestamps: np.ndarray, run: dict, next_start: float):
         """把這段連續擊點依序標記成 1-2-3-4，再從最後一個錨點往後續接循環，

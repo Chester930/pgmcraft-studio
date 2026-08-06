@@ -1,6 +1,6 @@
 # Pass 182 任務書：`SteadyPercussionCountAnchorNode` 補上整個鼓軌比對
 
-**狀態**：設計已確認，待實作。
+**狀態**：已實作，單元測試與既有回歸測試皆已通過，見第 4 節。
 **目標**：修正 Pass 181 剛做完就暴露出的架構缺口——`SteadyPercussionCountAnchorNode`
 目前只看 kick/snare/hihat_cymbals 三個細分軌，完全不回頭比對整個鼓軌
 （`drums.wav`），沒有使用者原本設計的「先從整個鼓軌辨識，細分軌處理不確定
@@ -107,3 +107,58 @@ Pass 181 完成後，使用者提出疑慮：「先從整個鼓軌來辨識。�
   `DownbeatPhaseConsistencyNode`、`KickAnchorConsensusSnapNode` 本身邏輯。
 - 不改變 `SteadyPercussionCountAnchorNode` 在 `build_beat_refinement_nodes()`
   裡的位置。
+
+---
+
+## 4. 實作結果
+
+### 4.1 修改內容
+
+`pgm_craft/workflow/beat_tracking_bt.py` 的 `SteadyPercussionCountAnchorNode`：
+
+- 新增 `WHOLE_DRUM_STEM = ("drums", ("drums", "drums.wav"))`，跟
+  `STEM_CANDIDATES` 用同一套路徑解析方式（新增 `_resolve_stem_path()`
+  helper，把原本內嵌在迴圈裡的解析邏輯抽出來，`WHOLE_DRUM_STEM` 也能共用）。
+- `execute()` 流程改成：
+  1. 先解析並對整個 `drums.wav` 做 onset 偵測（`whole_drum_onsets`）。
+  2. 對 kick/snare/hihat_cymbals 找候選段（跟 Pass 181 一樣）。
+  3. 每個細分軌候選都要通過 `_confirmed_by_whole_track()`——只要整個鼓軌
+     檔案存在（`whole_drum_path` 不是 `None`），就要求候選段裡**每一個**
+     擊點時間在整個鼓軌裡都有對應 onset（容差
+     `whole_track_confirm_tolerance_sec`，預設 0.04 秒），沒通過的進
+     `rejected` 清單（`reason: "REJECTED_NO_WHOLE_TRACK_ENERGY"`），不再
+     進候選池。**沒有整個鼓軌檔案時完全跳過這層檢查**（保留 Pass 181 的
+     行為，向後相容）。
+  4. 對整個鼓軌自己也跑一次 `_find_steady_runs()`，只保留沒有被任何已確認
+     細分軌候選涵蓋到的段落（`_overlaps()` 判斷），標記 `source="drums"`。
+  5. 細分軌確認候選 + 整軌獨立候選合併後才進 `_dedupe_overlaps()`——優先權
+     順序更新為變異係數優先，同樣乾淨依 `STEM_CANDIDATES` 順序，`drums`
+     敬陪末座。
+- report 新增 `rejected` 欄位（`NO_STEADY_RUN_FOUND`、
+  `CANDIDATES_FOUND_BUT_NOT_APPLIED`、`ANCHORED` 三種狀態都會帶），讓
+  「找到但因為整軌沒對應能量而不採用」這件事可以被看見，不是靜默丟掉。
+
+### 4.2 測試結果
+
+新增 `tests/test_sdd_pass182.py`（4 項全過）：
+
+1. `test_confirmed_sub_run_still_anchors`——Pass 181 的清晰案例補上對應的
+   整個鼓軌音檔，驗證正常通過、`rejected` 為空。
+2. `test_sub_run_rejected_without_whole_track_energy`——細分軌乾淨規律，但
+   整個鼓軌在對應時間沒有能量（整軌本身在別處有活動，不是完全空白，排除
+   「沒有整軌檔案」這種會被跳過檢查的情境），驗證正確拒絕、
+   `reason == "REJECTED_NO_WHOLE_TRACK_ENERGY"`，`beats` 沒被動到。
+3. `test_whole_track_only_candidate_anchors`——kick 只打第 1、3 拍、snare
+   只打第 2、4 拍（各自都不足 4 個連續），但整個鼓軌（兩者疊加）合起來有
+   完整連續四拍，驗證正確找到並採用 `source="drums"` 的候選。
+4. `test_real_captured_hihat_scenario_still_anchors_with_whole_track`——
+   Pass 181 的真實 hi-hat 回歸案例補上對應的整個鼓軌音檔，驗證依然正確
+   辨識、正確採用。
+
+`tests/test_sdd_pass181.py` 原本 5 項測試（沒有提供 `drums.wav`）全部維持
+不變地通過，確認「沒有整軌檔案時跳過確認檢查」的向後相容設計正確。
+
+既有回歸測試（`C:/Python313/python.exe`，含 madmom 的正確環境）：
+`test_commercial_beat_quality`、`test_sdd_pass23/28/42/87/102/103/104/
+141/144/178/179/180/181`、`test_module3_bt`，加上新增的
+`test_sdd_pass182`，共 78 項全數通過。
