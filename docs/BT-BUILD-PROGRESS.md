@@ -796,5 +796,19 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   三個樂器分別用 onset 偵測抓擊點，找連續 ≥4 個變異係數低、且間隔貼近全曲
   已知拍距的段落，當作第一拍續接錨點，重用 `ReEntryReAnchoringNode` 已有的
   「錨點+續接」寫法。找不到就完全不動——不是每首歌都有這個訊號。
+- 實作：新增 `SteadyPercussionCountAnchorNode`，放在 `DrumFillDetectionNode`
+  之後（比原規劃晚一點，讓 `snap_exclusion_zones`/`drum_fill_regions` 排除區
+  檢查真的有資料可用）、`OnsetPhaseRealignmentNode` 之前。用
+  `librosa.onset.onset_strength`+`onset_detect` 對 kick/snare/hihat_cymbals
+  三軌分別做真正的 onset 偵測，找連續 ≥4 個變異係數 <12%、間隔貼近全曲拍距
+  ±25% 的段落，依序快照標記成 1-2-3-4 再往後續接循環，多樂器候選時間重疊
+  時取變異係數最低者。
+- 測試：新增 `tests/test_sdd_pass181.py`（5 項全過）——保留正確行為、排除
+  「規律但跟拍距差很多」跟「密集過門」兩種誤判、沒有音軌時安全空操作、直接
+  節錄真實抓到的 hi-hat 18.561s-20.012s 案例當回歸固定資料驗證正確標記
+  1,2,3,4,1 並續接 2,3,4,1。既有回歸測試（`test_commercial_beat_quality`+
+  `test_sdd_pass23/28/42/87/102/103/104/141/144/178/179/180`+
+  `test_module3_bt`，加上新增的共 74 項）全數通過。
 - 任務書：`docs/PASS-181-STEADY-PERCUSSION-COUNT-DOWNBEAT-ANCHOR-TASK.md`。
-- 狀態：設計已確認（含真實資料驗證），待實作。
+- 狀態：已實作、測試皆通過。真實音訊完整管線回歸（確認對《World is Mine》
+  18 秒附近實際有幫助）尚未執行，需要使用者同意才進行。

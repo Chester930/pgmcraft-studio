@@ -1,6 +1,8 @@
 # Pass 181 任務書：連續穩定擊點（Kick/Snare/Hi-hat）當第一拍續接錨點
 
-**狀態**：設計已確認（含真實資料驗證），待實作。
+**狀態**：已實作，單元測試（含真實資料回歸）與既有回歸測試皆已通過，見第 4
+節。真實音訊完整管線回歸（確認對《World is Mine》18 秒附近實際有幫助）尚未
+執行，需要使用者同意才進行。
 **目標**：修正使用者在《World is Mine》前奏/間奏區段聽到的「第一拍沒對上」問題
 ——當任一打擊樂器（kick、snare、或 hi-hat/鈸）連續打出 ≥4 下真正等間隔、
 間隔又貼近全曲已知拍距的擊點時，這代表樂器正在「明確數拍子」，可以拿來當作
@@ -134,3 +136,61 @@ snare、hi-hat/鈸統一用 onset 偵測，不能沿用 `_extract_peak_anchors` 
 - 不修改 `_extract_peak_anchors`（`KickSnarePulseNode` 沿用既有窗口最大值法
   不變）——這次的教訓只套用在新節點自己的偵測邏輯上。
 - 不修改 `ReEntryReAnchoringNode` 本身邏輯，只決定新節點跟它的相對順序。
+
+---
+
+## 4. 實作結果
+
+### 4.1 新增內容
+
+`pgm_craft/workflow/beat_tracking_bt.py`：
+
+- 新增 `SteadyPercussionCountAnchorNode`（放在 `DrumFillDetectionNode` 之後、
+  `OnsetPhaseRealignmentNode` 之前——比原本規劃的「`ReEntryReAnchoringNode`
+  之後」更晚一點，理由是要讓 `snap_exclusion_zones`/`drum_fill_regions`
+  在這個節點執行時已經真的存在，排除區檢查才有實際作用，不是空清單）。
+- `STEM_CANDIDATES = [("kick", ...), ("snare", ...), ("hihat_cymbals", ...)]`：
+  依序解析 `stems` dict 或 `stems_dir/drums/*.wav` 路徑，跟
+  `KickSnarePulseNode` 既有的路徑解析寫法一致，新增了 `hihat_cymbals.wav`
+  這個目前專案裡沒有節點讀取過的路徑。
+- `_detect_onsets()`：用 `librosa.onset.onset_strength` + `onset_detect` 做
+  真正的 onset 偵測，不是 `_extract_peak_anchors` 的窗口最大值包絡（見第
+  0.4 節教訓）。
+- `_find_steady_runs()`：逐步延伸連續段，每加入一個新間隔就檢查（a）間隔要
+  落在 `known_beat_length ± 25%` 範圍內、（b）目前為止所有間隔的變異係數要
+  低於 12%，兩者都通過才繼續延伸；並排除跟 `snap_exclusion_zones`/
+  `drum_fill_regions` 重疊的候選。
+- `_dedupe_overlaps()`：多個樂器的候選時間重疊時，取變異係數最低者，同樣
+  乾淨則依 `STEM_CANDIDATES` 順序（kick > snare > hihat_cymbals）決定。
+- `_apply_anchor()`：把連續擊點依序快照對應到最近的 `beats` 陣列拍點（容差
+  0.12 秒，超過就放棄這段），標記成 1-2-3-4，再從最後一個快照點往後續接
+  循環，直到下一個已接受的錨點或曲末——重用 `ReEntryReAnchoringNode` 的
+  「錨點+續接」寫法精神，但錨點本身是一整段擊點（直接給定 1234 的對應），
+  不是單一時間點再往後猜循環相位。
+- `build_beat_refinement_nodes()` 插入這個新節點，並加註解說明位置理由。
+
+### 4.2 測試結果
+
+新增 `tests/test_sdd_pass181.py`（5 項全過）：
+
+1. `test_clean_steady_run_anchors_and_continues_cycle`——合成規律 4 拍
+   kick，驗證正確標記 1234 並往後續接。
+2. `test_regular_but_wrong_scale_interval_not_anchored`——間隔規律但是全曲
+   拍距的 2.5 倍，驗證正確排除（對應 0.2 節查到的 12.3s/150.3s 案例）。
+3. `test_dense_fill_not_anchored`——16 分音符等級的密集過門，驗證正確排除。
+4. `test_no_stems_is_safe_noop`——沒有任何鼓組音軌時安全空操作。
+5. `test_real_captured_hihat_scenario_anchors_correctly`——節錄真實抓到的
+   hi-hat 18.561s-20.012s 案例當回歸固定資料，驗證五個 onset 對應到的拍點
+   被正確標記成 1,2,3,4,1，且快照點彼此是連續格點索引（間隔真的貼合全曲
+   拍距），錨點之後也正確續接 2,3,4,1。
+
+既有回歸測試（`C:/Python313/python.exe`，含 madmom 的正確環境）：
+`test_commercial_beat_quality`、`test_sdd_pass23/28/42/87/102/103/104/
+141/144/178/179/180`、`test_module3_bt`，加上新增的 `test_sdd_pass181`，
+共 74 項全數通過，確認新節點插入沒有破壞既有行為。
+
+### 4.3 尚未執行
+
+- 第 2 節第 5 項「真實音訊回歸」尚未重新跑《World is Mine》完整管線——需要
+  使用者同意才執行（Demucs 分離+完整精修鏈，約 10-30 分鐘），確認 18-20
+  秒附近的第一拍位置在真實管線裡真的被修正、且沒有在其他段落造成退步。

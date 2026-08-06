@@ -912,6 +912,244 @@ class ReEntryReAnchoringNode(BaseNode):
         return result
 
 
+class SteadyPercussionCountAnchorNode(BaseNode):
+    """
+    Pass 181：連續穩定擊點（Kick/Snare/Hi-hat）當第一拍續接錨點。
+
+    背景：使用者在《World is Mine》前奏/間奏聽出「第一拍沒對上」，提出構想：
+    連續四個等間隔擊點代表打擊樂器在明確數 1-2-3-4 拍，可以當拍號續接依據。
+    真實資料驗證過程中發現兩件事：
+    1. 這個訊號不只 kick 會有——hi-hat/鈸一樣可以是「數拍」的可靠來源，
+       《World is Mine》真正乾淨的案例（18.561s-20.012s，變異係數 2.6%，
+       間隔幾乎完全等於全曲拍距）就是打在 hi-hat 上，不是 kick。
+    2. 判斷「是不是真的在數拍」不能只看間隔規不規律，還要跟全曲已知拍距
+       比對——間隔規律但跟拍距差很多（例如全曲拍距的 2-2.5 倍）的段落，
+       代表這不是逐拍在打，必須排除，否則會誤判。
+    3. 偵測擊點時間必須用真正的 onset 偵測（`librosa.onset.onset_strength`
+       + `onset_detect`），不能沿用 `_extract_peak_anchors` 的窗口最大值
+       包絡法——hi-hat/鈸這種質地較連續的樂器，附近較大聲的滾奏會蓋掉細節，
+       窗口最大值法會誤判成「連續漸強」而看不出真正的離散擊點。
+
+    詳見 docs/PASS-181-STEADY-PERCUSSION-COUNT-DOWNBEAT-ANCHOR-TASK.md。
+
+    放在 `ReEntryReAnchoringNode` 之後——「連續穩定擊點貼合全曲拍距」是比
+    「無鼓→有鼓的能量邊緣」更直接的相位證據，有衝突時讓這個訊號覆蓋。
+
+    找不到任何樂器有這種連續段時，完全不動 `beats`——不是每首歌都有這個訊號。
+    """
+    required_keys = ["beats"]
+    optional_keys = ["stems", "stems_dir", "snap_exclusion_zones", "drum_fill_regions"]
+    output_keys = ["beats", "steady_percussion_anchor_report"]
+
+    # (stem 鍵名, stems_dir 底下的相對路徑)；依序嘗試，順序也是同樣乾淨時的優先序。
+    STEM_CANDIDATES = [
+        ("kick", ("drums", "kick.wav")),
+        ("snare", ("drums", "snare.wav")),
+        ("hihat_cymbals", ("drums", "hihat_cymbals.wav")),
+    ]
+
+    def __init__(
+        self,
+        min_run_length: int = 4,
+        max_interval_cv: float = 0.12,
+        beat_length_tolerance_pct: float = 0.25,
+        snap_tolerance_sec: float = 0.12,
+    ):
+        super().__init__("SteadyPercussionCountAnchorNode")
+        self.min_run_length = min_run_length
+        self.max_interval_cv = max_interval_cv
+        self.beat_length_tolerance_pct = beat_length_tolerance_pct
+        self.snap_tolerance_sec = snap_tolerance_sec
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats")
+        if beats is None or len(beats) < 4:
+            return NodeStatus.SUCCESS
+
+        try:
+            beats = np.asarray(beats, dtype=float)
+            beats = beats[np.argsort(beats[:, 0])]
+            timestamps = beats[:, 0].astype(float)
+            intervals = np.diff(timestamps)
+            valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+            if len(valid) == 0:
+                return NodeStatus.SUCCESS
+            known_beat_length = float(np.median(valid))
+
+            exclusion_zones = (
+                list(blackboard.get_val("snap_exclusion_zones", []) or [])
+                + list(blackboard.get_val("drum_fill_regions", []) or [])
+            )
+
+            stems = blackboard.get_val("stems", {}) or {}
+            stems_dir = blackboard.get_val("stems_dir", "") or ""
+
+            all_runs = []
+            for stem_key, rel_path in self.STEM_CANDIDATES:
+                path = stems.get(stem_key)
+                if not path and stems_dir:
+                    candidate_path = os.path.join(stems_dir, *rel_path)
+                    if os.path.exists(candidate_path):
+                        path = candidate_path
+                if not path or not os.path.exists(path):
+                    continue
+
+                try:
+                    onsets = self._detect_onsets(path)
+                except Exception as e:
+                    print(f"[{self.name} Warning] {stem_key} onset 偵測失敗: {e}")
+                    continue
+
+                if len(onsets) < self.min_run_length:
+                    continue
+
+                for run in self._find_steady_runs(onsets, known_beat_length, exclusion_zones):
+                    all_runs.append((stem_key, run))
+
+            if not all_runs:
+                blackboard.set_val("steady_percussion_anchor_report", {
+                    "status": "NO_STEADY_RUN_FOUND",
+                    "known_beat_length_sec": round(known_beat_length, 6),
+                })
+                return NodeStatus.SUCCESS
+
+            accepted = self._dedupe_overlaps(all_runs)
+            accepted.sort(key=lambda item: item[1]["start_time"])
+
+            new_beats = beats.copy()
+            applied = []
+            for k, (stem_key, run) in enumerate(accepted):
+                next_start = accepted[k + 1][1]["start_time"] if k + 1 < len(accepted) else float("inf")
+                result = self._apply_anchor(new_beats, timestamps, run, next_start)
+                if result is not None:
+                    new_beats = result
+                    applied.append({
+                        "stem": stem_key,
+                        "start_time": run["start_time"],
+                        "end_time": run["end_time"],
+                        "count": run["count"],
+                        "cv": run["cv"],
+                        "mean_interval_sec": run["mean_interval_sec"],
+                    })
+
+            if not applied:
+                blackboard.set_val("steady_percussion_anchor_report", {
+                    "status": "CANDIDATES_FOUND_BUT_NOT_APPLIED",
+                    "known_beat_length_sec": round(known_beat_length, 6),
+                })
+                return NodeStatus.SUCCESS
+
+            blackboard.set_val("beats", new_beats)
+            blackboard.set_val("refined_beats", new_beats)
+            blackboard.set_val("steady_percussion_anchor_report", {
+                "status": "ANCHORED",
+                "known_beat_length_sec": round(known_beat_length, 6),
+                "applied": applied,
+            })
+            print(
+                f"[{self.name}] 🥁 偵測到 {len(applied)} 段連續穩定擊點"
+                f"（{', '.join(sorted(set(a['stem'] for a in applied)))}），已當作第一拍續接錨點。"
+            )
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] 穩定擊點錨定異常: {e}")
+            return NodeStatus.SUCCESS
+
+    def _detect_onsets(self, path: str) -> list:
+        """真正的 onset 偵測，不是窗口最大值包絡——後者對 hi-hat/鈸這種質地
+        較連續的樂器會被附近較大聲的滾奏蓋掉細節（Pass 181 踩過的坑）。"""
+        import librosa
+        y, sr = librosa.load(path, sr=22050, mono=True)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=256)
+        onsets = librosa.onset.onset_detect(
+            onset_envelope=onset_env, sr=sr, hop_length=256, backtrack=False, units="time"
+        )
+        return sorted(float(t) for t in onsets)
+
+    def _find_steady_runs(self, onsets: list, known_beat_length: float, exclusion_zones: list) -> list:
+        """找連續 >= min_run_length 個擊點，滿足：
+        1. 相鄰間隔變異係數低於門檻（真的等間隔，不是巧合規律）。
+        2. 間隔要落在全曲已知拍距 ± tolerance 範圍內（真的是逐拍，不是巧合
+           規律但跟拍距差很多的段落，例如全曲拍距的 2 倍以上）。
+        """
+        runs = []
+        n = len(onsets)
+        lo_len = known_beat_length * (1.0 - self.beat_length_tolerance_pct)
+        hi_len = known_beat_length * (1.0 + self.beat_length_tolerance_pct)
+
+        i = 0
+        while i < n - self.min_run_length + 1:
+            j = i + 1
+            run_intervals = []
+            while j < n:
+                interval = onsets[j] - onsets[j - 1]
+                if not (lo_len <= interval <= hi_len):
+                    break
+                test_intervals = run_intervals + [interval]
+                if len(test_intervals) >= 2:
+                    arr = np.array(test_intervals)
+                    cv = float(np.std(arr) / np.mean(arr)) if np.mean(arr) > 0 else 1.0
+                    if cv > self.max_interval_cv:
+                        break
+                run_intervals.append(interval)
+                j += 1
+
+            run_len = j - i
+            if run_len >= self.min_run_length:
+                run_onsets = onsets[i:j]
+                if not _window_intersects_exclusion(run_onsets[0], run_onsets[-1], exclusion_zones):
+                    arr = np.array(run_intervals)
+                    runs.append({
+                        "start_time": round(run_onsets[0], 6),
+                        "end_time": round(run_onsets[-1], 6),
+                        "count": run_len,
+                        "cv": round(float(np.std(arr) / np.mean(arr)), 4) if np.mean(arr) > 0 else 0.0,
+                        "mean_interval_sec": round(float(np.mean(arr)), 6),
+                        "onsets": run_onsets,
+                    })
+                i = j
+            else:
+                i += 1
+        return runs
+
+    def _dedupe_overlaps(self, all_runs: list) -> list:
+        """同一段時間有多個樂器都符合時，取變異係數最低的；同樣乾淨則依
+        STEM_CANDIDATES 順序（kick > snare > hihat_cymbals）決定優先權。"""
+        stem_priority = {key: idx for idx, (key, _) in enumerate(self.STEM_CANDIDATES)}
+        ordered = sorted(all_runs, key=lambda item: (item[1]["cv"], stem_priority[item[0]]))
+        accepted = []
+        for stem_key, run in ordered:
+            overlap = any(
+                run["start_time"] <= taken["end_time"] and run["end_time"] >= taken["start_time"]
+                for _, taken in accepted
+            )
+            if not overlap:
+                accepted.append((stem_key, run))
+        return accepted
+
+    def _apply_anchor(self, beats: np.ndarray, timestamps: np.ndarray, run: dict, next_start: float):
+        """把這段連續擊點依序標記成 1-2-3-4，再從最後一個錨點往後續接循環，
+        直到下一個已接受的錨點（next_start）或曲末。找不到對應拍點就放棄。"""
+        onsets = run["onsets"]
+        n_hits = len(onsets)
+        snapped_indexes = []
+        for k, t in enumerate(onsets):
+            diffs = np.abs(timestamps - t)
+            idx = int(np.argmin(diffs))
+            if diffs[idx] > self.snap_tolerance_sec:
+                return None
+            beats[idx, 1] = (k % 4) + 1
+            snapped_indexes.append(idx)
+
+        last_idx = snapped_indexes[-1]
+        for step in range(1, len(beats) - last_idx):
+            idx = last_idx + step
+            if timestamps[idx] >= next_start:
+                break
+            beats[idx, 1] = ((n_hits - 1 + step) % 4) + 1
+        return beats
+
+
 class DrumFillDetectionNode(BaseNode):
     """
     【鼓過門密集擊點排除區偵測節點】
@@ -2782,6 +3020,11 @@ def build_beat_refinement_nodes() -> list:
         BeatValidationNode(),
         DownbeatRefineNode(),
         DrumFillDetectionNode(),
+        # Pass 181: 放在 DrumFillDetectionNode 之後，才能真的讀到
+        # snap_exclusion_zones/drum_fill_regions 當雙重保險；仍在
+        # OnsetPhaseRealignmentNode 等相位/節奏精修節點之前，讓後續節點
+        # 承接這裡校正過的拍號。見 docs/PASS-181-...-TASK.md。
+        SteadyPercussionCountAnchorNode(),
         OnsetPhaseRealignmentNode(),
         MicroTimingTransientSnapNode(search_window_ms=35.0),
         KickBassDownbeatVerifierNode(),
