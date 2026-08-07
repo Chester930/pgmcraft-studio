@@ -56,6 +56,14 @@ def _window_intersects_exclusion(start_time: float, end_time: float, zones) -> b
     return False
 
 
+def _time_in_protected_ranges(t: float, protected_ranges) -> bool:
+    """判斷時間點 t 是否落在任一保護區段內（Pass 185）。"""
+    for start, end in protected_ranges or []:
+        if start <= t <= end:
+            return True
+    return False
+
+
 def _coerce_beat_matrix(beats):
     if beats is None:
         return np.empty((0, 2), dtype=float)
@@ -159,13 +167,17 @@ def _score_beat_grid_quality(beats, kick_anchors=None, sections=None, alignment_
     }
 
 
-def _relabel_beat_numbers(beats, first_label: int = 1, beats_per_bar: int = 4):
+def _relabel_beat_numbers(beats, first_label: int = 1, beats_per_bar: int = 4, protected_ranges=None):
     arr = _coerce_beat_matrix(beats)
     if len(arr) == 0:
         return arr
     first_label = int(np.clip(int(first_label), 1, beats_per_bar))
     relabeled = arr.copy()
     relabeled[:, 1] = ((np.arange(len(relabeled)) + first_label - 1) % beats_per_bar) + 1
+    if protected_ranges:
+        for i in range(len(arr)):
+            if _time_in_protected_ranges(float(arr[i, 0]), protected_ranges):
+                relabeled[i, 1] = arr[i, 1]  # 保護區段內的拍點，標號維持原樣不被覆蓋
     return relabeled
 
 
@@ -1004,7 +1016,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
     """
     required_keys = ["beats"]
     optional_keys = ["stems", "stems_dir", "snap_exclusion_zones", "drum_fill_regions"]
-    output_keys = ["beats", "steady_percussion_anchor_report"]
+    output_keys = ["beats", "steady_percussion_anchor_report", "beat_phase_protected_ranges"]
 
     # (stem 鍵名, stems_dir 底下的相對路徑)；依序嘗試，順序也是同樣乾淨時的優先序。
     STEM_CANDIDATES = [
@@ -1024,6 +1036,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         beat_length_tolerance_pct: float = 0.25,
         snap_tolerance_sec: float = 0.12,
         whole_track_confirm_tolerance_sec: float = 0.04,
+        max_unconfirmed_onsets: int = 1,
         onset_window_sec: float = 10.0,
         onset_hop_sec: float = 7.0,
     ):
@@ -1033,6 +1046,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         self.beat_length_tolerance_pct = beat_length_tolerance_pct
         self.snap_tolerance_sec = snap_tolerance_sec
         self.whole_track_confirm_tolerance_sec = whole_track_confirm_tolerance_sec
+        self.max_unconfirmed_onsets = max_unconfirmed_onsets
         self.onset_window_sec = onset_window_sec
         self.onset_hop_sec = onset_hop_sec
 
@@ -1108,6 +1122,8 @@ class SteadyPercussionCountAnchorNode(BaseNode):
             all_runs = confirmed_sub_runs + drum_only_runs
 
             if not all_runs:
+                blackboard.set_val("beat_phase_protected_ranges",
+                                   list(blackboard.get_val("beat_phase_protected_ranges", []) or []))
                 blackboard.set_val("steady_percussion_anchor_report", {
                     "status": "NO_STEADY_RUN_FOUND",
                     "known_beat_length_sec": round(known_beat_length, 6),
@@ -1120,9 +1136,10 @@ class SteadyPercussionCountAnchorNode(BaseNode):
 
             new_beats = beats.copy()
             applied = []
+            protected_ranges = list(blackboard.get_val("beat_phase_protected_ranges", []) or [])
             for k, (stem_key, run) in enumerate(accepted):
                 next_start = accepted[k + 1][1]["start_time"] if k + 1 < len(accepted) else float("inf")
-                result = self._apply_anchor(new_beats, timestamps, run, next_start)
+                result, prot_start, prot_end = self._apply_anchor(new_beats, timestamps, run, next_start)
                 if result is not None:
                     new_beats = result
                     applied.append({
@@ -1133,8 +1150,11 @@ class SteadyPercussionCountAnchorNode(BaseNode):
                         "cv": run["cv"],
                         "mean_interval_sec": run["mean_interval_sec"],
                     })
+                    if prot_start is not None and prot_end is not None:
+                        protected_ranges.append((prot_start, prot_end))
 
             if not applied:
+                blackboard.set_val("beat_phase_protected_ranges", protected_ranges)
                 blackboard.set_val("steady_percussion_anchor_report", {
                     "status": "CANDIDATES_FOUND_BUT_NOT_APPLIED",
                     "known_beat_length_sec": round(known_beat_length, 6),
@@ -1144,6 +1164,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
 
             blackboard.set_val("beats", new_beats)
             blackboard.set_val("refined_beats", new_beats)
+            blackboard.set_val("beat_phase_protected_ranges", protected_ranges)
             blackboard.set_val("steady_percussion_anchor_report", {
                 "status": "ANCHORED",
                 "known_beat_length_sec": round(known_beat_length, 6),
@@ -1291,18 +1312,28 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         return None
 
     def _confirmed_by_whole_track(self, run: dict, whole_drum_onsets: list) -> bool:
-        """細分軌候選的每一個擊點，整個鼓軌裡都要有對應的 onset 能量（容差
-        `whole_track_confirm_tolerance_sec`）——這是比「整軌也要一樣乾淨」更
-        寬鬆的檢查（多樂器疊加天生會讓整軌規律性變差），但至少能排除分離
-        殘留的假訊號：真實混音裡完全沒有對應能量，卻在細分軌裡出現規律
-        擊點的情況。"""
+        """細分軌候選的擊點，大多數都要在整個鼓軌裡找到對應的 onset 能量
+        （容差 `whole_track_confirm_tolerance_sec`）——這是比「整軌也要一樣
+        乾淨」更寬鬆的檢查（多樂器疊加天生會讓整軌規律性變差），但至少能
+        排除分離殘留的假訊號：真實混音裡完全沒有對應能量，卻在細分軌裡
+        出現規律擊點的情況。
+
+        Pass 186：原本要求「每一個擊點都要對上」，實測發現真實案例（World
+        is Mine 18.563s-20.014s 的 hi-hat 五連拍）裡，五個擊點有四個跟整軌
+        偵測結果完全對上（誤差 0.000 秒），只有一個因為整軌是多樂器疊加、
+        onset 偵測在那個時間點被同時發生的其他聲音蓋掉而沒抓到獨立峰值——
+        全有全無的判斷把這種「大多數都乾淨對應、只有少數沒抓到獨立峰值」
+        的真實案例也一起拒絕掉了。改成允許最多 `max_unconfirmed_onsets`
+        個擊點沒對上（用絕對數量而不是比例，在候選段長度不同時比較容易
+        預期）。"""
         whole_arr = np.asarray(whole_drum_onsets, dtype=float)
         if len(whole_arr) == 0:
             return False
-        for t in run["onsets"]:
-            if np.min(np.abs(whole_arr - t)) > self.whole_track_confirm_tolerance_sec:
-                return False
-        return True
+        unconfirmed = sum(
+            1 for t in run["onsets"]
+            if np.min(np.abs(whole_arr - t)) > self.whole_track_confirm_tolerance_sec
+        )
+        return unconfirmed <= self.max_unconfirmed_onsets
 
     def _apply_anchor(self, beats: np.ndarray, timestamps: np.ndarray, run: dict, next_start: float):
         """把這段連續擊點的第一下快照到最近的拍點，當作 Beat 1 錨點，再從
@@ -1313,23 +1344,28 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         「onset 索引 k」（`(k % 4) + 1`）——舊寫法假設連續擊點對應到連續的
         拍點格點索引，隔拍型態（`multiple=2`）的擊點會跳過中間的格點，
         用舊寫法會漏標中間那些格點的標號。新寫法不管 multiple 是 1 還是
-        2，都能正確、連貫地標完整段格點。"""
+        2，都能正確、連貫地標完整段格點。
+
+        Pass 185：回傳 (beats, protected_start, protected_end)，讓 execute()
+        收集保護區段清單，下游節點不再覆蓋這段相位。"""
         onsets = run["onsets"]
         snapped_indexes = []
         for t in onsets:
             diffs = np.abs(timestamps - t)
             idx = int(np.argmin(diffs))
             if diffs[idx] > self.snap_tolerance_sec:
-                return None
+                return None, None, None
             snapped_indexes.append(idx)
 
         base_idx = snapped_indexes[0]
+        last_touched_idx = base_idx
         for idx in range(base_idx, len(beats)):
             if timestamps[idx] >= next_start:
                 break
             step = idx - base_idx
             beats[idx, 1] = (step % 4) + 1
-        return beats
+            last_touched_idx = idx
+        return beats, float(timestamps[base_idx]), float(timestamps[last_touched_idx])
 
 
 class DrumFillDetectionNode(BaseNode):
@@ -1569,8 +1605,12 @@ class KickBassDownbeatVerifierNode(BaseNode):
     - 提取 40-120Hz 低頻大鼓 (Kick) 與貝斯能量
     - 比較小節內 1 號拍與 3 號拍之低頻能量
     - 若發現第 3 拍低頻能量顯著高於當前 1 號拍，自動旋轉 2 拍校正 Downbeat 180 度反相
+
+    Pass 185：尊重 beat_phase_protected_ranges——計算能量平均值時排除保護區段
+    內的 beat，旋轉修正時保護區段內的標號不被改動。
     """
     required_keys = ["beats", "y", "sr"]
+    optional_keys = ["beat_phase_protected_ranges"]
     output_keys = ["beats", "downbeat_fix_report"]
 
     def __init__(self):
@@ -1588,6 +1628,8 @@ class KickBassDownbeatVerifierNode(BaseNode):
         try:
             if y.ndim > 1:
                 y = y.mean(axis=0)
+
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
 
             b, a = scipy.signal.butter(2, [40.0 / (sr / 2), 120.0 / (sr / 2)], btype='bandpass')
             low_y = scipy.signal.filtfilt(b, a, y)
@@ -1609,17 +1651,44 @@ class KickBassDownbeatVerifierNode(BaseNode):
                 "rotated_beat_count": 0,
             }
             if len(downbeat_indices) >= 2:
-                db_energy = float(np.mean(energies[downbeat_indices]))
+                # Pass 185：排除保護區段內的 beat index 來計算能量平均值
+                unprotected_db = np.array([
+                    idx for idx in downbeat_indices
+                    if not _time_in_protected_ranges(float(beats[idx, 0]), protected_ranges)
+                ])
                 beat3_indices = (downbeat_indices + 2) % len(beats)
-                beat3_energy = float(np.mean(energies[beat3_indices]))
+                unprotected_b3 = np.array([
+                    idx for idx in beat3_indices
+                    if not _time_in_protected_ranges(float(beats[idx, 0]), protected_ranges)
+                ])
+
+                # 若所有 downbeat 都在保護區段內，使用全部 index（退化回原本行為）
+                db_calc = unprotected_db if len(unprotected_db) > 0 else downbeat_indices
+                b3_calc = unprotected_b3 if len(unprotected_b3) > 0 else beat3_indices
+
+                db_energy = float(np.mean(energies[db_calc]))
+                beat3_energy = float(np.mean(energies[b3_calc]))
                 report["downbeat_low_freq_energy"] = round(db_energy, 8)
                 report["beat3_low_freq_energy"] = round(beat3_energy, 8)
 
                 if beat3_energy > db_energy * 1.35:
                     fixed_beats = beats.copy()
+                    # Pass 185：先存保護區段內的原始標號
+                    protected_labels = {}
+                    for i in range(len(fixed_beats)):
+                        if _time_in_protected_ranges(float(fixed_beats[i, 0]), protected_ranges):
+                            protected_labels[i] = fixed_beats[i, 1]
+
                     fixed_beats[:, 1] = 0
                     for idx in beat3_indices:
-                        fixed_beats[idx, 1] = 1
+                        # 跳過保護區段內的 index
+                        if idx not in protected_labels:
+                            fixed_beats[idx, 1] = 1
+
+                    # 蓋回保護區段的原始標號
+                    for i, label in protected_labels.items():
+                        fixed_beats[i, 1] = label
+
                     blackboard.set_val("beats", fixed_beats)
                     blackboard.set_val("refined_beats", fixed_beats)
                     report["status"] = "ROTATED"
@@ -1634,6 +1703,7 @@ class KickBassDownbeatVerifierNode(BaseNode):
             print(f"[{self.name} Warning] Downbeat 重音校正異常: {e}")
             blackboard.set_val("downbeat_fix_report", {"status": "ERROR", "error": str(e)})
             return NodeStatus.SUCCESS
+
 
 
 class ViterbiTempoSmoothingNode(BaseNode):
@@ -1733,6 +1803,7 @@ class BeatGridContinuityRepairNode(BaseNode):
     beats that are far below the expected transition interval.
     """
     required_keys = ["beats"]
+    optional_keys = ["beat_phase_protected_ranges"]
     output_keys = ["beats", "beat_grid_repair_report"]
 
     def __init__(
@@ -1785,7 +1856,8 @@ class BeatGridContinuityRepairNode(BaseNode):
 
             repaired_arr = np.asarray(repaired, dtype=float)
             first_label = int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1
-            repaired_arr = _relabel_beat_numbers(repaired_arr, first_label=first_label)
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
+            repaired_arr = _relabel_beat_numbers(repaired_arr, first_label=first_label, protected_ranges=protected_ranges)
 
             blackboard.set_val("beat_grid_repair_report", {
                 "total_beats_before": int(len(beats)),
@@ -1817,7 +1889,7 @@ class TempoOscillationDampingNode(BaseNode):
     pattern, and skips opening/ending beats plus dense transition zones.
     """
     required_keys = ["beats"]
-    optional_keys = ["snap_exclusion_zones", "drum_fill_regions"]
+    optional_keys = ["snap_exclusion_zones", "drum_fill_regions", "beat_phase_protected_ranges"]
     output_keys = ["beats", "tempo_oscillation_report"]
 
     def __init__(
@@ -1895,9 +1967,11 @@ class TempoOscillationDampingNode(BaseNode):
                 )
                 return NodeStatus.SUCCESS
 
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
             candidate = _relabel_beat_numbers(
                 candidate,
                 first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1,
+                protected_ranges=protected_ranges,
             )
             current_quality = _score_beat_grid_quality(beats)
             candidate_quality = _score_beat_grid_quality(candidate)
@@ -1992,7 +2066,7 @@ class DownbeatPhaseConsistencyNode(BaseNode):
     best phase is adopted only when it clearly improves external alignment.
     """
     required_keys = ["beats"]
-    optional_keys = ["sections", "kick_anchors"]
+    optional_keys = ["sections", "kick_anchors", "beat_phase_protected_ranges"]
     output_keys = ["beats", "downbeat_phase_report"]
 
     def __init__(self, beats_per_bar: int = 4, min_improvement: float = 0.08):
@@ -2008,17 +2082,18 @@ class DownbeatPhaseConsistencyNode(BaseNode):
         try:
             sections = blackboard.get_val("sections", []) or []
             kick_anchors = blackboard.get_val("kick_anchors", [])
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
             current_labels = np.rint(beats[:, 1]).astype(int)
             current_first = int(current_labels[0]) if 1 <= int(current_labels[0]) <= self.beats_per_bar else 1
-            current_score = self._phase_score(beats, current_first, sections, kick_anchors)
+            current_score = self._phase_score(beats, current_first, sections, kick_anchors, protected_ranges)
 
             candidates = []
             for first_label in range(1, self.beats_per_bar + 1):
-                score = self._phase_score(beats, first_label, sections, kick_anchors)
+                score = self._phase_score(beats, first_label, sections, kick_anchors, protected_ranges)
                 candidates.append((score, first_label))
             best_score, best_first = max(candidates, key=lambda item: item[0])
 
-            relabeled = _relabel_beat_numbers(beats, first_label=best_first, beats_per_bar=self.beats_per_bar)
+            relabeled = _relabel_beat_numbers(beats, first_label=best_first, beats_per_bar=self.beats_per_bar, protected_ranges=protected_ranges)
             changed = best_first != current_first and best_score >= current_score + self.min_improvement
             if changed:
                 blackboard.set_val("beats", relabeled)
@@ -2040,8 +2115,8 @@ class DownbeatPhaseConsistencyNode(BaseNode):
             print(f"[{self.name} Warning] 小節相位一致化異常: {e}")
             return NodeStatus.SUCCESS
 
-    def _phase_score(self, beats, first_label: int, sections, kick_anchors) -> float:
-        candidate = _relabel_beat_numbers(beats, first_label=first_label, beats_per_bar=self.beats_per_bar)
+    def _phase_score(self, beats, first_label: int, sections, kick_anchors, protected_ranges=None) -> float:
+        candidate = _relabel_beat_numbers(beats, first_label=first_label, beats_per_bar=self.beats_per_bar, protected_ranges=protected_ranges)
         downbeat_times = candidate[candidate[:, 1] == 1, 0]
         if len(downbeat_times) == 0:
             return 0.0
@@ -2080,7 +2155,7 @@ class KickAnchorConsensusSnapNode(BaseNode):
     against tempo continuity and anchor alignment, and adopted only if it wins.
     """
     required_keys = ["beats"]
-    optional_keys = ["kick_anchors", "sections", "snap_exclusion_zones", "drum_fill_regions"]
+    optional_keys = ["kick_anchors", "sections", "snap_exclusion_zones", "drum_fill_regions", "beat_phase_protected_ranges"]
     output_keys = ["beats", "kick_anchor_snap_report"]
 
     def __init__(self, max_snap_ms: float = 90.0, min_quality_improvement: float = 2.0):
@@ -2134,7 +2209,8 @@ class KickAnchorConsensusSnapNode(BaseNode):
                 return NodeStatus.SUCCESS
 
             candidate = candidate[np.argsort(candidate[:, 0])]
-            candidate = _relabel_beat_numbers(candidate, first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1)
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
+            candidate = _relabel_beat_numbers(candidate, first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1, protected_ranges=protected_ranges)
             candidate_intervals = np.diff(candidate[:, 0])
             if np.any(candidate_intervals <= median_interval * 0.45):
                 self._write_report(blackboard, beats, candidate, snapped_count, accepted=False, reason="candidate_interval_collision")

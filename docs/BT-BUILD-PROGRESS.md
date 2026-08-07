@@ -920,3 +920,40 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   `docs/PASS-184-STEADY-PERCUSSION-LOCAL-ONSET-AND-HALFTIME-TASK.md`。
 - 狀態：已實作，測試皆通過。真實音訊完整管線回歸（確認 0-3 秒、18-20 秒
   在真實完整管線裡真的都對齊）尚未執行，需要使用者同意才進行。
+
+### Pass 185：讓下游 5 個節點尊重 `SteadyPercussionCountAnchorNode` 建立的區段相位
+
+- 背景：`SteadyPercussionCountAnchorNode` 建立的區段相位會被下游 5 個節點（`BeatGridContinuityRepairNode`、`TempoOscillationDampingNode`、`DownbeatPhaseConsistencyNode`、`KickAnchorConsensusSnapNode`、`KickBassDownbeatVerifierNode`）透由全曲重編號（`_relabel_beat_numbers`）蓋掉。
+- 修法：
+  1. `SteadyPercussionCountAnchorNode` 輸出 `beat_phase_protected_ranges` 到 Blackboard。
+  2. 新增 `_time_in_protected_ranges` helper，並讓 `_relabel_beat_numbers` 支援 `protected_ranges` 參數，保護區段內保留原始標號。
+  3. 下遊 5 個節點全面讀取並尊重保護區段（`KickBassDownbeatVerifierNode` 算能量平均時排除保護區段，旋轉修正時保留保護區段標號）。
+- 測試：新增 `tests/test_sdd_pass185.py`（17 項全過）。既有相關測試 30 項全數通過。
+- 任務書：`docs/PASS-185-BEAT-PHASE-PROTECTED-RANGES-TASK.md`。
+- 狀態：已完成實作與測試驗證。
+- **追記（Pass 186 起點）**：真實音訊完整管線回歸後發現 18-20 秒問題**依然
+  沒解決**——追查確認不是 Pass 185 保護機制失效，而是候選在更早階段就被
+  Pass 182 的整軌能量確認機制拒絕掉了（見下方 Pass 186 條目）。另外發現
+  `irregular_measure_count` 從 1 跳到 12，是保護區段變多（34 段）造成的
+  交界處接縫副作用，比 Pass 185 任務書設計時預期的規模更大，需要追蹤。
+
+### Pass 186：`SteadyPercussionCountAnchorNode` 整軌確認允許少量擊點不匹配
+
+- 背景：Pass 185 真實資料回歸後追查發現，《World is Mine》18.563s-20.014s
+  的 hi-hat 五連拍候選，五個擊點裡有四個跟整軌（`drums.wav`）偵測結果
+  完全對上（誤差 0.000 秒），只有一個（18.934s）整軌沒有對應能量（最近
+  距離 0.36 秒，幾乎一整拍）——Pass 182 的整軌確認機制要求「全部擊點都要
+  對上」，這種大多數乾淨對應、只有一個沒抓到獨立峰值的真實案例也一起被
+  拒絕（`REJECTED_NO_WHOLE_TRACK_ENERGY`），保護機制根本沒有機會生效。
+- 修法：`_confirmed_by_whole_track()` 新增 `max_unconfirmed_onsets`（預設
+  1），只要沒對上的擊點數量在門檻內就算通過，不再要求全有全無。
+- 驗證：新增 `tests/test_sdd_pass186.py`（4 項全過）；直接對真實資料重跑
+  `SteadyPercussionCountAnchorNode`，確認 18.563s-20.014s 候選這次正確進到
+  `applied`，對應拍號變成 `1,2,3,4,1`（修復前是 `2,3,4,1,2`）；候選總數
+  從 34 增加到 37。既有回歸測試（含 Pass 181-186 共 117 項）全數通過。
+- 任務書：`docs/PASS-186-WHOLE-TRACK-CONFIRM-TOLERATE-ONE-MISS-TASK.md`。
+- 尚未完成：候選數量增加後，`irregular_measure_count`（Pass 185 真實跑法
+  是 12）這次是變好、變壞、還是不變，需要重跑真實音訊完整管線才能確認，
+  進行中。
+- 狀態：已實作、單元測試與真實資料候選層級驗證皆通過，完整管線回歸進行中。
+
