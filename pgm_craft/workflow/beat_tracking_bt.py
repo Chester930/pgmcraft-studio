@@ -985,6 +985,22 @@ class SteadyPercussionCountAnchorNode(BaseNode):
     onset 能量做確認（容差 ±40ms）——沒有對應能量的不採用，但記錄進 report
     讓這種情況可以被看見；整個鼓軌自己找到、沒有被任何細分軌候選涵蓋到的
     段落，一樣可以當作候選採用（優先權較低，因為無法歸因到具體是哪個樂器）。
+
+    Pass 184：真實資料完整管線回歸（累積 Pass 180-183）後，使用者實際試聽
+    抓到兩個問題：
+    1. 18-20 秒重音位置不對：`_detect_onsets` 原本對整首歌一次做 onset
+       偵測，安靜段落會被後面響亮的段落稀釋掉敏感度——同一份 hi-hat 音軌，
+       只分析 13-21 秒片段能抓到完整乾淨的五個擊點，對整首歌一次分析卻只
+       抓到兩個，導致這段實際套用的相位錨點來自別處，跟這五下 hi-hat 本身
+       該有的相位對不上。改成滑動視窗分段分析（見 `_detect_onsets`）。
+    2. 0-3 秒 hi-hat 沒對到：查證後這裡是隔拍打（half-time groove）——
+       使用者確認前奏聽起來速度只有主歌一半，但比對這次跑法的實際拍距
+       資料，前奏跟主歌算出來的拍距其實相近，底層拍速全曲一致，只是前奏
+       鼓點打得比較稀疏。原本只認「間隔剛好等於拍距」的邏輯會正確排除這種
+       隔拍型態，但這其實也是有效的「明確數拍」訊號，改成同時接受拍距的
+       1 倍、2 倍（見 `_find_steady_runs`/`ALLOWED_BEAT_MULTIPLES`），
+       `_apply_anchor` 也重新設計成用「格點位置」而非「onset 索引」決定
+       標號，才能正確處理隔拍型態中間被跳過的格點。
     """
     required_keys = ["beats"]
     optional_keys = ["stems", "stems_dir", "snap_exclusion_zones", "drum_fill_regions"]
@@ -997,6 +1013,9 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         ("hihat_cymbals", ("drums", "hihat_cymbals.wav")),
     ]
     WHOLE_DRUM_STEM = ("drums", ("drums", "drums.wav"))
+    # 允許的拍距倍數：1（逐拍）、2（隔拍/half-time）。先不繼續往 3、4 倍延伸，
+    # 訊號太弱、太容易誤判。
+    ALLOWED_BEAT_MULTIPLES = (1, 2)
 
     def __init__(
         self,
@@ -1005,6 +1024,8 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         beat_length_tolerance_pct: float = 0.25,
         snap_tolerance_sec: float = 0.12,
         whole_track_confirm_tolerance_sec: float = 0.04,
+        onset_window_sec: float = 10.0,
+        onset_hop_sec: float = 7.0,
     ):
         super().__init__("SteadyPercussionCountAnchorNode")
         self.min_run_length = min_run_length
@@ -1012,6 +1033,8 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         self.beat_length_tolerance_pct = beat_length_tolerance_pct
         self.snap_tolerance_sec = snap_tolerance_sec
         self.whole_track_confirm_tolerance_sec = whole_track_confirm_tolerance_sec
+        self.onset_window_sec = onset_window_sec
+        self.onset_hop_sec = onset_hop_sec
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("beats")
@@ -1138,25 +1161,63 @@ class SteadyPercussionCountAnchorNode(BaseNode):
 
     def _detect_onsets(self, path: str) -> list:
         """真正的 onset 偵測，不是窗口最大值包絡——後者對 hi-hat/鈸這種質地
-        較連續的樂器會被附近較大聲的滾奏蓋掉細節（Pass 181 踩過的坑）。"""
+        較連續的樂器會被附近較大聲的滾奏蓋掉細節（Pass 181 踩過的坑）。
+
+        Pass 184：改成滑動視窗分段分析，不是對整首歌一次做。實測發現對整首
+        歌一次做 onset 偵測，安靜段落會被後面響亮的段落（例如副歌）稀釋掉
+        敏感度——同一份音軌只分析一小段能抓到的擊點，對整首歌一次分析反而
+        抓不到。視窗之間重疊，同一下擊點在重疊區間可能被兩個視窗都抓到，
+        最後合併容差內的重複點。"""
         import librosa
         y, sr = librosa.load(path, sr=22050, mono=True)
-        onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=256)
-        onsets = librosa.onset.onset_detect(
-            onset_envelope=onset_env, sr=sr, hop_length=256, backtrack=False, units="time"
-        )
-        return sorted(float(t) for t in onsets)
+        duration = len(y) / sr
+
+        all_onsets = set()
+        window_samples = int(self.onset_window_sec * sr)
+        hop_samples = int(self.onset_hop_sec * sr)
+        start_sample = 0
+        while start_sample < len(y):
+            end_sample = min(len(y), start_sample + window_samples)
+            seg = y[start_sample:end_sample]
+            if len(seg) >= int(0.5 * sr):
+                onset_env = librosa.onset.onset_strength(y=seg, sr=sr, hop_length=256)
+                seg_onsets = librosa.onset.onset_detect(
+                    onset_envelope=onset_env, sr=sr, hop_length=256, backtrack=False, units="time"
+                )
+                offset = start_sample / sr
+                for t in seg_onsets:
+                    all_onsets.add(round(float(t) + offset, 3))
+            if end_sample >= len(y):
+                break
+            start_sample += hop_samples
+
+        merged = []
+        for t in sorted(all_onsets):
+            if not merged or t - merged[-1] > 0.03:
+                merged.append(t)
+        return merged
 
     def _find_steady_runs(self, onsets: list, known_beat_length: float, exclusion_zones: list) -> list:
         """找連續 >= min_run_length 個擊點，滿足：
         1. 相鄰間隔變異係數低於門檻（真的等間隔，不是巧合規律）。
-        2. 間隔要落在全曲已知拍距 ± tolerance 範圍內（真的是逐拍，不是巧合
-           規律但跟拍距差很多的段落，例如全曲拍距的 2 倍以上）。
+        2. 間隔要落在全曲已知拍距的某個允許倍數（`ALLOWED_BEAT_MULTIPLES`，
+           預設 1x/2x）± tolerance 範圍內——真的是逐拍或隔拍在打，不是巧合
+           規律但跟拍距對不上的段落（例如拍距的 2.4 倍）。
         """
         runs = []
+        for multiple in self.ALLOWED_BEAT_MULTIPLES:
+            runs.extend(
+                self._find_runs_for_multiple(onsets, known_beat_length * multiple, multiple, exclusion_zones)
+            )
+        return runs
+
+    def _find_runs_for_multiple(
+        self, onsets: list, target_len: float, multiple: int, exclusion_zones: list
+    ) -> list:
+        runs = []
         n = len(onsets)
-        lo_len = known_beat_length * (1.0 - self.beat_length_tolerance_pct)
-        hi_len = known_beat_length * (1.0 + self.beat_length_tolerance_pct)
+        lo_len = target_len * (1.0 - self.beat_length_tolerance_pct)
+        hi_len = target_len * (1.0 + self.beat_length_tolerance_pct)
 
         i = 0
         while i < n - self.min_run_length + 1:
@@ -1186,6 +1247,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
                         "count": run_len,
                         "cv": round(float(np.std(arr) / np.mean(arr)), 4) if np.mean(arr) > 0 else 0.0,
                         "mean_interval_sec": round(float(np.mean(arr)), 6),
+                        "multiple": multiple,
                         "onsets": run_onsets,
                     })
                 i = j
@@ -1194,14 +1256,19 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         return runs
 
     def _dedupe_overlaps(self, all_runs: list) -> list:
-        """同一段時間有多個樂器都符合時，取變異係數最低的；同樣乾淨則依
+        """同一段時間有多個候選都符合時：變異係數最低的優先；同樣乾淨則
+        拍距倍數較小（更直接的逐拍訊號優先於隔拍）；再同樣則依
         STEM_CANDIDATES 順序（kick > snare > hihat_cymbals）決定優先權，
         整個鼓軌（無法歸因到具體樂器）優先權最低。"""
         stem_priority = {key: idx for idx, (key, _) in enumerate(self.STEM_CANDIDATES)}
         drums_priority = len(self.STEM_CANDIDATES)
         ordered = sorted(
             all_runs,
-            key=lambda item: (item[1]["cv"], stem_priority.get(item[0], drums_priority)),
+            key=lambda item: (
+                item[1]["cv"],
+                item[1].get("multiple", 1),
+                stem_priority.get(item[0], drums_priority),
+            ),
         )
         accepted = []
         for stem_key, run in ordered:
@@ -1238,25 +1305,30 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         return True
 
     def _apply_anchor(self, beats: np.ndarray, timestamps: np.ndarray, run: dict, next_start: float):
-        """把這段連續擊點依序標記成 1-2-3-4，再從最後一個錨點往後續接循環，
-        直到下一個已接受的錨點（next_start）或曲末。找不到對應拍點就放棄。"""
+        """把這段連續擊點的第一下快照到最近的拍點，當作 Beat 1 錨點，再從
+        那個格點位置開始往後（含格點本身）用 1-2-3-4 循環重新標號，直到
+        下一個已接受的錨點（next_start）或曲末。找不到對應拍點就放棄。
+
+        Pass 184：改成用「格點位置」（`idx - base_idx`）決定標號，不再用
+        「onset 索引 k」（`(k % 4) + 1`）——舊寫法假設連續擊點對應到連續的
+        拍點格點索引，隔拍型態（`multiple=2`）的擊點會跳過中間的格點，
+        用舊寫法會漏標中間那些格點的標號。新寫法不管 multiple 是 1 還是
+        2，都能正確、連貫地標完整段格點。"""
         onsets = run["onsets"]
-        n_hits = len(onsets)
         snapped_indexes = []
-        for k, t in enumerate(onsets):
+        for t in onsets:
             diffs = np.abs(timestamps - t)
             idx = int(np.argmin(diffs))
             if diffs[idx] > self.snap_tolerance_sec:
                 return None
-            beats[idx, 1] = (k % 4) + 1
             snapped_indexes.append(idx)
 
-        last_idx = snapped_indexes[-1]
-        for step in range(1, len(beats) - last_idx):
-            idx = last_idx + step
+        base_idx = snapped_indexes[0]
+        for idx in range(base_idx, len(beats)):
             if timestamps[idx] >= next_start:
                 break
-            beats[idx, 1] = ((n_hits - 1 + step) % 4) + 1
+            step = idx - base_idx
+            beats[idx, 1] = (step % 4) + 1
         return beats
 
 
