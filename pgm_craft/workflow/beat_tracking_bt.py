@@ -1139,6 +1139,7 @@ class SteadyPercussionCountAnchorNode(BaseNode):
             protected_ranges = list(blackboard.get_val("beat_phase_protected_ranges", []) or [])
             for k, (stem_key, run) in enumerate(accepted):
                 next_start = accepted[k + 1][1]["start_time"] if k + 1 < len(accepted) else float("inf")
+                before_labels = new_beats[:, 1].copy()
                 result, prot_start, prot_end = self._apply_anchor(new_beats, timestamps, run, next_start)
                 if result is not None:
                     new_beats = result
@@ -1151,7 +1152,15 @@ class SteadyPercussionCountAnchorNode(BaseNode):
                         "mean_interval_sec": run["mean_interval_sec"],
                     })
                     if prot_start is not None and prot_end is not None:
-                        protected_ranges.append((prot_start, prot_end))
+                        # Pass 187：只有這次套用真的改動了標號才需要保護——
+                        # 如果這段候選的相位剛好跟原本就有的標號一樣，保護它
+                        # 完全沒有實際效益，卻還是會在下游節點面前多一個交界
+                        # 處風險（見 docs/PASS-187-...-TASK.md：37 個套用的
+                        # 錨點裡，實測有 26 個套用前後標號完全沒變）。
+                        touched_mask = (timestamps >= prot_start) & (timestamps <= prot_end)
+                        actually_changed = bool(np.any(new_beats[touched_mask, 1] != before_labels[touched_mask]))
+                        if actually_changed:
+                            protected_ranges.append((prot_start, prot_end))
 
             if not applied:
                 blackboard.set_val("beat_phase_protected_ranges", protected_ranges)
