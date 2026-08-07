@@ -56,6 +56,14 @@ def _window_intersects_exclusion(start_time: float, end_time: float, zones) -> b
     return False
 
 
+def _time_in_protected_ranges(t: float, protected_ranges) -> bool:
+    """判斷時間點 t 是否落在任一保護區段內（Pass 185）。"""
+    for start, end in protected_ranges or []:
+        if start <= t <= end:
+            return True
+    return False
+
+
 def _coerce_beat_matrix(beats):
     if beats is None:
         return np.empty((0, 2), dtype=float)
@@ -159,13 +167,17 @@ def _score_beat_grid_quality(beats, kick_anchors=None, sections=None, alignment_
     }
 
 
-def _relabel_beat_numbers(beats, first_label: int = 1, beats_per_bar: int = 4):
+def _relabel_beat_numbers(beats, first_label: int = 1, beats_per_bar: int = 4, protected_ranges=None):
     arr = _coerce_beat_matrix(beats)
     if len(arr) == 0:
         return arr
     first_label = int(np.clip(int(first_label), 1, beats_per_bar))
     relabeled = arr.copy()
     relabeled[:, 1] = ((np.arange(len(relabeled)) + first_label - 1) % beats_per_bar) + 1
+    if protected_ranges:
+        for i in range(len(arr)):
+            if _time_in_protected_ranges(float(arr[i, 0]), protected_ranges):
+                relabeled[i, 1] = arr[i, 1]  # 保護區段內的拍點，標號維持原樣不被覆蓋
     return relabeled
 
 
@@ -175,9 +187,23 @@ class KickSnarePulseNode(BaseNode):
     - 讀取 `stems["kick"]` (40-120Hz) 與 `stems["snare"]` (200-2200Hz)
     - 提取獨立的大鼓撞擊時間點 `kick_anchors` (做為強位第一拍對齊參考)
     - 提取獨立的小鼓撞擊時間點 `snare_anchors` (做為 2/4 拍骨幹對齊參考)
+
+    Pass 183：`kick_anchors`/`snare_anchors` 是 `ReEntryReAnchoringNode`、
+    `DownbeatPhaseConsistencyNode`、`KickAnchorConsensusSnapNode`、
+    `DrumFillDetectionNode` 等一整串下游節點共用的輸入，但原本完全只看細分
+    軌，從未回頭比對整個鼓軌——分軌是 Demucs 頻段分離出來的，細分軌裡看起來
+    乾淨的擊點，有可能是分離殘留的假訊號，真實混音裡根本沒有對應的聲音（跟
+    Pass 182 修 `SteadyPercussionCountAnchorNode` 是同一個問題）。補上：鼓聲
+    細分軌抽取出來的錨點，要用整個 `drums.wav`（同一套 `_extract_peak_
+    anchors`，跟 kick/snare 用的方法一致）做交叉確認，容差內找不到對應能量
+    的視為可疑，濾掉。**這層確認只套用在鼓聲細分軌自己抽取出來的錨點，不
+    套用在後面 Sub-Bass 補位邏輯新增的錨點**——無鼓區間本來就預期整個鼓軌
+    沒有能量，那正是為什麼要用貝斯補位，不能讓交叉確認反向把補位錨點淘汰。
     """
     optional_keys = ["stems", "stems_dir"]
     output_keys = ["kick_anchors", "snare_anchors"]
+
+    WHOLE_TRACK_CONFIRM_TOLERANCE_SEC = 0.15  # _extract_peak_anchors 窗口法本身時間精度較粗，容差放寬
 
     def __init__(self):
         super().__init__("KickSnarePulseNode")
@@ -211,6 +237,23 @@ class KickSnarePulseNode(BaseNode):
             except Exception as e:
                 print(f"[{self.name} Warning] 提取 Snare 脈衝失敗: {e}")
 
+        drums_path = stems.get("drums")
+        if not drums_path and stems_dir:
+            dp = os.path.join(stems_dir, "drums", "drums.wav")
+            if os.path.exists(dp): drums_path = dp
+
+        if drums_path and os.path.exists(drums_path):
+            try:
+                whole_drum_peaks = _extract_peak_anchors(drums_path, threshold_ratio=0.2, min_gap_sec=0.05)
+                before_kick, before_snare = len(kick_anchors), len(snare_anchors)
+                kick_anchors = self._confirmed_by_whole_track(kick_anchors, whole_drum_peaks)
+                snare_anchors = self._confirmed_by_whole_track(snare_anchors, whole_drum_peaks)
+                dropped = (before_kick - len(kick_anchors)) + (before_snare - len(snare_anchors))
+                if dropped > 0:
+                    print(f"[{self.name}] 🛡️ 整個鼓軌交叉確認：濾掉 {dropped} 個真實混音無對應能量的可疑脈衝點。")
+            except Exception as e:
+                print(f"[{self.name} Warning] 整個鼓軌交叉確認失敗: {e}")
+
         # 無鼓區間 Sub-Bass 40-100Hz 低頻脈衝補充對位護航
         bass_path = stems.get("sub_bass_808") or stems.get("electric_bass") or stems.get("bass")
         if not bass_path and stems_dir:
@@ -243,6 +286,15 @@ class KickSnarePulseNode(BaseNode):
         blackboard.set_val("snare_anchors", np.array(snare_anchors))
         print(f"[{self.name}] ✅ 成功提取 {len(kick_anchors)} 個重音脈衝點與 {len(snare_anchors)} 個 Snare 脈衝點。")
         return NodeStatus.SUCCESS
+
+    def _confirmed_by_whole_track(self, anchors: list, whole_track_peaks: list) -> list:
+        """只保留在整個鼓軌裡（容差內）也找得到對應能量的錨點——濾掉細分軌
+        分離殘留的假訊號。整個鼓軌沒有任何峰值時視為無法確認，原樣保留
+        （避免整軌抽取失敗時反而把所有真實錨點都清空）。"""
+        if not whole_track_peaks:
+            return anchors
+        whole_arr = np.asarray(whole_track_peaks, dtype=float)
+        return [a for a in anchors if np.min(np.abs(whole_arr - a)) <= self.WHOLE_TRACK_CONFIRM_TOLERANCE_SEC]
 
 
 class AnchorTransientSnapNode(BaseNode):
@@ -912,6 +964,419 @@ class ReEntryReAnchoringNode(BaseNode):
         return result
 
 
+class SteadyPercussionCountAnchorNode(BaseNode):
+    """
+    Pass 181：連續穩定擊點（Kick/Snare/Hi-hat）當第一拍續接錨點。
+
+    背景：使用者在《World is Mine》前奏/間奏聽出「第一拍沒對上」，提出構想：
+    連續四個等間隔擊點代表打擊樂器在明確數 1-2-3-4 拍，可以當拍號續接依據。
+    真實資料驗證過程中發現兩件事：
+    1. 這個訊號不只 kick 會有——hi-hat/鈸一樣可以是「數拍」的可靠來源，
+       《World is Mine》真正乾淨的案例（18.561s-20.012s，變異係數 2.6%，
+       間隔幾乎完全等於全曲拍距）就是打在 hi-hat 上，不是 kick。
+    2. 判斷「是不是真的在數拍」不能只看間隔規不規律，還要跟全曲已知拍距
+       比對——間隔規律但跟拍距差很多（例如全曲拍距的 2-2.5 倍）的段落，
+       代表這不是逐拍在打，必須排除，否則會誤判。
+    3. 偵測擊點時間必須用真正的 onset 偵測（`librosa.onset.onset_strength`
+       + `onset_detect`），不能沿用 `_extract_peak_anchors` 的窗口最大值
+       包絡法——hi-hat/鈸這種質地較連續的樂器，附近較大聲的滾奏會蓋掉細節，
+       窗口最大值法會誤判成「連續漸強」而看不出真正的離散擊點。
+
+    詳見 docs/PASS-181-STEADY-PERCUSSION-COUNT-DOWNBEAT-ANCHOR-TASK.md。
+
+    放在 `ReEntryReAnchoringNode` 之後——「連續穩定擊點貼合全曲拍距」是比
+    「無鼓→有鼓的能量邊緣」更直接的相位證據，有衝突時讓這個訊號覆蓋。
+
+    找不到任何樂器有這種連續段時，完全不動 `beats`——不是每首歌都有這個訊號。
+
+    Pass 182：使用者指出這個節點違反了原本的設計原則——「先從整個鼓軌辨識，
+    不確定的部分再用細分軌比對調整」，但這個節點一開始只看細分軌，完全沒有
+    回頭比對整個鼓軌（`drums.wav`）。分軌是 Demucs 頻段分離出來的，品質不是
+    絕對的，細分軌裡看起來很乾淨的規律擊點，有可能是分離殘留的假訊號，真實
+    混音裡根本沒有對應的聲音。改成：細分軌找到的候選段，要拿整個鼓軌的
+    onset 能量做確認（容差 ±40ms）——沒有對應能量的不採用，但記錄進 report
+    讓這種情況可以被看見；整個鼓軌自己找到、沒有被任何細分軌候選涵蓋到的
+    段落，一樣可以當作候選採用（優先權較低，因為無法歸因到具體是哪個樂器）。
+
+    Pass 184：真實資料完整管線回歸（累積 Pass 180-183）後，使用者實際試聽
+    抓到兩個問題：
+    1. 18-20 秒重音位置不對：`_detect_onsets` 原本對整首歌一次做 onset
+       偵測，安靜段落會被後面響亮的段落稀釋掉敏感度——同一份 hi-hat 音軌，
+       只分析 13-21 秒片段能抓到完整乾淨的五個擊點，對整首歌一次分析卻只
+       抓到兩個，導致這段實際套用的相位錨點來自別處，跟這五下 hi-hat 本身
+       該有的相位對不上。改成滑動視窗分段分析（見 `_detect_onsets`）。
+    2. 0-3 秒 hi-hat 沒對到：查證後這裡是隔拍打（half-time groove）——
+       使用者確認前奏聽起來速度只有主歌一半，但比對這次跑法的實際拍距
+       資料，前奏跟主歌算出來的拍距其實相近，底層拍速全曲一致，只是前奏
+       鼓點打得比較稀疏。原本只認「間隔剛好等於拍距」的邏輯會正確排除這種
+       隔拍型態，但這其實也是有效的「明確數拍」訊號，改成同時接受拍距的
+       1 倍、2 倍（見 `_find_steady_runs`/`ALLOWED_BEAT_MULTIPLES`），
+       `_apply_anchor` 也重新設計成用「格點位置」而非「onset 索引」決定
+       標號，才能正確處理隔拍型態中間被跳過的格點。
+    """
+    required_keys = ["beats"]
+    optional_keys = ["stems", "stems_dir", "snap_exclusion_zones", "drum_fill_regions"]
+    output_keys = ["beats", "steady_percussion_anchor_report", "beat_phase_protected_ranges"]
+
+    # (stem 鍵名, stems_dir 底下的相對路徑)；依序嘗試，順序也是同樣乾淨時的優先序。
+    STEM_CANDIDATES = [
+        ("kick", ("drums", "kick.wav")),
+        ("snare", ("drums", "snare.wav")),
+        ("hihat_cymbals", ("drums", "hihat_cymbals.wav")),
+    ]
+    WHOLE_DRUM_STEM = ("drums", ("drums", "drums.wav"))
+    # 允許的拍距倍數：1（逐拍）、2（隔拍/half-time）。先不繼續往 3、4 倍延伸，
+    # 訊號太弱、太容易誤判。
+    ALLOWED_BEAT_MULTIPLES = (1, 2)
+
+    def __init__(
+        self,
+        min_run_length: int = 4,
+        max_interval_cv: float = 0.12,
+        beat_length_tolerance_pct: float = 0.25,
+        snap_tolerance_sec: float = 0.12,
+        whole_track_confirm_tolerance_sec: float = 0.04,
+        max_unconfirmed_onsets: int = 1,
+        onset_window_sec: float = 10.0,
+        onset_hop_sec: float = 7.0,
+    ):
+        super().__init__("SteadyPercussionCountAnchorNode")
+        self.min_run_length = min_run_length
+        self.max_interval_cv = max_interval_cv
+        self.beat_length_tolerance_pct = beat_length_tolerance_pct
+        self.snap_tolerance_sec = snap_tolerance_sec
+        self.whole_track_confirm_tolerance_sec = whole_track_confirm_tolerance_sec
+        self.max_unconfirmed_onsets = max_unconfirmed_onsets
+        self.onset_window_sec = onset_window_sec
+        self.onset_hop_sec = onset_hop_sec
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        beats = blackboard.get_val("beats")
+        if beats is None or len(beats) < 4:
+            return NodeStatus.SUCCESS
+
+        try:
+            beats = np.asarray(beats, dtype=float)
+            beats = beats[np.argsort(beats[:, 0])]
+            timestamps = beats[:, 0].astype(float)
+            intervals = np.diff(timestamps)
+            valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+            if len(valid) == 0:
+                return NodeStatus.SUCCESS
+            known_beat_length = float(np.median(valid))
+
+            exclusion_zones = (
+                list(blackboard.get_val("snap_exclusion_zones", []) or [])
+                + list(blackboard.get_val("drum_fill_regions", []) or [])
+            )
+
+            stems = blackboard.get_val("stems", {}) or {}
+            stems_dir = blackboard.get_val("stems_dir", "") or ""
+
+            # 整個鼓軌：既是候選來源之一，也用來確認細分軌候選不是分離殘留假訊號。
+            whole_drum_path = self._resolve_stem_path(*self.WHOLE_DRUM_STEM, stems, stems_dir)
+            whole_drum_onsets = []
+            if whole_drum_path:
+                try:
+                    whole_drum_onsets = self._detect_onsets(whole_drum_path)
+                except Exception as e:
+                    print(f"[{self.name} Warning] drums onset 偵測失敗: {e}")
+
+            sub_runs = []
+            for stem_key, rel_path in self.STEM_CANDIDATES:
+                path = self._resolve_stem_path(stem_key, rel_path, stems, stems_dir)
+                if not path:
+                    continue
+
+                try:
+                    onsets = self._detect_onsets(path)
+                except Exception as e:
+                    print(f"[{self.name} Warning] {stem_key} onset 偵測失敗: {e}")
+                    continue
+
+                if len(onsets) < self.min_run_length:
+                    continue
+
+                for run in self._find_steady_runs(onsets, known_beat_length, exclusion_zones):
+                    sub_runs.append((stem_key, run))
+
+            rejected = []
+            confirmed_sub_runs = []
+            for stem_key, run in sub_runs:
+                if whole_drum_path and not self._confirmed_by_whole_track(run, whole_drum_onsets):
+                    rejected.append({
+                        "stem": stem_key,
+                        "start_time": run["start_time"],
+                        "end_time": run["end_time"],
+                        "reason": "REJECTED_NO_WHOLE_TRACK_ENERGY",
+                    })
+                    continue
+                confirmed_sub_runs.append((stem_key, run))
+
+            drum_only_runs = []
+            if len(whole_drum_onsets) >= self.min_run_length:
+                for run in self._find_steady_runs(whole_drum_onsets, known_beat_length, exclusion_zones):
+                    if not any(self._overlaps(run, r) for _, r in confirmed_sub_runs):
+                        drum_only_runs.append(("drums", run))
+
+            all_runs = confirmed_sub_runs + drum_only_runs
+
+            if not all_runs:
+                blackboard.set_val("beat_phase_protected_ranges",
+                                   list(blackboard.get_val("beat_phase_protected_ranges", []) or []))
+                blackboard.set_val("steady_percussion_anchor_report", {
+                    "status": "NO_STEADY_RUN_FOUND",
+                    "known_beat_length_sec": round(known_beat_length, 6),
+                    "rejected": rejected,
+                })
+                return NodeStatus.SUCCESS
+
+            accepted = self._dedupe_overlaps(all_runs)
+            accepted.sort(key=lambda item: item[1]["start_time"])
+
+            new_beats = beats.copy()
+            applied = []
+            protected_ranges = list(blackboard.get_val("beat_phase_protected_ranges", []) or [])
+            for k, (stem_key, run) in enumerate(accepted):
+                next_start = accepted[k + 1][1]["start_time"] if k + 1 < len(accepted) else float("inf")
+                before_labels = new_beats[:, 1].copy()
+                result, prot_start, prot_end = self._apply_anchor(new_beats, timestamps, run, next_start)
+                if result is not None:
+                    new_beats = result
+                    applied.append({
+                        "stem": stem_key,
+                        "start_time": run["start_time"],
+                        "end_time": run["end_time"],
+                        "count": run["count"],
+                        "cv": run["cv"],
+                        "mean_interval_sec": run["mean_interval_sec"],
+                    })
+                    if prot_start is not None and prot_end is not None:
+                        # Pass 187：只有這次套用真的改動了標號才需要保護——
+                        # 如果這段候選的相位剛好跟原本就有的標號一樣，保護它
+                        # 完全沒有實際效益，卻還是會在下游節點面前多一個交界
+                        # 處風險（見 docs/PASS-187-...-TASK.md：37 個套用的
+                        # 錨點裡，實測有 26 個套用前後標號完全沒變）。
+                        touched_mask = (timestamps >= prot_start) & (timestamps <= prot_end)
+                        actually_changed = bool(np.any(new_beats[touched_mask, 1] != before_labels[touched_mask]))
+                        if actually_changed:
+                            protected_ranges.append((prot_start, prot_end))
+
+            if not applied:
+                blackboard.set_val("beat_phase_protected_ranges", protected_ranges)
+                blackboard.set_val("steady_percussion_anchor_report", {
+                    "status": "CANDIDATES_FOUND_BUT_NOT_APPLIED",
+                    "known_beat_length_sec": round(known_beat_length, 6),
+                    "rejected": rejected,
+                })
+                return NodeStatus.SUCCESS
+
+            blackboard.set_val("beats", new_beats)
+            blackboard.set_val("refined_beats", new_beats)
+            blackboard.set_val("beat_phase_protected_ranges", protected_ranges)
+            blackboard.set_val("steady_percussion_anchor_report", {
+                "status": "ANCHORED",
+                "known_beat_length_sec": round(known_beat_length, 6),
+                "applied": applied,
+                "rejected": rejected,
+            })
+            print(
+                f"[{self.name}] 🥁 偵測到 {len(applied)} 段連續穩定擊點"
+                f"（{', '.join(sorted(set(a['stem'] for a in applied)))}），已當作第一拍續接錨點。"
+            )
+            return NodeStatus.SUCCESS
+        except Exception as e:
+            print(f"[{self.name} Warning] 穩定擊點錨定異常: {e}")
+            return NodeStatus.SUCCESS
+
+    def _detect_onsets(self, path: str) -> list:
+        """真正的 onset 偵測，不是窗口最大值包絡——後者對 hi-hat/鈸這種質地
+        較連續的樂器會被附近較大聲的滾奏蓋掉細節（Pass 181 踩過的坑）。
+
+        Pass 184：改成滑動視窗分段分析，不是對整首歌一次做。實測發現對整首
+        歌一次做 onset 偵測，安靜段落會被後面響亮的段落（例如副歌）稀釋掉
+        敏感度——同一份音軌只分析一小段能抓到的擊點，對整首歌一次分析反而
+        抓不到。視窗之間重疊，同一下擊點在重疊區間可能被兩個視窗都抓到，
+        最後合併容差內的重複點。"""
+        import librosa
+        y, sr = librosa.load(path, sr=22050, mono=True)
+        duration = len(y) / sr
+
+        all_onsets = set()
+        window_samples = int(self.onset_window_sec * sr)
+        hop_samples = int(self.onset_hop_sec * sr)
+        start_sample = 0
+        while start_sample < len(y):
+            end_sample = min(len(y), start_sample + window_samples)
+            seg = y[start_sample:end_sample]
+            if len(seg) >= int(0.5 * sr):
+                onset_env = librosa.onset.onset_strength(y=seg, sr=sr, hop_length=256)
+                seg_onsets = librosa.onset.onset_detect(
+                    onset_envelope=onset_env, sr=sr, hop_length=256, backtrack=False, units="time"
+                )
+                offset = start_sample / sr
+                for t in seg_onsets:
+                    all_onsets.add(round(float(t) + offset, 3))
+            if end_sample >= len(y):
+                break
+            start_sample += hop_samples
+
+        merged = []
+        for t in sorted(all_onsets):
+            if not merged or t - merged[-1] > 0.03:
+                merged.append(t)
+        return merged
+
+    def _find_steady_runs(self, onsets: list, known_beat_length: float, exclusion_zones: list) -> list:
+        """找連續 >= min_run_length 個擊點，滿足：
+        1. 相鄰間隔變異係數低於門檻（真的等間隔，不是巧合規律）。
+        2. 間隔要落在全曲已知拍距的某個允許倍數（`ALLOWED_BEAT_MULTIPLES`，
+           預設 1x/2x）± tolerance 範圍內——真的是逐拍或隔拍在打，不是巧合
+           規律但跟拍距對不上的段落（例如拍距的 2.4 倍）。
+        """
+        runs = []
+        for multiple in self.ALLOWED_BEAT_MULTIPLES:
+            runs.extend(
+                self._find_runs_for_multiple(onsets, known_beat_length * multiple, multiple, exclusion_zones)
+            )
+        return runs
+
+    def _find_runs_for_multiple(
+        self, onsets: list, target_len: float, multiple: int, exclusion_zones: list
+    ) -> list:
+        runs = []
+        n = len(onsets)
+        lo_len = target_len * (1.0 - self.beat_length_tolerance_pct)
+        hi_len = target_len * (1.0 + self.beat_length_tolerance_pct)
+
+        i = 0
+        while i < n - self.min_run_length + 1:
+            j = i + 1
+            run_intervals = []
+            while j < n:
+                interval = onsets[j] - onsets[j - 1]
+                if not (lo_len <= interval <= hi_len):
+                    break
+                test_intervals = run_intervals + [interval]
+                if len(test_intervals) >= 2:
+                    arr = np.array(test_intervals)
+                    cv = float(np.std(arr) / np.mean(arr)) if np.mean(arr) > 0 else 1.0
+                    if cv > self.max_interval_cv:
+                        break
+                run_intervals.append(interval)
+                j += 1
+
+            run_len = j - i
+            if run_len >= self.min_run_length:
+                run_onsets = onsets[i:j]
+                if not _window_intersects_exclusion(run_onsets[0], run_onsets[-1], exclusion_zones):
+                    arr = np.array(run_intervals)
+                    runs.append({
+                        "start_time": round(run_onsets[0], 6),
+                        "end_time": round(run_onsets[-1], 6),
+                        "count": run_len,
+                        "cv": round(float(np.std(arr) / np.mean(arr)), 4) if np.mean(arr) > 0 else 0.0,
+                        "mean_interval_sec": round(float(np.mean(arr)), 6),
+                        "multiple": multiple,
+                        "onsets": run_onsets,
+                    })
+                i = j
+            else:
+                i += 1
+        return runs
+
+    def _dedupe_overlaps(self, all_runs: list) -> list:
+        """同一段時間有多個候選都符合時：變異係數最低的優先；同樣乾淨則
+        拍距倍數較小（更直接的逐拍訊號優先於隔拍）；再同樣則依
+        STEM_CANDIDATES 順序（kick > snare > hihat_cymbals）決定優先權，
+        整個鼓軌（無法歸因到具體樂器）優先權最低。"""
+        stem_priority = {key: idx for idx, (key, _) in enumerate(self.STEM_CANDIDATES)}
+        drums_priority = len(self.STEM_CANDIDATES)
+        ordered = sorted(
+            all_runs,
+            key=lambda item: (
+                item[1]["cv"],
+                item[1].get("multiple", 1),
+                stem_priority.get(item[0], drums_priority),
+            ),
+        )
+        accepted = []
+        for stem_key, run in ordered:
+            overlap = any(self._overlaps(run, taken) for _, taken in accepted)
+            if not overlap:
+                accepted.append((stem_key, run))
+        return accepted
+
+    def _overlaps(self, run_a: dict, run_b: dict) -> bool:
+        return run_a["start_time"] <= run_b["end_time"] and run_a["end_time"] >= run_b["start_time"]
+
+    def _resolve_stem_path(self, stem_key: str, rel_path: tuple, stems: dict, stems_dir: str):
+        path = stems.get(stem_key)
+        if not path and stems_dir:
+            candidate_path = os.path.join(stems_dir, *rel_path)
+            if os.path.exists(candidate_path):
+                path = candidate_path
+        if path and os.path.exists(path):
+            return path
+        return None
+
+    def _confirmed_by_whole_track(self, run: dict, whole_drum_onsets: list) -> bool:
+        """細分軌候選的擊點，大多數都要在整個鼓軌裡找到對應的 onset 能量
+        （容差 `whole_track_confirm_tolerance_sec`）——這是比「整軌也要一樣
+        乾淨」更寬鬆的檢查（多樂器疊加天生會讓整軌規律性變差），但至少能
+        排除分離殘留的假訊號：真實混音裡完全沒有對應能量，卻在細分軌裡
+        出現規律擊點的情況。
+
+        Pass 186：原本要求「每一個擊點都要對上」，實測發現真實案例（World
+        is Mine 18.563s-20.014s 的 hi-hat 五連拍）裡，五個擊點有四個跟整軌
+        偵測結果完全對上（誤差 0.000 秒），只有一個因為整軌是多樂器疊加、
+        onset 偵測在那個時間點被同時發生的其他聲音蓋掉而沒抓到獨立峰值——
+        全有全無的判斷把這種「大多數都乾淨對應、只有少數沒抓到獨立峰值」
+        的真實案例也一起拒絕掉了。改成允許最多 `max_unconfirmed_onsets`
+        個擊點沒對上（用絕對數量而不是比例，在候選段長度不同時比較容易
+        預期）。"""
+        whole_arr = np.asarray(whole_drum_onsets, dtype=float)
+        if len(whole_arr) == 0:
+            return False
+        unconfirmed = sum(
+            1 for t in run["onsets"]
+            if np.min(np.abs(whole_arr - t)) > self.whole_track_confirm_tolerance_sec
+        )
+        return unconfirmed <= self.max_unconfirmed_onsets
+
+    def _apply_anchor(self, beats: np.ndarray, timestamps: np.ndarray, run: dict, next_start: float):
+        """把這段連續擊點的第一下快照到最近的拍點，當作 Beat 1 錨點，再從
+        那個格點位置開始往後（含格點本身）用 1-2-3-4 循環重新標號，直到
+        下一個已接受的錨點（next_start）或曲末。找不到對應拍點就放棄。
+
+        Pass 184：改成用「格點位置」（`idx - base_idx`）決定標號，不再用
+        「onset 索引 k」（`(k % 4) + 1`）——舊寫法假設連續擊點對應到連續的
+        拍點格點索引，隔拍型態（`multiple=2`）的擊點會跳過中間的格點，
+        用舊寫法會漏標中間那些格點的標號。新寫法不管 multiple 是 1 還是
+        2，都能正確、連貫地標完整段格點。
+
+        Pass 185：回傳 (beats, protected_start, protected_end)，讓 execute()
+        收集保護區段清單，下游節點不再覆蓋這段相位。"""
+        onsets = run["onsets"]
+        snapped_indexes = []
+        for t in onsets:
+            diffs = np.abs(timestamps - t)
+            idx = int(np.argmin(diffs))
+            if diffs[idx] > self.snap_tolerance_sec:
+                return None, None, None
+            snapped_indexes.append(idx)
+
+        base_idx = snapped_indexes[0]
+        last_touched_idx = base_idx
+        for idx in range(base_idx, len(beats)):
+            if timestamps[idx] >= next_start:
+                break
+            step = idx - base_idx
+            beats[idx, 1] = (step % 4) + 1
+            last_touched_idx = idx
+        return beats, float(timestamps[base_idx]), float(timestamps[last_touched_idx])
+
+
 class DrumFillDetectionNode(BaseNode):
     """
     【鼓過門密集擊點排除區偵測節點】
@@ -1149,8 +1614,12 @@ class KickBassDownbeatVerifierNode(BaseNode):
     - 提取 40-120Hz 低頻大鼓 (Kick) 與貝斯能量
     - 比較小節內 1 號拍與 3 號拍之低頻能量
     - 若發現第 3 拍低頻能量顯著高於當前 1 號拍，自動旋轉 2 拍校正 Downbeat 180 度反相
+
+    Pass 185：尊重 beat_phase_protected_ranges——計算能量平均值時排除保護區段
+    內的 beat，旋轉修正時保護區段內的標號不被改動。
     """
     required_keys = ["beats", "y", "sr"]
+    optional_keys = ["beat_phase_protected_ranges"]
     output_keys = ["beats", "downbeat_fix_report"]
 
     def __init__(self):
@@ -1168,6 +1637,8 @@ class KickBassDownbeatVerifierNode(BaseNode):
         try:
             if y.ndim > 1:
                 y = y.mean(axis=0)
+
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
 
             b, a = scipy.signal.butter(2, [40.0 / (sr / 2), 120.0 / (sr / 2)], btype='bandpass')
             low_y = scipy.signal.filtfilt(b, a, y)
@@ -1189,17 +1660,44 @@ class KickBassDownbeatVerifierNode(BaseNode):
                 "rotated_beat_count": 0,
             }
             if len(downbeat_indices) >= 2:
-                db_energy = float(np.mean(energies[downbeat_indices]))
+                # Pass 185：排除保護區段內的 beat index 來計算能量平均值
+                unprotected_db = np.array([
+                    idx for idx in downbeat_indices
+                    if not _time_in_protected_ranges(float(beats[idx, 0]), protected_ranges)
+                ])
                 beat3_indices = (downbeat_indices + 2) % len(beats)
-                beat3_energy = float(np.mean(energies[beat3_indices]))
+                unprotected_b3 = np.array([
+                    idx for idx in beat3_indices
+                    if not _time_in_protected_ranges(float(beats[idx, 0]), protected_ranges)
+                ])
+
+                # 若所有 downbeat 都在保護區段內，使用全部 index（退化回原本行為）
+                db_calc = unprotected_db if len(unprotected_db) > 0 else downbeat_indices
+                b3_calc = unprotected_b3 if len(unprotected_b3) > 0 else beat3_indices
+
+                db_energy = float(np.mean(energies[db_calc]))
+                beat3_energy = float(np.mean(energies[b3_calc]))
                 report["downbeat_low_freq_energy"] = round(db_energy, 8)
                 report["beat3_low_freq_energy"] = round(beat3_energy, 8)
 
                 if beat3_energy > db_energy * 1.35:
                     fixed_beats = beats.copy()
+                    # Pass 185：先存保護區段內的原始標號
+                    protected_labels = {}
+                    for i in range(len(fixed_beats)):
+                        if _time_in_protected_ranges(float(fixed_beats[i, 0]), protected_ranges):
+                            protected_labels[i] = fixed_beats[i, 1]
+
                     fixed_beats[:, 1] = 0
                     for idx in beat3_indices:
-                        fixed_beats[idx, 1] = 1
+                        # 跳過保護區段內的 index
+                        if idx not in protected_labels:
+                            fixed_beats[idx, 1] = 1
+
+                    # 蓋回保護區段的原始標號
+                    for i, label in protected_labels.items():
+                        fixed_beats[i, 1] = label
+
                     blackboard.set_val("beats", fixed_beats)
                     blackboard.set_val("refined_beats", fixed_beats)
                     report["status"] = "ROTATED"
@@ -1216,19 +1714,39 @@ class KickBassDownbeatVerifierNode(BaseNode):
             return NodeStatus.SUCCESS
 
 
+
 class ViterbiTempoSmoothingNode(BaseNode):
     """
     【基於 BeatNet (ISMIR 2021) 論文：Viterbi 最優路徑拍距平滑衛兵】
     - 套用 Dynamic Programming 最優轉移路徑約束
     - 過濾拍距變異數超過 ±20% 的孤立突變離群拍點 (Outliers)
     - 確保 Click 打點極致流暢平滑
+
+    Pass 180：原本用「跟全曲單一中位數比較」判斷離群值，且修正值疊加在已經
+    被修正過的時間點上（`smoothed_beats[beat_index - 1, 0] + median_interval`）。
+    一整段連續、內部彼此一致但跟全曲中位數不同的拍點（例如
+    `GapReinforcementNode` 補強出的區塊，或任何真正的漸速/漸慢段落），會被
+    整串誤判成離群值，逐拍疊加修正後連鎖漂移，最終被壓縮/搬移到跟原始位置差
+    很多的地方（實測：連續 21 拍從橫跨 14.5 秒被壓縮進 7.2 秒，click track
+    因此出現數秒完全靜音，見
+    docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md 第 4.3.1
+    節）。
+
+    改用局部滾動中位數（前後各 `window_beats` 個拍距，不是全曲單一中位數）
+    判斷離群值——這是 `module3_barstart_v2_bt.BarStartTempoSmoothingNode`
+    （Pass 144）已經驗證過、且在自己的 docstring 裡明確點名 Viterbi 這個
+    全域中位數缺陷的同一套做法：局部中位數會跟著真正的漸速/漸慢或補強區塊
+    的節奏移動，只有真正跟「當下局部脈絡」不符的孤立雜訊才會被修正。每個
+    離群拍點的修正值一律從原始未修改的 `timestamps`/`local_medians` 陣列
+    計算，不疊加在其他已修正的拍點上，避免連鎖漂移。
     """
     required_keys = ["beats"]
     output_keys = ["beats", "smoothing_report"]
 
-    def __init__(self, tolerance_pct: float = 0.20):
+    def __init__(self, tolerance_pct: float = 0.20, window_beats: int = 4):
         super().__init__("ViterbiTempoSmoothingNode")
         self.tolerance_pct = tolerance_pct
+        self.window_beats = window_beats
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("beats")
@@ -1236,28 +1754,48 @@ class ViterbiTempoSmoothingNode(BaseNode):
             return NodeStatus.SUCCESS
 
         try:
+            beats = np.asarray(beats, dtype=float)
+            beats = beats[np.argsort(beats[:, 0])]
             timestamps = beats[:, 0].astype(float)
             intervals = np.diff(timestamps)
-            median_interval = np.median(intervals)
+            valid_mask = np.isfinite(intervals) & (intervals > 0.05)
+            if not np.any(valid_mask):
+                return NodeStatus.SUCCESS
+
+            n = len(intervals)
+            local_medians = np.empty(n, dtype=float)
+            for i in range(n):
+                lo = max(0, i - self.window_beats)
+                hi = min(n, i + self.window_beats + 1)
+                window_vals = intervals[lo:hi][valid_mask[lo:hi]]
+                local_medians[i] = np.median(window_vals) if len(window_vals) else intervals[i]
+
+            deviation = np.abs(intervals - local_medians) / (local_medians + 1e-6)
+            outlier_mask = valid_mask & (deviation > self.tolerance_pct)
 
             smoothed_beats = beats.copy()
-            outlier_count = 0
-
-            for interval_index, curr_int in enumerate(intervals):
-                if abs(curr_int - median_interval) / (median_interval + 1e-6) > self.tolerance_pct:
-                    beat_index = interval_index + 1
-                    smoothed_beats[beat_index, 0] = smoothed_beats[beat_index - 1, 0] + median_interval
-                    outlier_count += 1
+            outlier_indexes = []
+            for interval_index in np.flatnonzero(outlier_mask):
+                beat_index = interval_index + 1
+                # 修正值一律用原始未修改的 timestamps/local_medians 算，不疊加
+                # 在其他已修正的拍點上，避免連鎖漂移（Pass 180 根因）。
+                smoothed_beats[beat_index, 0] = timestamps[interval_index] + local_medians[interval_index]
+                outlier_indexes.append(int(beat_index))
 
             blackboard.set_val("beats", smoothed_beats)
             blackboard.set_val("refined_beats", smoothed_beats)
             blackboard.set_val("smoothing_report", {
                 "total_beats": len(smoothed_beats),
-                "outlier_count": outlier_count,
-                "median_interval_sec": float(median_interval),
+                "outlier_count": len(outlier_indexes),
+                "outlier_indexes": outlier_indexes,
+                "window_beats": self.window_beats,
+                "tolerance_pct": self.tolerance_pct,
             })
-            if outlier_count > 0:
-                print(f"[{self.name}] ⚡ [BeatNet 2021 Viterbi DP] 成功平滑修復 {outlier_count} 個孤立突變離群拍點！")
+            if outlier_indexes:
+                print(
+                    f"[{self.name}] ⚡ [BeatNet 2021 Viterbi DP] 成功平滑修復 "
+                    f"{len(outlier_indexes)} 個孤立突變離群拍點（局部窗口 ±{self.window_beats} 拍）！"
+                )
 
             return NodeStatus.SUCCESS
         except Exception as e:
@@ -1274,6 +1812,7 @@ class BeatGridContinuityRepairNode(BaseNode):
     beats that are far below the expected transition interval.
     """
     required_keys = ["beats"]
+    optional_keys = ["beat_phase_protected_ranges"]
     output_keys = ["beats", "beat_grid_repair_report"]
 
     def __init__(
@@ -1326,7 +1865,8 @@ class BeatGridContinuityRepairNode(BaseNode):
 
             repaired_arr = np.asarray(repaired, dtype=float)
             first_label = int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1
-            repaired_arr = _relabel_beat_numbers(repaired_arr, first_label=first_label)
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
+            repaired_arr = _relabel_beat_numbers(repaired_arr, first_label=first_label, protected_ranges=protected_ranges)
 
             blackboard.set_val("beat_grid_repair_report", {
                 "total_beats_before": int(len(beats)),
@@ -1358,7 +1898,7 @@ class TempoOscillationDampingNode(BaseNode):
     pattern, and skips opening/ending beats plus dense transition zones.
     """
     required_keys = ["beats"]
-    optional_keys = ["snap_exclusion_zones", "drum_fill_regions"]
+    optional_keys = ["snap_exclusion_zones", "drum_fill_regions", "beat_phase_protected_ranges"]
     output_keys = ["beats", "tempo_oscillation_report"]
 
     def __init__(
@@ -1436,9 +1976,11 @@ class TempoOscillationDampingNode(BaseNode):
                 )
                 return NodeStatus.SUCCESS
 
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
             candidate = _relabel_beat_numbers(
                 candidate,
                 first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1,
+                protected_ranges=protected_ranges,
             )
             current_quality = _score_beat_grid_quality(beats)
             candidate_quality = _score_beat_grid_quality(candidate)
@@ -1533,7 +2075,7 @@ class DownbeatPhaseConsistencyNode(BaseNode):
     best phase is adopted only when it clearly improves external alignment.
     """
     required_keys = ["beats"]
-    optional_keys = ["sections", "kick_anchors"]
+    optional_keys = ["sections", "kick_anchors", "beat_phase_protected_ranges"]
     output_keys = ["beats", "downbeat_phase_report"]
 
     def __init__(self, beats_per_bar: int = 4, min_improvement: float = 0.08):
@@ -1549,17 +2091,18 @@ class DownbeatPhaseConsistencyNode(BaseNode):
         try:
             sections = blackboard.get_val("sections", []) or []
             kick_anchors = blackboard.get_val("kick_anchors", [])
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
             current_labels = np.rint(beats[:, 1]).astype(int)
             current_first = int(current_labels[0]) if 1 <= int(current_labels[0]) <= self.beats_per_bar else 1
-            current_score = self._phase_score(beats, current_first, sections, kick_anchors)
+            current_score = self._phase_score(beats, current_first, sections, kick_anchors, protected_ranges)
 
             candidates = []
             for first_label in range(1, self.beats_per_bar + 1):
-                score = self._phase_score(beats, first_label, sections, kick_anchors)
+                score = self._phase_score(beats, first_label, sections, kick_anchors, protected_ranges)
                 candidates.append((score, first_label))
             best_score, best_first = max(candidates, key=lambda item: item[0])
 
-            relabeled = _relabel_beat_numbers(beats, first_label=best_first, beats_per_bar=self.beats_per_bar)
+            relabeled = _relabel_beat_numbers(beats, first_label=best_first, beats_per_bar=self.beats_per_bar, protected_ranges=protected_ranges)
             changed = best_first != current_first and best_score >= current_score + self.min_improvement
             if changed:
                 blackboard.set_val("beats", relabeled)
@@ -1581,8 +2124,8 @@ class DownbeatPhaseConsistencyNode(BaseNode):
             print(f"[{self.name} Warning] 小節相位一致化異常: {e}")
             return NodeStatus.SUCCESS
 
-    def _phase_score(self, beats, first_label: int, sections, kick_anchors) -> float:
-        candidate = _relabel_beat_numbers(beats, first_label=first_label, beats_per_bar=self.beats_per_bar)
+    def _phase_score(self, beats, first_label: int, sections, kick_anchors, protected_ranges=None) -> float:
+        candidate = _relabel_beat_numbers(beats, first_label=first_label, beats_per_bar=self.beats_per_bar, protected_ranges=protected_ranges)
         downbeat_times = candidate[candidate[:, 1] == 1, 0]
         if len(downbeat_times) == 0:
             return 0.0
@@ -1621,7 +2164,7 @@ class KickAnchorConsensusSnapNode(BaseNode):
     against tempo continuity and anchor alignment, and adopted only if it wins.
     """
     required_keys = ["beats"]
-    optional_keys = ["kick_anchors", "sections", "snap_exclusion_zones", "drum_fill_regions"]
+    optional_keys = ["kick_anchors", "sections", "snap_exclusion_zones", "drum_fill_regions", "beat_phase_protected_ranges"]
     output_keys = ["beats", "kick_anchor_snap_report"]
 
     def __init__(self, max_snap_ms: float = 90.0, min_quality_improvement: float = 2.0):
@@ -1675,7 +2218,8 @@ class KickAnchorConsensusSnapNode(BaseNode):
                 return NodeStatus.SUCCESS
 
             candidate = candidate[np.argsort(candidate[:, 0])]
-            candidate = _relabel_beat_numbers(candidate, first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1)
+            protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
+            candidate = _relabel_beat_numbers(candidate, first_label=int(beats[0, 1]) if 1 <= int(beats[0, 1]) <= 4 else 1, protected_ranges=protected_ranges)
             candidate_intervals = np.diff(candidate[:, 0])
             if np.any(candidate_intervals <= median_interval * 0.45):
                 self._write_report(blackboard, beats, candidate, snapped_count, accepted=False, reason="candidate_interval_collision")
@@ -2248,14 +2792,506 @@ def build_beat_tracking_analysis_nodes() -> list:
     ]
 
 
+def _merge_ranges(ranges):
+    ranges = sorted(ranges)
+    merged = []
+    for s, e in ranges:
+        if merged and s <= merged[-1][1] + 1e-6:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def _resolve_stem_path(stems: dict, stems_dir: str, keys: tuple, subdir: str, filenames: tuple):
+    for key in keys:
+        path = stems.get(key)
+        if path and os.path.exists(path):
+            return path
+    if stems_dir:
+        for filename in filenames:
+            candidate = os.path.join(stems_dir, subdir, filename) if subdir else os.path.join(stems_dir, filename)
+            if os.path.exists(candidate):
+                return candidate
+    return None
+
+
+DEFAULT_GAP_REINFORCEMENT_THRESHOLDS = {
+    "confirm_tolerance_sec": 0.06,
+    "window_sec": 4.0,
+    "confirm_ratio_threshold": 0.5,
+    "sample_step_sec": 0.5,
+    "min_segment_sec": 1.5,
+    "gap_pad_sec": 2.0,
+    "improvement_margin": 0.02,
+}
+
+_GAP_REINFORCEMENT_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "gap_reinforcement_thresholds.json"
+)
+
+
+def _load_gap_reinforcement_thresholds(config_path: str = None) -> dict:
+    """讀取 pgm_craft/config/gap_reinforcement_thresholds.json——校準腳本
+    （scripts/calibrate_gap_reinforcement_thresholds.py）更新的是這個檔案，
+    不是這裡的預設值，門檻參數才能在不改程式碼的情況下被校準迴圈調整。"""
+    import json
+    path = config_path or _GAP_REINFORCEMENT_CONFIG_PATH
+    thresholds = dict(DEFAULT_GAP_REINFORCEMENT_THRESHOLDS)
+    if path and os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            for k, v in loaded.items():
+                if k in thresholds:
+                    thresholds[k] = v
+        except Exception as e:
+            print(f"[GapReinforcementNode] 門檻設定檔讀取失敗，改用預設值: {e}")
+    return thresholds
+
+
+def _confidence_segments(beat_times, real_onsets, duration, thresholds):
+    """Pass 177 在多軌審查工具裡實測驗證過的信心評分方法（跨演算法重疊率
+    90-95%）：每一拍附近有沒有真實音頭佐證，滾動窗口內佐證比例低於門檻的
+    區段標記為需要複核。回傳**全曲完整**的 [(start, end, needs_review), ...]，
+    不是只有可疑的部分——跟 scratch/lane_common.py:build_confidence_blocks()
+    邏輯一致，也是 Pass 179 審查工具診斷輸出（blocks.json）的資料來源。"""
+    tol = thresholds["confirm_tolerance_sec"]
+    window = thresholds["window_sec"]
+    ratio_threshold = thresholds["confirm_ratio_threshold"]
+    step = thresholds["sample_step_sec"]
+    min_seg = thresholds["min_segment_sec"]
+
+    if len(beat_times) == 0 or duration <= 0:
+        return []
+
+    beat_times = np.asarray(beat_times, dtype=float)
+    real_onsets = np.asarray(real_onsets, dtype=float) if len(real_onsets) else np.array([])
+
+    confirmed = np.array([
+        bool(len(real_onsets) > 0 and np.min(np.abs(real_onsets - t)) <= tol)
+        for t in beat_times
+    ], dtype=bool)
+
+    times = np.arange(0.0, duration, step)
+    flags = []
+    for t in times:
+        lo, hi = t - window / 2, t + window / 2
+        mask = (beat_times >= lo) & (beat_times < hi)
+        window_beats = confirmed[mask]
+        if len(window_beats) == 0:
+            flags.append(True)
+            continue
+        flags.append(float(np.mean(window_beats)) < ratio_threshold)
+
+    raw_segments = []
+    seg_start_idx = 0
+    for i in range(1, len(times) + 1):
+        if i == len(times) or flags[i] != flags[seg_start_idx]:
+            seg_end = duration if i == len(times) else times[i]
+            raw_segments.append((float(times[seg_start_idx]), float(seg_end), flags[seg_start_idx]))
+            seg_start_idx = i
+
+    merged = []
+    for s, e, flag in raw_segments:
+        if merged and (e - s) < min_seg:
+            merged[-1] = (merged[-1][0], e, merged[-1][2])
+        else:
+            merged.append((s, e, flag))
+
+    final = []
+    for s, e, flag in merged:
+        if final and final[-1][2] == flag:
+            final[-1] = (final[-1][0], e, flag)
+        else:
+            final.append((s, e, flag))
+    return final
+
+
+def _confirmation_gap_ranges(beat_times, real_onsets, duration, thresholds):
+    """需要強化的區段（見 _confidence_segments）——只取 needs_review=True 的部分。"""
+    return [(s, e) for s, e, flag in _confidence_segments(beat_times, real_onsets, duration, thresholds) if flag]
+
+
+class GapReinforcementNode(BaseNode):
+    """Pass 178: V1 骨架 + 逐輪疊加證據，只對 BeatFusionArbitratorNode 融合後
+    信心不足的缺口區段補強重建，其餘已確信的拍點原封不動保留。
+
+    設計文件：docs/PASS-176-V3-GAP-REINFORCEMENT-TASK.md、
+    docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md。
+
+    缺口偵測用兩種訊號的聯集：
+    1. `beat_fusion_report["track_b_spans"]`（`BeatFusionArbitratorNode`
+       已經算好、免費的能量門檻判斷）。
+    2. 音頭確認比例信心評分（`_confirmation_gap_ranges`，Pass 177 在審查
+       工具的 Lane1-5 實測驗證過）——抓出 `track_b_spans` 純能量判斷漏掉
+       的區段，例如能量正常但拍點其實對不上真實音頭的段落。
+
+    逐輪疊加證據（鼓已經是原本的骨幹，不算一輪）：
+    第1輪 +貝斯 → 第2輪 +和弦 → 第3輪 +旋律 → 第4輪 完整無人聲混音直接
+    分析（不是分軌疊加——Pass 177 Lane5 實測發現分軌疊加的合成 onset
+    envelope 會漏掉真正混音才有的聲學交互作用）。每輪達到信心門檻就停止
+    疊加、採用該輪結果；都不夠則保留原始融合結果不變，不冒然採用。
+
+    相位（第 1 拍標籤）修正刻意不在這裡處理——這個節點放在
+    `build_beat_refinement_nodes()` 最前面、`DownbeatRefineNode` 之前，讓
+    既有的相位精修鏈直接對這裡補強出來的拍點也生效，不重新發明一套相位
+    判斷邏輯（對應 Pass 177 發現的 fail_phase 缺口：Lane1-5 的拍號只是
+    循環硬編號，沒有真正的 downbeat 判斷能力）。
+
+    品質守門：補強後的拍點在缺口區段的音頭確認比例，沒有比原始融合結果
+    的比例（加上 `improvement_margin` 容錯）更好，就整段退回原始結果。
+
+    Pass 178 第一次真實資料回歸測試（《World is Mine》，見
+    docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md 第 4
+    節）發現：這個節點目前的品質守門只看缺口區段自己局部的音頭確認比例，
+    沒有檢查補強出的拍點跟前後「已確信」網格的節奏是否連貫——實測結果整體
+    比黃金基準退步（小節數少 12 vs. 停用時只少 4；BPM 跳動 6 次 vs. 停用時
+    0 次），代表局部看起來合理的補強，可能在跟周邊網格銜接時引入節奏不連
+    貫，現有的品質守門抓不到這種「局部對、整體不連貫」的退步。**預設關閉
+    （enabled=False），直到補上跟周邊網格的連貫性檢查、重新驗證過為止**，
+    不要因為節點裝進去了就假設它有幫助——這正是這個專案對 BarStart v2 用的
+    「比較但不升格」原則，這裡沿用同一個保守態度。校準/複核流程要繼續測試
+    這個節點時，明確傳入 enabled=True。
+    """
+
+    required_keys = ["beats", "beat_fusion_report"]
+    optional_keys = ["stems", "stems_dir", "y_rhythm", "sr_rhythm"]
+    output_keys = ["beats", "refined_beats", "gap_reinforcement_report"]
+
+    def __init__(self, config_path: str = None, enabled: bool = False):
+        super().__init__("GapReinforcementNode")
+        self.thresholds = _load_gap_reinforcement_thresholds(config_path)
+        self.enabled = enabled
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if not self.enabled:
+            blackboard.set_val("gap_reinforcement_report", {"status": "DISABLED_PENDING_VALIDATION"})
+            return NodeStatus.SUCCESS
+
+        beats = blackboard.get_val("beats")
+        if beats is None or len(beats) == 0:
+            return NodeStatus.SUCCESS
+        beats = np.asarray(beats, dtype=float)
+
+        fusion_report = blackboard.get_val("beat_fusion_report", {}) or {}
+        stems = blackboard.get_val("stems", {}) or {}
+        stems_dir = blackboard.get_val("stems_dir", "")
+
+        kick_path = _resolve_stem_path(stems, stems_dir, ("kick",), "drums", ("kick.wav",))
+        snare_path = _resolve_stem_path(stems, stems_dir, ("snare",), "drums", ("snare.wav",))
+        drum_y, sr = self._load_drum_signal(kick_path, snare_path)
+        if drum_y is None:
+            blackboard.set_val("gap_reinforcement_report", {"status": "SKIPPED_NO_DRUM_STEM"})
+            return NodeStatus.SUCCESS
+
+        duration = len(drum_y) / float(sr)
+        drum_onsets = self._onset_detect(drum_y, sr)
+
+        gaps = _merge_ranges(
+            [(s["start_time"], s["end_time"]) for s in (fusion_report.get("track_b_spans") or [])
+             if "start_time" in s and "end_time" in s]
+            + _confirmation_gap_ranges(beats[:, 0], drum_onsets, duration, self.thresholds)
+        )
+        if not gaps:
+            blackboard.set_val("gap_reinforcement_report", {"status": "NO_GAPS", "gap_count": 0})
+            self._export_diagnostic(blackboard, beats, drum_onsets, duration)
+            return NodeStatus.SUCCESS
+
+        bass_path = _resolve_stem_path(
+            stems, stems_dir, ("sub_bass_808", "electric_bass", "bass"), "bass",
+            ("synth_bass_808.wav", "electric_bass.wav", "bass.wav"),
+        )
+        instrumental_path = _resolve_stem_path(
+            stems, stems_dir, ("no_vocals", "instrumental"), "", ("no_vocals.wav", "instrumental.wav"),
+        )
+
+        reinforced_beats, gap_reports = self._reinforce_gaps(
+            beats, gaps, drum_y, sr, bass_path, stems, stems_dir, instrumental_path
+        )
+
+        # 品質守門用的中性音頭真相：優先用完整無人聲混音本身的 onset（Lane5
+        # 驗證過最能代表真實聲學事件的單一來源），不是只用鼓聲——缺口本來就
+        # 是鼓聲不足/沒有的地方，只拿鼓聲 onset 當真相會讓補強永遠測不出有沒有
+        # 真的變好（缺口裡本來就沒有鼓聲可以確認）。沒有完整混音時才退回鼓聲。
+        ground_truth_onsets = drum_onsets
+        if instrumental_path and os.path.exists(instrumental_path):
+            try:
+                y_i, sr_i = sf.read(instrumental_path)
+                y_i = _to_mono(y_i)
+                if sr_i != sr:
+                    import librosa
+                    y_i = librosa.resample(y_i, orig_sr=sr_i, target_sr=sr)
+                ground_truth_onsets = self._onset_detect(y_i, sr)
+            except Exception:
+                pass
+
+        improved = self._is_improvement(beats, reinforced_beats, gaps, ground_truth_onsets, self.thresholds)
+
+        report = {
+            "status": "APPLIED" if improved else "REJECTED_NOT_BETTER",
+            "gap_count": len(gaps),
+            "gaps": gap_reports,
+            "thresholds": self.thresholds,
+        }
+        if improved:
+            blackboard.set_val("beats", reinforced_beats)
+            blackboard.set_val("refined_beats", reinforced_beats)
+        blackboard.set_val("gap_reinforcement_report", report)
+        self._export_diagnostic(
+            blackboard, reinforced_beats if improved else beats, ground_truth_onsets, duration
+        )
+        print(f"[{self.name}] 缺口強化：{len(gaps)} 段，{'已採用' if improved else '未改善，保留原始融合結果'}。")
+        return NodeStatus.SUCCESS
+
+    def _export_diagnostic(self, blackboard, final_beats, ground_truth_onsets, duration):
+        """Pass 179：落盤成審查工具（scratch/gap_review_server.py）原生看得懂
+        的 blocks.json/beats.json 格式，讓正式生產的輸出可以直接被複核，不需要
+        scratch 腳本重跑——見 docs/PASS-179-GAP-REINFORCEMENT-DIAGNOSTIC-
+        EXPORT-TASK.md。沒有 project_dir（例如單元測試環境）時安全跳過，不影響
+        節點本身的結果。"""
+        project_dir = blackboard.get_val("project_dir")
+        if not project_dir:
+            return
+        try:
+            import json
+            segments = _confidence_segments(final_beats[:, 0], ground_truth_onsets, duration, self.thresholds)
+            blocks = [
+                {"id": f"seg-{i}", "start": round(float(s), 3), "end": round(float(e), 3), "needs_review": bool(flag)}
+                for i, (s, e, flag) in enumerate(segments)
+            ]
+            times = final_beats[:, 0]
+            intervals = np.diff(times)
+            tempo = float(60.0 / np.median(intervals)) if len(intervals) else 0.0
+
+            out_dir = os.path.join(project_dir, "reports", "gap_reinforcement")
+            os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, "blocks.json"), "w", encoding="utf-8") as f:
+                json.dump(blocks, f, ensure_ascii=False, indent=2)
+            with open(os.path.join(out_dir, "beats.json"), "w", encoding="utf-8") as f:
+                json.dump({"tempo": tempo, "beats": final_beats.tolist()}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[{self.name}] 診斷輸出落盤失敗（不影響節點本身結果）: {e}")
+
+    def _load_drum_signal(self, kick_path, snare_path):
+        import librosa
+        signals = []
+        sr = None
+        for path in (kick_path, snare_path):
+            if not path or not os.path.exists(path):
+                continue
+            y, this_sr = sf.read(path)
+            y = _to_mono(y)
+            if sr is None:
+                sr = this_sr
+            elif this_sr != sr:
+                y = librosa.resample(y, orig_sr=this_sr, target_sr=sr)
+            signals.append(y)
+        if not signals:
+            return None, None
+        n = max(len(s) for s in signals)
+        combined = np.zeros(n)
+        for s in signals:
+            combined[:len(s)] += s
+        return combined, sr
+
+    def _onset_detect(self, y, sr):
+        import librosa
+        return librosa.onset.onset_detect(y=y, sr=sr, units="time")
+
+    def _tier_signals(self, gap_start, gap_end, drum_y, sr, bass_path, stems, stems_dir, instrumental_path):
+        """依序 yield (tier_name, onset_env, real_onsets, win_start) 供逐輪
+        疊加使用。每輪都只在 [gap_start-pad, gap_end+pad] 這個窗口內計算，
+        不是重新分析全曲。"""
+        import librosa
+        from pgm_craft.workflow.module3_barstart_v2_bt import ChordMelodyOnsetSplitNode, VocalMelodyEvidenceExtractNode
+
+        pad = self.thresholds["gap_pad_sec"]
+        win_start = max(0.0, gap_start - pad)
+        win_end = gap_end + pad
+        start_idx = int(win_start * sr)
+        end_idx = min(len(drum_y), int(win_end * sr))
+        if end_idx <= start_idx:
+            return
+
+        drum_window = drum_y[start_idx:end_idx]
+        drum_real_onsets = librosa.onset.onset_detect(y=drum_window, sr=sr, units="time") + win_start
+
+        # 第1輪：+貝斯
+        bass_y = None
+        if bass_path and os.path.exists(bass_path):
+            y, bsr = sf.read(bass_path)
+            y = _to_mono(y)
+            if bsr != sr:
+                y = librosa.resample(y, orig_sr=bsr, target_sr=sr)
+            bass_y = y[min(len(y), start_idx):min(len(y), end_idx)]
+        if bass_y is not None and len(bass_y) > 0:
+            n = max(len(drum_window), len(bass_y))
+            combined = np.zeros(n)
+            combined[:len(drum_window)] += drum_window
+            combined[:len(bass_y)] += bass_y
+            env = librosa.onset.onset_strength(y=combined, sr=sr)
+            bass_onsets = librosa.onset.onset_detect(y=bass_y, sr=sr, units="time") + win_start
+            yield "drum_bass", env, np.concatenate([drum_real_onsets, bass_onsets]), win_start
+
+        # 第2/3輪：+和弦 / +旋律（重用既有的吉他/鋼琴/人聲 onset 分類邏輯，不重新發明）
+        chord_times, melody_times = [], []
+        chord_node = ChordMelodyOnsetSplitNode()
+        for instrument, folder in (("guitar", "guitars"), ("piano", "pianos")):
+            path = _resolve_stem_path(stems, stems_dir, (instrument,), folder, (f"{instrument}.wav",))
+            if not path:
+                continue
+            try:
+                chord_anchors, melody_anchors = chord_node._split_onsets(path)
+                chord_times.extend(a["time"] for a in chord_anchors)
+                melody_times.extend(a["time"] for a in melody_anchors)
+            except Exception:
+                pass
+
+        vocal_path = _resolve_stem_path(
+            stems, stems_dir, ("lead_vocal", "vocals_debreathed", "vocals"), "vocals",
+            ("lead_vocal.wav", "vocals_debreathed.wav", "vocals.wav"),
+        )
+        vocal_times = []
+        if vocal_path:
+            try:
+                vocal_times = [a["time"] for a in VocalMelodyEvidenceExtractNode()._extract_onsets(vocal_path)]
+            except Exception:
+                pass
+
+        hop_length = 512
+        chord_in_win = [t for t in chord_times if win_start <= t < win_end]
+        if chord_in_win:
+            env = librosa.onset.onset_strength(y=drum_window, sr=sr).copy()
+            for t in chord_in_win:
+                frame = int(round((t - win_start) * sr / hop_length))
+                if 0 <= frame < len(env):
+                    env[frame] += 3.0
+            yield "chord", env, np.concatenate([drum_real_onsets, np.array(chord_in_win)]), win_start
+
+        melody_in_win = [t for t in (melody_times + vocal_times) if win_start <= t < win_end]
+        if melody_in_win:
+            env = librosa.onset.onset_strength(y=drum_window, sr=sr).copy()
+            for t in melody_in_win:
+                frame = int(round((t - win_start) * sr / hop_length))
+                if 0 <= frame < len(env):
+                    env[frame] += 3.0
+            yield "melody", env, np.concatenate([drum_real_onsets, np.array(melody_in_win)]), win_start
+
+        # 第4輪：完整無人聲混音直接分析，不是分軌疊加（Pass 177 Lane5 驗證過的做法）
+        if instrumental_path and os.path.exists(instrumental_path):
+            y, isr = sf.read(instrumental_path)
+            y = _to_mono(y)
+            if isr != sr:
+                y = librosa.resample(y, orig_sr=isr, target_sr=sr)
+            inst_window = y[min(len(y), start_idx):min(len(y), end_idx)]
+            if len(inst_window) > 0:
+                env = librosa.onset.onset_strength(y=inst_window, sr=sr)
+                real = librosa.onset.onset_detect(y=inst_window, sr=sr, units="time") + win_start
+                yield "full_instrumental", env, real, win_start
+
+    def _reinforce_gaps(self, beats, gaps, drum_y, sr, bass_path, stems, stems_dir, instrumental_path):
+        import librosa
+
+        tol = self.thresholds["confirm_tolerance_sec"]
+        ratio_threshold = self.thresholds["confirm_ratio_threshold"]
+
+        kept = [row for row in beats if not any(s <= row[0] < e for s, e in gaps)]
+        inserted = []
+        gap_reports = []
+
+        for gap_start, gap_end in gaps:
+            best = None  # (candidate_times, ratio, tier_name)
+            for tier_name, onset_env, real_onsets, win_start in self._tier_signals(
+                gap_start, gap_end, drum_y, sr, bass_path, stems, stems_dir, instrumental_path
+            ):
+                _, beat_frames = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, units="frames")
+                candidate_times = librosa.frames_to_time(beat_frames, sr=sr) + win_start
+                in_gap = [float(t) for t in candidate_times if gap_start <= t < gap_end]
+                if not in_gap:
+                    continue
+                ratio = self._confirm_ratio(in_gap, real_onsets, tol)
+                if best is None or ratio > best[1]:
+                    best = (in_gap, ratio, tier_name)
+                if ratio >= ratio_threshold:
+                    break
+
+            if best and best[1] >= ratio_threshold:
+                inserted.extend(best[0])
+                gap_reports.append({
+                    "start": round(gap_start, 3), "end": round(gap_end, 3),
+                    "tier_used": best[2], "confirm_ratio": round(best[1], 3), "status": "REINFORCED",
+                })
+            else:
+                kept.extend([row for row in beats if gap_start <= row[0] < gap_end])
+                gap_reports.append({
+                    "start": round(gap_start, 3), "end": round(gap_end, 3),
+                    "tier_used": best[2] if best else None,
+                    "confirm_ratio": round(best[1], 3) if best else 0.0,
+                    "status": "INSUFFICIENT_EVIDENCE_KEPT_ORIGINAL",
+                })
+
+        merged_times = sorted(set(float(row[0]) for row in kept) | set(inserted))
+        return self._relabel(kept, merged_times), gap_reports
+
+    def _confirm_ratio(self, candidate_times, real_onsets, tol):
+        if not len(candidate_times):
+            return 0.0
+        real_onsets = np.asarray(real_onsets, dtype=float) if len(real_onsets) else np.array([])
+        if len(real_onsets) == 0:
+            return 0.0
+        confirmed = sum(1 for t in candidate_times if np.min(np.abs(real_onsets - t)) <= tol)
+        return confirmed / len(candidate_times)
+
+    def _relabel(self, kept_rows, merged_times):
+        """已確信（kept）的拍點沿用它原本的拍號，不重新編號；新補強
+        （inserted）的拍點接續前一個拍號的循環往後推——缺口銜接處的相位
+        比 scratch 版本單純從 1 重新編號更連續，但仍不是真正的 downbeat
+        判斷，那是後面 DownbeatRefineNode 的工作。"""
+        kept_label_by_time = {round(float(r[0]), 6): int(r[1]) for r in kept_rows}
+        result = []
+        last_label = None
+        for t in merged_times:
+            rt = round(float(t), 6)
+            if rt in kept_label_by_time:
+                label = kept_label_by_time[rt]
+            else:
+                label = (last_label % 4) + 1 if last_label is not None else 1
+            result.append([rt, label])
+            last_label = label
+        return np.array(result)
+
+    def _is_improvement(self, original_beats, reinforced_beats, gaps, ground_truth_onsets, thresholds):
+        tol = thresholds["confirm_tolerance_sec"]
+        margin = thresholds["improvement_margin"]
+
+        def ratio_in_gaps(beats_arr):
+            times = [float(row[0]) for row in beats_arr if any(s <= row[0] < e for s, e in gaps)]
+            return self._confirm_ratio(times, ground_truth_onsets, tol) if times else 0.0
+
+        return ratio_in_gaps(reinforced_beats) >= ratio_in_gaps(original_beats) + margin
+
+
 def build_beat_refinement_nodes() -> list:
     """Common post-fusion beat guard nodes used by full PGM and Module 3."""
     from pgm_craft.workflow.audio_nodes import BeatValidationNode, DownbeatRefineNode
     return [
+        # enabled=False: Pass 178 real-audio A/B regression (World is Mine) showed this
+        # node currently makes results WORSE than the V1-only baseline (measures -12 vs
+        # -4, BPM jumps 6 vs 0 -- see docs/PASS-178-...-TASK.md sec. 4). Wired into the
+        # pipeline so the diagnostic export / calibration loop keep working, but inert
+        # by default until it gets a surrounding-grid tempo-consistency check and is
+        # re-validated. Pass enabled=True explicitly to test it.
+        GapReinforcementNode(),
         ReEntryReAnchoringNode(),
         BeatValidationNode(),
         DownbeatRefineNode(),
         DrumFillDetectionNode(),
+        # Pass 181: 放在 DrumFillDetectionNode 之後，才能真的讀到
+        # snap_exclusion_zones/drum_fill_regions 當雙重保險；仍在
+        # OnsetPhaseRealignmentNode 等相位/節奏精修節點之前，讓後續節點
+        # 承接這裡校正過的拍號。見 docs/PASS-181-...-TASK.md。
+        SteadyPercussionCountAnchorNode(),
         OnsetPhaseRealignmentNode(),
         MicroTimingTransientSnapNode(search_window_ms=35.0),
         KickBassDownbeatVerifierNode(),

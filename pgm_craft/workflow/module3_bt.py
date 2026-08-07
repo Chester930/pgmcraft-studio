@@ -1343,14 +1343,20 @@ def build_module3_export_tree() -> SequenceNode:
     ])
 
 
-def build_module3_pipeline_tree() -> SequenceNode:
-    """Builds the Module 3 chord/click test project pipeline."""
+def build_module3_pipeline_tree(stem_mode: str = "full") -> SequenceNode:
+    """Builds the Module 3 chord/click test project pipeline.
+
+    stem_mode is forwarded to OptionalStemSeparationNode: 'full' (default, used by
+    target_stage="module3") runs the complete stem separation tree; 'beat_only' (used
+    by build_module3_barstart_v2_pipeline_tree()) runs the lightweight beat-analysis-only
+    tree instead.
+    """
     from pgm_craft.workflow.module3_barstart_v2_bt import TwoWayAnchorBacktraceNode
 
     return SequenceNode("Module3BeatClickRoot", [
         build_input_acquisition_tree(),
         build_audio_quality_tree(),
-        OptionalStemSeparationNode(),
+        OptionalStemSeparationNode(mode=stem_mode),
         CandidateTrackBuildNode(),
         *build_beat_tracking_preparation_nodes(),
         *build_beat_tracking_analysis_nodes(),

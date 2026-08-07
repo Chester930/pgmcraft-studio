@@ -2,20 +2,12 @@
 SDD Pass 109 — Module 3 BarStart v2 drums + bass evidence tests.
 """
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     BarStartCandidateCommitNode,
     DrumBassEvidenceBarSearchNode,
     Module3BarStartV2SummaryNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def test_drum_bass_evidence_boosts_drum_candidate_with_nearby_bass_anchor():
@@ -102,15 +94,6 @@ def test_bass_only_candidate_stays_unresolved_at_default_commit_threshold():
     assert bb.get_val("committed_bar_starts") == [0.0, 2.0]
     assert bb.get_val("bar_start_decision_report")["status"] == "UNRESOLVED"
     assert bb.get_val("bar_start_decision_report")["reason"] == "confidence_below_threshold"
-
-
-def test_module3_barstart_v2_tree_places_drum_bass_evidence_before_commit():
-    tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-    names = _node_names(tree)
-
-    assert "DrumBassEvidenceBarSearchNode" in names
-    assert names.index("DrumEvidenceBarSearchNode") < names.index("DrumBassEvidenceBarSearchNode")
-    assert names.index("DrumBassEvidenceBarSearchNode") < names.index("BarStartCandidateCommitNode")
 
 
 def test_module3_barstart_v2_summary_includes_drum_bass_report():

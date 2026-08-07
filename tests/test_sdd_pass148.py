@@ -33,19 +33,11 @@ import tempfile
 import numpy as np
 import soundfile as sf
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     BassEvidenceExtractNode,
     DrumBassEvidenceBarSearchNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus, SequenceNode
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def _bass_pulse_wav(path, pulse_times, sr=22050, dur=8.0):
@@ -155,17 +147,6 @@ class TestDownstreamConsumerReceivesRealAnchors:
 
 
 class TestPipelineWiring:
-
-    def test_module3_barstart_v2_pipeline_includes_bass_node_before_split_and_loop(self):
-        tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-        names = _node_names(tree)
-        assert "BassEvidenceExtractNode" in names
-        assert (
-            names.index("ManualCommittedBarStartsSeedNode")
-            < names.index("BassEvidenceExtractNode")
-            < names.index("ChordMelodyOnsetSplitNode")
-            < names.index("FullSongBarStartLoopNode")
-        )
 
     def test_module3_merge_node_core_chain_includes_bass_node(self, tmp_path):
         """Module3BarStartV2MergeNode builds its v2 core chain lazily inside

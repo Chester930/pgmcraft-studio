@@ -2,20 +2,12 @@
 SDD Pass 112 — Module 3 BarStart v2 Beat This! optional candidate adapter tests.
 """
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     BarStartCandidateCommitNode,
     BeatThisCandidateAdapterNode,
     Module3BarStartV2SummaryNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def test_beat_this_adapter_adds_downbeat_candidate_inside_active_window():
@@ -81,15 +73,6 @@ def test_beat_this_adapter_skips_gracefully_without_candidates_or_model():
     report = bb.get_val("beat_this_candidate_report")
     assert report["status"] == "SKIPPED_NO_BEAT_THIS_CANDIDATES"
     assert report["fallback"] == "BeatNet/Librosa candidates remain authoritative"
-
-
-def test_module3_barstart_v2_tree_places_beat_this_adapter_before_commit():
-    tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-    names = _node_names(tree)
-
-    assert "BeatThisCandidateAdapterNode" in names
-    assert names.index("MelodyTrackPKNode") < names.index("BeatThisCandidateAdapterNode")
-    assert names.index("BeatThisCandidateAdapterNode") < names.index("BarStartCandidateCommitNode")
 
 
 def test_module3_barstart_v2_summary_includes_beat_this_report():

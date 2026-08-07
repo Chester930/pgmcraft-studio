@@ -605,3 +605,378 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 - 新增規劃節點：`ReliableBarAnchorNode`、`NoDrumPhaseCarryNode`、`LookaheadDrumAnchorSearchNode`、`InterveningBarCountEstimatorNode`、`BidirectionalBarAlignmentNode`、`TransitionConfidenceNode`。
 - 驗收：4 小節無鼓段、pickup、弱拍進鼓、tempo 漂移、lookahead pending 五組案例。
 - 狀態：第一版已實作並通過 6 項 SDD 測試；仍維持 v2 experimental，不替換既有 `module3`。
+
+### Pass 178：GapReinforcementNode 正式整合（V3 = V1 骨架 + 逐輪疊加證據）
+
+- 目標：把 Pass 176 設計、Pass 177 在多軌審查工具（scratch Lane1-5）實測驗證過
+  （跨演算法重疊率 90-95%）的「逐輪疊加證據，只補救信心不足的缺口」機制，
+  正式整合進 V1 產線，成為 `BeatFusionArbitratorNode` 之後、精修守衛鏈最前面
+  的新節點，同時保留人工微調校準迴圈，跟正式生產職責分離。
+- 新增節點：`GapReinforcementNode`（`pgm_craft/workflow/beat_tracking_bt.py`），
+  放在 `build_beat_refinement_nodes()` 最前面、`DownbeatRefineNode` 之前——刻意
+  不在節點內處理相位修正，讓既有相位精修鏈直接對補強出的拍點生效（對應 Pass
+  177 發現的 `fail_phase` 缺口）。
+- 缺口偵測：`beat_fusion_report["track_b_spans"]` 聯集音頭確認比例信心評分
+  （`_confirmation_gap_ranges`，跟 `scratch/lane_common.py:build_confidence_
+  blocks()` 邏輯一致）。
+- 逐輪疊加：+貝斯 → +和弦 → +旋律 → 完整無人聲混音直接分析（第 4 輪是 Pass 177
+  Lane5 驗證後新增的，抓分軌疊加 onset 漏掉的聲學交互作用），複用
+  `ChordMelodyOnsetSplitNode` / `VocalMelodyEvidenceExtractNode` 既有 onset
+  抽取邏輯，不重新發明。
+- 缺口銜接：已確信（kept）的拍點沿用原本拍號，新補強（inserted）的拍點接續前
+  一個拍號的循環往後推，比單純模除重編更連續。
+- 品質守門：補強後在缺口區段的音頭確認比例，優先用完整無人聲混音本身的 onset
+  當中性真相（沒有才退回鼓聲），沒有比原始融合結果更好（+ `improvement_margin`
+  容錯）就整段退回原始結果。
+- 門檻參數外部化：`pgm_craft/config/gap_reinforcement_thresholds.json`，供
+  `scripts/calibrate_gap_reinforcement_thresholds.py` 讀累積的人工標記資料
+  （假陽性/假陰性率）提出調整建議（不自動套用）。
+- 測試：`tests/test_sdd_pass178.py`，3 項合成音訊測試全過（無缺口不動拍點、
+  有貝斯證據時正確補強、完全沒證據時安全退回原始結果）；既有 Stage 3 相關
+  測試（`test_sdd_pass23/28/42/102/103/104/141`、`test_commercial_beat_
+  quality`）共 38 項全數通過，插入新節點沒有造成任何回歸。
+- 狀態：正式產線邏輯已實作並通過單元測試；黃金基準真實資料回歸比對已於後續
+  補做，結果為負面，詳見下方「Pass 178（續）」條目。
+
+### Pass 179：GapReinforcementNode 診斷輸出落盤，接通校準迴圈
+
+- 目標：補上 Pass 178 設計文件寫了、但實作時漏掉的一塊——沒有這一塊，校準迴圈
+  完全接不上正式生產迴圈，人工標記永遠餵不到門檻調整。
+- 重構：把 `_confirmation_gap_ranges` 拆出共用的 `_confidence_segments`，回傳
+  **全曲完整**的 `[(start, end, needs_review), ...]`（不是只有可疑區段），同時
+  供缺口偵測（濾出 `needs_review=True`）跟新的診斷輸出（全部保留）使用。
+- 新增 `GapReinforcementNode._export_diagnostic()`：對最終決定採用的 beats
+  （`APPLIED` 用補強後的、`REJECTED_NOT_BETTER` 用原始融合結果）套用信心評分，
+  落盤 `reports/gap_reinforcement/blocks.json`（`[{id,start,end,needs_review}]`）
+  與 `beats.json`（`{tempo,beats}`），格式跟審查工具原生格式完全一致。沒有
+  `project_dir` 時安全跳過，不影響節點本身結果。
+- `scratch/gap_review_server.py:discover_lanes()` 新增 `gap_reinforcement` Lane
+  來源：偵測到 `reports/gap_reinforcement/blocks.json` 就加一條 Lane，**音檔
+  沿用「目前管線 (V1)」那條的 `mix_with_click.wav`**，不另外渲染——補強出的
+  拍點最終會流進同一條 pipeline、變成同一份音檔的一部分，不是獨立產物。
+- 測試：`tests/test_sdd_pass179.py` 3 項全過（落盤格式相容性、沒有
+  project_dir 時安全跳過、無缺口情境也照樣落盤）；`test_sdd_pass178.py` 3 項
+  重跑確認重構沒有回歸；手動驗證 `discover_lanes()` 正確找到新 Lane 且音檔
+  路徑跟 `current` 共用。
+- 狀態：完成，兩條迴圈（正式生產 / 人工校準）現在真的接通了。
+
+### Pass 178（續）：真實資料 A/B 回歸測試 —— 發現負面結果，改為預設關閉
+
+- 背景：Pass 178/179 完成後，在真實來源音訊（ryo「World is Mine」，
+  `target_stage="module3"`）上跑了一次啟用 `GapReinforcementNode` 的完整管線
+  回歸，並額外補跑一組停用該節點的對照組，做嚴謹的 A/B 比較（而不是只跟黃金
+  基準單邊比）。
+- **結果（誠實記錄，不是正面結果）**：處理組（啟用）小節數 109（黃金基準
+  121，差 -12；對照組 117，差 -4），BPM 跳動 6 次（黃金基準/對照組皆 0 次），
+  不規則小節 1 個（黃金基準/對照組皆 0 個）。節點自身的品質守門日誌顯示「缺口
+  強化：7 段，已採用」——也就是說，局部守門認為補強有幫助，但套用到完整管線
+  後，整體結果在每一項指標上都比黃金基準、也比完全不跑這個節點的對照組更差。
+- 根因：`_is_improvement` 品質守門只檢查缺口區段**局部**的音頭確認比例，沒有
+  檢查補強出的拍點跟缺口前後「已確信」網格的節奏是否連貫——這正是 Pass 176
+  設計文件規劃要用 `BidirectionalBarAlignmentNode` / `TwoWayAnchorBacktraceNode`
+  做雙向錨定的部分，但 Pass 178 實作時只做了局部標籤延續，沒有真正做跨邊界的
+  連貫性驗證，設計文件跟實作之間的落差直到真實資料測試才暴露出來。
+- 處理：`GapReinforcementNode.__init__` 新增 `enabled: bool = False`，預設
+  關閉時 `execute()` 直接空操作（`{"status": "DISABLED_PENDING_VALIDATION"}`），
+  不修改 beats；節點仍掛在管線裡（診斷輸出、校準迴圈基礎設施保持可用），但
+  預設不執行實際補強。這跟這個專案對 BarStart v2 既有的「比較但不升格」原則
+  一致。校準/複核流程要繼續測試時，明確傳入 `enabled=True`。
+- 測試：`tests/test_sdd_pass178.py` 新增 `test_disabled_by_default_is_a_noop`
+  （4 項全過）；`tests/test_sdd_pass179.py` 3 項改為顯式 `enabled=True` 後
+  重跑仍全過；既有 Stage 3 相關回歸測試（`test_commercial_beat_quality` +
+  `test_sdd_pass23/28/42/102/103/104/141`，共 38 項）重跑全數通過，確認加入
+  `enabled` 開關沒有破壞既有行為。
+- 尚未完成：缺口補強跟周邊網格的節奏連貫性檢查（重新啟用前的前提）；累積更多
+  首歌的真人複核校準資料（目前只有這一首歌有真實複核紀錄）；長期的
+  「V1 legacy vs V3 預設」升格閘門設計。詳見
+  `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第 4 節。
+
+### Pass 178（續二）：實際試聽揪出更嚴重的問題 —— ViterbiTempoSmoothingNode 誤刪整段拍點
+
+- 背景：使用者實際試聽處理組的 `mix_with_click.wav` 後回報 7.1s-13.5s、
+  16.1s-19.2s 兩段完全沒有 click 聲（累計約 9.5 秒）——比先前用統計數字抓到的
+  BPM 跳動更嚴重，不是「拍點跟音樂對不上」，是「拍點整段消失」。這證實了單靠
+  黃金基準/自我一致性統計數字並不足夠，人耳試聽抓到了數字沒抓到的真實缺陷。
+- 追查方法：比對 `GapReinforcementNode` 自己匯出的診斷紀錄
+  （`reports/gap_reinforcement/beats.json`），確認它執行完畢當下 4.4s-21.8s
+  這段其實有連續規律的拍點（433 個）——證明消失不是 GapReinforcementNode 自己
+  刪的。接著把這 433 個真實拍點原封不動丟進 `ViterbiTempoSmoothingNode` 的
+  實際演算法重播（純陣列運算，不需要音訊、不需要重跑 Demucs），精確重現了
+  消失現象。
+- **確切機制**：`ViterbiTempoSmoothingNode` 用全曲拍點間隔中位數判斷「孤立
+  離群值」，抓到跟中位數差超過 20% 的拍點就強制改寫成「前一拍 + 中位數間隔」。
+  這個設計假設離群值是零星孤立的單一雜訊點，但 `GapReinforcementNode` 補強
+  出來的整段缺口，因為局部證據推算的節奏本來就跟全曲中位數不同，產生的是
+  **連續 21 個「跟中位數不同」的拍點**，不是孤立的。節點把整串都當離群值逐拍
+  修正，且修正會疊加在前一次已修正過的時間點上，連鎖效應把原本橫跨 4.4s-18.9s
+  （約 14.5 秒）的一整段拍點壓縮進 2.6s-9.8s（只剩約 7.2 秒），原本的時間窗
+  就變成完全空白——這是兩個節點的假設互相牴觸（GapReinforcementNode 產生「一
+  整段跟全曲節奏不同但內部連貫」的區塊，Viterbi 假設所有離群都是零星雜訊），
+  不是單一節點各自獨立的 bug。
+- 這比 Pass 178（續）條目寫的「品質守門沒檢查邊界連貫性」更精確地指出了下游
+  真正的破壞點：**`ViterbiTempoSmoothingNode`**，而不是泛指「某個精修節點」。
+  詳見 `docs/PASS-178-GAP-REINFORCEMENT-PRODUCTION-INTEGRATION-TASK.md` 第
+  4.3.1 節。
+- 狀態：根因已確認、已用真實資料重播驗證。使用者選擇治本（修正
+  `ViterbiTempoSmoothingNode` 本身的判斷邏輯），而非用排除清單繞過——後續實作
+  獨立開一個新 Pass 追蹤，見下方 Pass 180 條目。目前 `enabled=False` 的預設
+  關閉已經能避免這個問題在生產環境發生（因為 GapReinforcementNode 根本不
+  執行，不會產生 Viterbi 誤判的觸發條件）。
+
+### Pass 180：治本修正 ViterbiTempoSmoothingNode 的孤立離群值判斷邏輯
+
+- 目標：修正 Pass 178（續二）抓到的根因——`ViterbiTempoSmoothingNode` 現在用
+  「跟全曲中位數比較」判斷孤立離群值，完全沒有檢查「孤不孤立」，且修正值疊加
+  在已修正過的時間點上會連鎖漂移。這次直接修這個節點本身的邏輯，不是加排除
+  清單繞過。
+- 修法（實作時從任務書原本規劃的方向調整過）：原本規劃仿照
+  `TempoOscillationDampingNode` 的「左右鄰居配對抵銷」模式，但實測發現這種
+  模式只抓「一短接一長剛好抵銷」的訊號，抓不到 Pass 87 既有測試涵蓋的「單一
+  異常長/短拍距、前後都正常」這種情境（不是配對抵銷型）。改為直接重用
+  `module3_barstart_v2_bt.BarStartTempoSmoothingNode`（Pass 144）已經驗證過
+  的「局部滾動中位數」原則——這個節點的 docstring 本來就明確點名
+  Viterbi 的全域中位數缺陷。判斷基準從全曲單一中位數換成「前後各
+  `window_beats`（預設 4）個拍距的局部中位數」，真正的漸變速度或
+  GapReinforcementNode 補強出的連續不同節奏區塊，局部視窗會跟著它們自己的
+  節奏移動，天然不會被誤判；每個離群點的修正值一律從原始未修改的
+  `timestamps`/`local_medians` 陣列計算，不疊加在其他已修正的拍點上，消除
+  連鎖漂移。
+- 範圍界定：只修 Viterbi 判斷+修正邏輯本身，不動 `GapReinforcementNode` 自己
+  的品質守門，也不做 Pass 176 規劃的雙向錨定邊界連貫性檢查——那是另一個獨立、
+  還沒開始的工作。
+- 驗證：新增 `tests/test_sdd_pass180.py`（3 項）——保留舊行為（跟 Pass 87
+  既有測試數值一致）、合成的連續不同節奏區塊不再被壓縮、直接節錄這次真實
+  抓到的 21 拍問題區段數值當回歸固定資料。額外用真實的
+  `reports/gap_reinforcement/beats.json`（433 個真實拍點）驗證，原本被壓縮
+  進 2.6s-9.8s 的 21 個連續拍點現在幾乎完全不動。既有回歸測試（含
+  `test_sdd_pass87.py` 既有的 Viterbi 測試、`test_sdd_pass144.py`、
+  `test_commercial_beat_quality`、`test_sdd_pass23/28/42/102/103/104/141`、
+  `test_sdd_pass178/179`、`test_module3_bt`，共 69 項）全數通過（用
+  `C:/Python313/python.exe`，這台機器的 `python3` 預設指向沒裝 madmom 的
+  Python 3.11，跑 Stage 3 測試會因環境問題誤判失敗，跟這次改動無關）。
+- 任務書：`docs/PASS-180-VITERBI-ISOLATED-OUTLIER-FIX-TASK.md`。
+- 真實音訊 A/B 回歸重跑結果（`scratch/run_pass180_reverify_gap_reinforcement.py`，
+  《World is Mine》，GapReinforcementNode 啟用）：click 消失問題確認解決——
+  原本 7.1s-13.5s、16.1s-19.2s 完全靜音，這次逐 0.05 秒重新掃描，3-25 秒
+  區間最大相鄰 click 間隔只有 0.5 秒（正常拍距）；BPM 跳動次數從 6 次降到 0
+  次，回到跟黃金基準/對照組一致的水準；小節數 116（舊問題版本 109、對照組
+  117、黃金基準 121），比舊版好很多、接近對照組。不規則小節數仍是 1，但是
+  歌曲收尾淡出提早截斷的既有現象（兩次跑法都有），跟這次修的 bug 無關。
+  總長度 169.69s 跟舊版本數字巧合相近，比對過 measure_map.json 確認是全曲
+  最後一個真實拍點位置本來就在那附近，不是報告抓到舊資料。詳見任務書第
+  4.3 節。
+- 狀態：已完成，真實資料驗證確認修復有效。`GapReinforcementNode` 的
+  `enabled` 生產預設值維持 `False`——這次驗證解決的是 Viterbi 這個下游 bug，
+  `GapReinforcementNode` 自己的邊界連貫性檢查跟升格條件仍未滿足（見任務書
+  第 3 節）。
+
+### Pass 181：連續穩定擊點（Kick/Snare/Hi-hat）當第一拍續接錨點
+
+- 背景：使用者聽過 Pass 180 修好的版本後回報「副歌都滿不錯的，前奏和間奏
+  勉強接受，但有第一拍沒對上的問題」，並提出構想：連續四個等間隔 Kick
+  代表鼓在明確數 1234 拍，可以當拍號續接的依據。
+- 真實資料驗證過程（誠實記錄，含一次分析方法上的錯誤跟修正）：
+  1. 對 kick 音軌整首歌驗證偵測邏輯（連續 ≥4 個、變異係數 <12%、間隔要
+     接近全曲拍距 ±25%），找到 4 段候選，只有副歌的兩段（93.7s、111.4s）
+     真正乾淨符合，但副歌已經不需要這個機制——**偵測邏輯設計對了，但這首
+     歌的 kick 在使用者說的問題區段沒有這個型態**。
+  2. 使用者指出「大約 18 秒」，一開始查 kick 音軌該處完全靜音，誤判成
+     「沒有訊號」。使用者追問是鼓的哪一軌，改查完整鼓組軌跟細分軌，發現
+     `hihat_cymbals.wav` 有能量，但只用**振幅包絡**分析，誤判成「連續滾奏
+     漸強，不是四下分開的擊點」。使用者反問「真的沒有四下 HI HAT 嗎? 我
+     確認有」，促使改用**正確的 onset 偵測**（不是振幅包絡）重新分析，這次
+     在 18.561s-20.012s 清楚抓到連續四個間隔（0.372/0.360/0.348/0.372s，
+     變異係數 2.6%，幾乎完全等於全曲拍距 0.364s）——**使用者是對的，之前
+     兩次判斷都是分析方法不夠精細，不是訊號不存在**。
+  3. 教訓：`_extract_peak_anchors`（既有的窗口最大值包絡法）對 kick/snare
+     這種夠「尖峰」的樂器沒問題，但對 hi-hat/鈸這種質地較連續的樂器會被
+     附近較大聲的滾奏蓋掉細節，必須用真正的 onset 偵測（`librosa.onset.
+     onset_strength` + `onset_detect`）才能正確抓到離散擊點。
+- 設計：新節點 `SteadyPercussionCountAnchorNode`，對 kick/snare/hi-hat
+  三個樂器分別用 onset 偵測抓擊點，找連續 ≥4 個變異係數低、且間隔貼近全曲
+  已知拍距的段落，當作第一拍續接錨點，重用 `ReEntryReAnchoringNode` 已有的
+  「錨點+續接」寫法。找不到就完全不動——不是每首歌都有這個訊號。
+- 實作：新增 `SteadyPercussionCountAnchorNode`，放在 `DrumFillDetectionNode`
+  之後（比原規劃晚一點，讓 `snap_exclusion_zones`/`drum_fill_regions` 排除區
+  檢查真的有資料可用）、`OnsetPhaseRealignmentNode` 之前。用
+  `librosa.onset.onset_strength`+`onset_detect` 對 kick/snare/hihat_cymbals
+  三軌分別做真正的 onset 偵測，找連續 ≥4 個變異係數 <12%、間隔貼近全曲拍距
+  ±25% 的段落，依序快照標記成 1-2-3-4 再往後續接循環，多樂器候選時間重疊
+  時取變異係數最低者。
+- 測試：新增 `tests/test_sdd_pass181.py`（5 項全過）——保留正確行為、排除
+  「規律但跟拍距差很多」跟「密集過門」兩種誤判、沒有音軌時安全空操作、直接
+  節錄真實抓到的 hi-hat 18.561s-20.012s 案例當回歸固定資料驗證正確標記
+  1,2,3,4,1 並續接 2,3,4,1。既有回歸測試（`test_commercial_beat_quality`+
+  `test_sdd_pass23/28/42/87/102/103/104/141/144/178/179/180`+
+  `test_module3_bt`，加上新增的共 74 項）全數通過。
+- 任務書：`docs/PASS-181-STEADY-PERCUSSION-COUNT-DOWNBEAT-ANCHOR-TASK.md`。
+- 狀態：已實作、測試皆通過。真實音訊完整管線回歸（確認對《World is Mine》
+  18 秒附近實際有幫助）尚未執行，需要使用者同意才進行。
+
+### Pass 182：`SteadyPercussionCountAnchorNode` 補上整個鼓軌比對
+
+- 背景：Pass 181 做完後，使用者提出疑慮：「先從整個鼓軌來辨識，如果有不
+  確定的部分，就透過鼓的細分軌來分析、比對與調整，這是我原先的想法。」
+  盤點現有管線發現這個原則**只有部分節點遵守**：核心拍點/速度偵測
+  （`BeatNetNode_TrackA`）跟 `MicroTimingTransientSnapNode` 已經是整個鼓軌
+  優先，但負責「第一拍在哪」的關鍵節點群（`KickSnarePulseNode` 衍生的
+  `ReEntryReAnchoringNode`/`DownbeatPhaseConsistencyNode`/
+  `KickAnchorConsensusSnapNode`，加上剛做的 `SteadyPercussionCountAnchorNode`）
+  完全只看細分軌，從來不回頭比對整個鼓軌；`DrumFillDetectionNode` 順序還
+  相反（細分軌優先，兩者全空才退回整軌）。
+- 這次任務只修 `SteadyPercussionCountAnchorNode`（最直接踩到問題的節點）：
+  新增整個 `drums.wav` 當第四個候選來源；細分軌候選要拿整個鼓軌的 onset
+  能量做確認（容差 ±40ms，比要求整軌也一樣乾淨更寬鬆），沒通過確認的
+  不採用但記錄進 report（`REJECTED_NO_WHOLE_TRACK_ENERGY`），不是靜默丟掉；
+  整軌自己找到、沒有細分軌候選對應的段落一樣可以採用（`source="drums"`，
+  優先權較低）。
+- 實作：`execute()` 先對整個 `drums.wav` 做 onset 偵測；細分軌候選要求段
+  內每個擊點在整軌都有對應 onset（容差 40ms）才採用，沒通過的記錄進
+  `rejected`（`REJECTED_NO_WHOLE_TRACK_ENERGY`）而不是靜默丟掉；整軌自己
+  找到、沒被任何確認過的細分軌候選涵蓋的段落，一樣可以當 `source="drums"`
+  候選採用；沒有整軌檔案時完全跳過確認檢查（向後相容 Pass 181 行為）。
+- 測試：新增 `tests/test_sdd_pass182.py`（4 項全過）——細分軌候選被整軌
+  確認、細分軌候選被整軌拒絕（新情境，模擬分離殘留假訊號）、整軌獨立候選
+  （kick/snare 各自輪流打半段、疊加起來整軌才有完整四拍）、真實 hi-hat
+  回歸案例補上整軌音檔依然正確辨識。Pass 181 原本 5 項測試（沒提供
+  `drums.wav`）維持不變地通過，確認向後相容設計正確。既有回歸測試（含
+  Pass 181/182 共 78 項）全數通過。
+- 任務書：`docs/PASS-182-WHOLE-DRUM-TRACK-CROSSCHECK-TASK.md`。
+- 範圍界定：`KickSnarePulseNode`、`DrumFillDetectionNode` 有同樣的架構
+  缺口，是分開、還沒排入的後續工作，不在這次任務內。
+- 狀態：已實作，測試皆通過。
+
+### Pass 183：`KickSnarePulseNode` 補上整個鼓軌交叉確認
+
+- 背景：Pass 182 只修了 `SteadyPercussionCountAnchorNode`，使用者同意順便
+  處理其他有同樣架構缺口的節點。`KickSnarePulseNode` 影響範圍最大——它產出
+  的 `kick_anchors`/`snare_anchors` 被 `ReEntryReAnchoringNode`、
+  `DownbeatPhaseConsistencyNode`、`KickAnchorConsensusSnapNode`、
+  `DrumFillDetectionNode` 等一整串下游節點共用，卻完全只看細分軌。
+  `DrumFillDetectionNode` 本身的架構缺口這次不處理——它的錯誤代價較小
+  （排除過門用，錯了頂多保守跳過），且已有部分整軌備援，優先權較低。
+- 實作：kick/snare 細分軌抽取完成後、Sub-Bass 低頻補位邏輯**之前**，插入
+  整個鼓軌交叉確認——用同一套 `_extract_peak_anchors`（跟 kick/snare 一致，
+  不像 Pass 181/182 需要換成 onset 偵測，因為 kick/snare 本身夠「尖峰」）
+  對整軌抽取峰值，濾掉細分軌裡在整軌對應時間（容差 0.15 秒，比 Pass 182
+  的 0.04 秒寬鬆）完全沒有能量的可疑錨點。刻意放在 Sub-Bass 補位邏輯之前，
+  因為補位錨點本來就預期整軌在無鼓區間沒有對應能量，不能被交叉確認反向
+  淘汰。沒有整軌檔案時完全跳過確認，向後相容既有行為。
+- 測試：新增 `tests/test_sdd_pass183.py`（4 項全過）——確認通過、確認拒絕
+  （新情境）、沒有整軌時跳過確認、Sub-Bass 補位不受影響。既有直接測試
+  `KickSnarePulseNode` 的 7 個檔案（`test_sdd_pass39/129/147/148/150/153`、
+  `test_module3_bt`，共 29 項）全數通過，確認既有行為不受影響。既有 Stage 3
+  回歸測試（含 Pass 181/182/183 共 82 項）全數通過。
+- 任務書：
+  `docs/PASS-183-KICKSNAREPULSE-WHOLE-DRUM-TRACK-CROSSCHECK-TASK.md`。
+- 範圍界定：`DrumFillDetectionNode` 的架構缺口仍未處理，留在後續工作清單。
+- 狀態：已實作，測試皆通過。
+
+### 追記：`DrumFillDetectionNode` 的架構缺口其實已隨 Pass 183 附帶解決
+
+- 使用者問還有沒有小缺口可以順便處理，查證後發現不需要額外寫程式碼：
+  `DrumFillDetectionNode._collect_event_times()` 優先讀的正是
+  `kick_anchors`/`snare_anchors`——這兩個值就是 `KickSnarePulseNode` 產出的
+  同一份資料，Pass 183 已經讓它在寫回 blackboard **之前**就先做過整軌交叉
+  確認；唯一的備援分支（兩者都完全空時）本來就是直接對整個 `drums.wav`
+  做 `_extract_peak_anchors`，從來沒有「只信細分軌」的問題。
+- 確認過管線順序：`KickSnarePulseNode` 在 `build_beat_tracking_
+  preparation_nodes()`（準備階段）先跑，`DrumFillDetectionNode` 在
+  `build_beat_refinement_nodes()`（精修階段）才跑——`DrumFillDetectionNode`
+  讀到的一定是 Pass 183 已經過濾過的版本。
+- 結論：這個缺口不需要獨立的程式碼修改，Pass 182/183 兩個任務書裡標記的
+  「`DrumFillDetectionNode` 架構缺口未處理」狀態視為已隨 Pass 183 附帶
+  關閉，不再是待辦事項。
+
+### Pass 184：`SteadyPercussionCountAnchorNode` 局部 onset 偵測 + 接受拍距整數倍
+
+- 背景：Pass 183 累積修復（Pass 180-183）真實資料完整管線回歸後，使用者
+  實際試聽《World is Mine》回報兩個問題，追查後都在
+  `SteadyPercussionCountAnchorNode` 身上，但是兩個獨立的原因：
+  1. **18-20 秒重音位置不對**：`_detect_onsets` 對整首歌一次做 onset
+     偵測，實測同一份 hi-hat 音軌只分析 13-21 秒片段能抓到完整乾淨的五個
+     擊點，對整首歌一次分析卻只抓到兩個——安靜段落被後面響亮段落（例如
+     副歌）稀釋掉敏感度，導致這段實際套用的相位錨點來自別處，跟這五下
+     hi-hat 本身該有的相位對不上。**真正的 bug**。
+  2. **0-3 秒 hi-hat 沒對到**：使用者一開始說前奏速度只有主歌一半，查證
+     這次跑法的實際拍距資料後（前奏 0.25-0.43s、主歌 0.31-0.44s，其實
+     相近），確認底層拍速全曲一致，前奏是**隔拍打（half-time groove）**，
+     使用者確認照這個結果處理。原本的邏輯只認「間隔剛好等於拍距」，正確
+     排除了這種隔拍型態，但隔拍其實也是有效的「明確數拍」訊號，值得放寬
+     接受。
+- 修法 A：`_detect_onsets` 改成滑動視窗分段分析（實測比較後採用
+  `window=10s/hop=7s`），讀檔一次、視窗切片在記憶體處理，重疊區間的重複
+  偵測用 30ms 容差合併。
+- 修法 B：`_find_steady_runs` 拆成對每個允許倍數（`ALLOWED_BEAT_MULTIPLES
+  = (1, 2)`）各跑一次偵測；`_apply_anchor` 重新設計成用「格點位置」而非
+  「onset 索引」決定標號，才能正確處理隔拍型態中間被跳過的格點，標成連貫
+  的 1-2-3-4 循環；`_dedupe_overlaps` 加入 `multiple` 較小優先的排序。
+- 測試：新增 `tests/test_sdd_pass184.py`（3 項全過）——安靜段落夾在響亮
+  段落間能被找到、隔拍型態正確標號（含中間跳過的格點）、真實 0-3 秒案例
+  回歸。真實資料直接驗證：這次真實跑法留下的 hi-hat 音軌，18-21 秒重新
+  抓回完整五個擊點、0-3 秒正確辨識成隔拍候選（cv=0.0006，極乾淨）。既有
+  Stage 3 回歸測試（含 Pass 181/182/183/184 共 85 項）全數通過。
+- 任務書：
+  `docs/PASS-184-STEADY-PERCUSSION-LOCAL-ONSET-AND-HALFTIME-TASK.md`。
+- 狀態：已實作，測試皆通過。真實音訊完整管線回歸（確認 0-3 秒、18-20 秒
+  在真實完整管線裡真的都對齊）尚未執行，需要使用者同意才進行。
+
+### Pass 185：讓下游 5 個節點尊重 `SteadyPercussionCountAnchorNode` 建立的區段相位
+
+- 背景：`SteadyPercussionCountAnchorNode` 建立的區段相位會被下游 5 個節點（`BeatGridContinuityRepairNode`、`TempoOscillationDampingNode`、`DownbeatPhaseConsistencyNode`、`KickAnchorConsensusSnapNode`、`KickBassDownbeatVerifierNode`）透由全曲重編號（`_relabel_beat_numbers`）蓋掉。
+- 修法：
+  1. `SteadyPercussionCountAnchorNode` 輸出 `beat_phase_protected_ranges` 到 Blackboard。
+  2. 新增 `_time_in_protected_ranges` helper，並讓 `_relabel_beat_numbers` 支援 `protected_ranges` 參數，保護區段內保留原始標號。
+  3. 下遊 5 個節點全面讀取並尊重保護區段（`KickBassDownbeatVerifierNode` 算能量平均時排除保護區段，旋轉修正時保留保護區段標號）。
+- 測試：新增 `tests/test_sdd_pass185.py`（17 項全過）。既有相關測試 30 項全數通過。
+- 任務書：`docs/PASS-185-BEAT-PHASE-PROTECTED-RANGES-TASK.md`。
+- 狀態：已完成實作與測試驗證。
+- **追記（Pass 186 起點）**：真實音訊完整管線回歸後發現 18-20 秒問題**依然
+  沒解決**——追查確認不是 Pass 185 保護機制失效，而是候選在更早階段就被
+  Pass 182 的整軌能量確認機制拒絕掉了（見下方 Pass 186 條目）。另外發現
+  `irregular_measure_count` 從 1 跳到 12，是保護區段變多（34 段）造成的
+  交界處接縫副作用，比 Pass 185 任務書設計時預期的規模更大，需要追蹤。
+
+### Pass 186：`SteadyPercussionCountAnchorNode` 整軌確認允許少量擊點不匹配
+
+- 背景：Pass 185 真實資料回歸後追查發現，《World is Mine》18.563s-20.014s
+  的 hi-hat 五連拍候選，五個擊點裡有四個跟整軌（`drums.wav`）偵測結果
+  完全對上（誤差 0.000 秒），只有一個（18.934s）整軌沒有對應能量（最近
+  距離 0.36 秒，幾乎一整拍）——Pass 182 的整軌確認機制要求「全部擊點都要
+  對上」，這種大多數乾淨對應、只有一個沒抓到獨立峰值的真實案例也一起被
+  拒絕（`REJECTED_NO_WHOLE_TRACK_ENERGY`），保護機制根本沒有機會生效。
+- 修法：`_confirmed_by_whole_track()` 新增 `max_unconfirmed_onsets`（預設
+  1），只要沒對上的擊點數量在門檻內就算通過，不再要求全有全無。
+- 驗證：新增 `tests/test_sdd_pass186.py`（4 項全過）；直接對真實資料重跑
+  `SteadyPercussionCountAnchorNode`，確認 18.563s-20.014s 候選這次正確進到
+  `applied`，對應拍號變成 `1,2,3,4,1`（修復前是 `2,3,4,1,2`）；候選總數
+  從 34 增加到 37。既有回歸測試（含 Pass 181-186 共 117 項）全數通過。
+- 任務書：`docs/PASS-186-WHOLE-TRACK-CONFIRM-TOLERATE-ONE-MISS-TASK.md`。
+- 狀態：已實作、單元測試與真實資料候選層級驗證皆通過。
+- **追記**：真實音訊完整管線回歸後，18-20 秒的拍點時間確實對齊了（誤差都
+  在 20 毫秒內），但「第一拍」標記在這個區段本身的交界處被硬塞進一個
+  「第 5 拍」，沒有乾淨解決——而且 `irregular_measure_count` 從 12 又惡化到
+  **14**，小節數也從 -6 掉到 -8（差黃金基準）。使用者實際試聽後回報「很多
+  不完整的小節，沒有走完四拍就跳下一個小節，節拍錯亂問題」，證實這是真實
+  可聽見的缺陷。診斷確認：14 個不規則小節裡有 11 個都落在保護區段邊界附近
+  （距離在一個拍距內），另外 3 個跟這次改動無關。查證發現這次找到的 37 個
+  套用錨點裡，**26 個（70%）套用前後標號完全沒變**，卻依然被列入保護清單，
+  平白多了交界處衝突風險——這正是 Pass 187 要處理的問題。
+
+### Pass 187：只保護「真的改動過標號」的區段，不保護無效區段
+
+- 背景：見上方 Pass 186 追記——37 個套用錨點裡 26 個是無效保護（套用前後
+  標號沒變），保護區段越多、交界處衝突就越多。
+- 修法：`SteadyPercussionCountAnchorNode.execute()` 套用每個候選錨點前後
+  比對這段範圍內的標號有沒有真的改變，只有真的改變才列入
+  `beat_phase_protected_ranges`；`applied` 清單（記錄嘗試套用過的候選）
+  維持不變，兩者分開。
+- 驗證：新增 `tests/test_sdd_pass187.py`（3 項全過）。真實資料量化驗證：
+  `protected_ranges` 從 37 降到 **15**（降 59%），18-20 秒目標區段依然在
+  保護清單內，沒有被誤濾掉。既有回歸測試（含 Pass 181-187 共 120 項）
+  全數通過。
+- 任務書：`docs/PASS-187-PROTECT-ONLY-CHANGED-RANGES-TASK.md`。
+- 尚未完成：真實音訊完整管線回歸，確認 `irregular_measure_count`
+  （Pass 186 真實跑法是 14）這次真的下降，進行中。
+- 狀態：已實作、單元測試與真實資料量化驗證皆通過，完整管線回歸進行中。
+

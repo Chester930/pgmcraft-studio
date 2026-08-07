@@ -9,6 +9,7 @@ Supports 15 Standalone & General Demixing Extraction Modes:
 import os
 import shutil
 from pgm_craft.enhancer import AudioEnhancerEngine
+from pgm_craft.determinism import reseed_for_inference
 
 SOTA_MODEL_REGISTRY = {
     "4stem": {"name": "HTDemucs v4 (4-Stem)", "model_file": "htdemucs_ft", "input_prerequisite": "general_audio"},
@@ -154,6 +155,13 @@ class CascadedStemSeparator:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = model.to(device)
         wav = wav.to(device)
+        # Pass 174: apply_model()'s default shifts=1 test-time augmentation draws a
+        # random time offset from the *global* RNG on every call. enable_deterministic_mode()
+        # only seeds once at pipeline startup, so back-to-back separations of the same
+        # input drift apart (confirmed in Pass 173: max_abs_diff 0.234). Reseeding right
+        # before this specific call makes that draw -- and therefore this separation --
+        # reproducible, without giving up the SDR benefit of the augmentation itself.
+        reseed_for_inference()
         with torch.no_grad():
             sources = apply_model(model, wav, progress=True)[0]  # [n_stems, 2, T]
         paths = {}

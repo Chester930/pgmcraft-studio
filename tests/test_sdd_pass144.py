@@ -140,14 +140,39 @@ class TestBarStartTempoSmoothingNode:
 
 class TestPipelineWiring:
 
-    def test_module3_barstart_v2_pipeline_runs_smoothing_twice_in_right_order(self):
-        tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-        names = _node_names(tree)
-        smoothing_indices = [i for i, n in enumerate(names) if n == "BarStartTempoSmoothingNode"]
-        assert len(smoothing_indices) == 2
-        repair_index = names.index("BarGridContinuityRepairNode")
-        grid_index = names.index("MeterAwareBeatGridNode")
-        assert repair_index < smoothing_indices[0] < smoothing_indices[1] < grid_index
+    def test_module3_barstart_v2_pipeline_runs_smoothing_twice_in_right_order(self, monkeypatch):
+        """BarStartV2CoreChain (built lazily inside _run_barstart_v2_comparison(),
+        see Pass 166 -- it is no longer part of the static tree returned by
+        build_module3_barstart_v2_pipeline_tree()) must still run
+        BarStartTempoSmoothingNode exactly twice, after BarGridContinuityRepairNode
+        and before MeterAwareBeatGridNode. Spy on execute() call order instead of
+        introspecting a tree the function doesn't expose."""
+        from pgm_craft.workflow.module3_bt import _run_barstart_v2_comparison
+        from pgm_craft.workflow import module3_barstart_v2_bt as v2mod
+
+        call_order = []
+
+        def make_spy(name, original):
+            def spy(self, blackboard):
+                call_order.append(name)
+                return original(self, blackboard)
+            return spy
+
+        for cls_name in ("BarGridContinuityRepairNode", "BarStartTempoSmoothingNode", "MeterAwareBeatGridNode"):
+            cls = getattr(v2mod, cls_name)
+            monkeypatch.setattr(cls, "execute", make_spy(cls_name, cls.execute))
+
+        bb = Blackboard()
+        interval = 60.0 / 165.0 * 4
+        bb.set_val("beats", np.array([[i * interval / 4, (i % 4) + 1] for i in range(80)], dtype=float))
+
+        _run_barstart_v2_comparison(bb)
+
+        smoothing_positions = [i for i, n in enumerate(call_order) if n == "BarStartTempoSmoothingNode"]
+        assert len(smoothing_positions) == 2
+        repair_pos = call_order.index("BarGridContinuityRepairNode")
+        grid_pos = call_order.index("MeterAwareBeatGridNode")
+        assert repair_pos < smoothing_positions[0] < smoothing_positions[1] < grid_pos
 
     def test_module3_tree_includes_smoothing_via_merge_node_core_chain(self):
         """Module3BarStartV2MergeNode builds its own v2 core chain lazily

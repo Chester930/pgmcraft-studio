@@ -25,19 +25,11 @@ C. 管線接線：VocalMelodyEvidenceExtractNode 接在兩條 v2 管線的
 import numpy as np
 import soundfile as sf
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     MelodyTrackPKNode,
     VocalMelodyEvidenceExtractNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus, SequenceNode
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def _melody_wav(path, sr=22050):
@@ -108,16 +100,6 @@ class TestDownstreamConsumersReceiveRealAnchors:
 
 
 class TestPipelineWiring:
-
-    def test_module3_barstart_v2_pipeline_includes_vocal_melody_node(self):
-        tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-        names = _node_names(tree)
-        assert "VocalMelodyEvidenceExtractNode" in names
-        assert (
-            names.index("ChordMelodyOnsetSplitNode")
-            < names.index("VocalMelodyEvidenceExtractNode")
-            < names.index("FullSongBarStartLoopNode")
-        )
 
     def test_module3_merge_node_core_chain_includes_vocal_melody_node(self, tmp_path):
         """Module3BarStartV2MergeNode builds its v2 core chain lazily inside

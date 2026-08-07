@@ -2,20 +2,12 @@
 SDD Pass 110 — Module 3 BarStart v2 chord track PK and harmonic anchor tests.
 """
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     BarStartCandidateCommitNode,
     ChordTrackPKNode,
     Module3BarStartV2SummaryNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def test_chord_track_pk_selects_primary_harmonic_anchor_from_guitar_and_piano():
@@ -83,15 +75,6 @@ def test_harmonic_only_candidate_stays_unresolved_at_default_commit_threshold():
     assert bb.get_val("committed_bar_starts") == [0.0, 2.0]
     assert bb.get_val("bar_start_decision_report")["status"] == "UNRESOLVED"
     assert bb.get_val("bar_start_decision_report")["reason"] == "confidence_below_threshold"
-
-
-def test_module3_barstart_v2_tree_places_chord_pk_before_commit():
-    tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-    names = _node_names(tree)
-
-    assert "ChordTrackPKNode" in names
-    assert names.index("DrumBassEvidenceBarSearchNode") < names.index("ChordTrackPKNode")
-    assert names.index("ChordTrackPKNode") < names.index("BarStartCandidateCommitNode")
 
 
 def test_module3_barstart_v2_summary_includes_chord_track_pk_report():

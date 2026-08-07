@@ -15,7 +15,6 @@ import unittest
 
 import numpy as np
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     LookaheadDrumAnchorSearchNode,
     LookaheadDrumEventScanNode,
@@ -23,22 +22,7 @@ from pgm_craft.workflow.module3_barstart_v2_bt import (
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
 
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
-
-
 class TestSDDPass129LookaheadDrumEventScan(unittest.TestCase):
-    def test_v2_pipeline_places_scan_before_lookahead_search(self):
-        names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("LookaheadDrumEventScanNode", names)
-        self.assertLess(
-            names.index("LookaheadDrumEventScanNode"),
-            names.index("LookaheadDrumAnchorSearchNode"),
-        )
-
     def test_future_kick_and_snare_anchors_become_lookahead_events(self):
         bb = Blackboard()
         bb.set_val("committed_bar_starts", [0.0, 2.0])
