@@ -704,8 +704,111 @@ class MeasureMapNode(BaseNode):
                 source=source,
             ))
 
-        # Pass 188: 合併因 anchor 交界處相位跳躍產生的破碎小節
+        # Pass 192: 拆分過長小節 (5, 6, 7 拍拆為標準 4 拍 + 剩餘)
+        measures = self._split_overlong_measures(measures, common_length)
+        # Pass 188 / Pass 192: 精確合併短小節（防膨脹保護）
         measures = self._merge_short_measures(measures, common_length)
+        return measures
+
+    def _split_overlong_measures(self, measures, common_length):
+        """
+        Pass 192：過長小節 (5 拍, 6 拍, 7 拍...) 動態拆分器。
+        若小節 beat_count > common_length 且非末尾截斷，將其按 common_length 拆分為
+        一個標準 4 拍小節與剩餘短小節。拆分出的短小節隨後由 _merge_short_measures
+        在滿足 <= common_length 條件下自動補合。
+        """
+        if not measures or common_length < 2:
+            return measures
+
+        new_measures = []
+        for m in measures:
+            beats = m.get("beats", [])
+            b_count = len(beats)
+            if b_count > common_length and not m.get("is_incomplete"):
+                # 前 common_length 拍拆為標準小節
+                m1_beats = beats[:common_length]
+                m1 = {
+                    "measure": len(new_measures) + 1,
+                    "start_time": m1_beats[0]["time"],
+                    "end_time": beats[common_length]["time"] if len(beats) > common_length else m["end_time"],
+                    "beat_count": common_length,
+                    "beats": [{"beat": j + 1, "time": b["time"]} for j, b in enumerate(m1_beats)],
+                    "is_variable_length": False,
+                    "is_incomplete": False,
+                    "source": m.get("source"),
+                }
+                new_measures.append(m1)
+
+                # 剩餘拍點為殘餘短小節
+                rem_beats = beats[common_length:]
+                if rem_beats:
+                    rem_count = len(rem_beats)
+                    m2 = {
+                        "measure": len(new_measures) + 1,
+                        "start_time": rem_beats[0]["time"],
+                        "end_time": m["end_time"],
+                        "beat_count": rem_count,
+                        "beats": [{"beat": j + 1, "time": b["time"]} for j, b in enumerate(rem_beats)],
+                        "is_variable_length": rem_count != common_length,
+                        "is_incomplete": False,
+                        "source": m.get("source"),
+                    }
+                    new_measures.append(m2)
+            else:
+                m["measure"] = len(new_measures) + 1
+                new_measures.append(m)
+
+        return new_measures
+
+    def _merge_short_measures(self, measures, common_length):
+        """
+        Pass 188 / Pass 192 修訂：將太短的「破碎小節」精確合併。
+
+        Pass 192 防膨脹保護：
+        只有當前一個小節也是短小節 (prev["beat_count"] < common_length)，且
+        合併後的 merged_count <= common_length 時才進行合併。
+        嚴格防止把原本標準 4 拍的小節膨脹搞成 5/6/7 拍的怪異小節！
+        """
+        if not measures or common_length < 1:
+            return measures
+
+        changed = True
+        while changed:
+            changed = False
+            i = 1  # 從第 2 個開始（第 1 個沒有前一個可合併）
+            while i < len(measures):  # 掃描至最後一個小節
+                m = measures[i]
+                if m.get("is_incomplete"):
+                    i += 1
+                    continue
+                if m["beat_count"] < common_length:
+                    prev = measures[i - 1]
+                    # Pass 192 防膨脹保護：只有當 prev 也是短小節，且合併後不超過 common_length 時才合併
+                    if prev["beat_count"] < common_length and prev["beat_count"] + m["beat_count"] <= common_length:
+                        merged_count = prev["beat_count"] + m["beat_count"]
+                        merged_beats = prev["beats"] + [
+                            {"beat": prev["beat_count"] + j + 1, "time": b["time"]}
+                            for j, b in enumerate(m["beats"])
+                        ]
+                        measures[i - 1] = {
+                            "measure": prev["measure"],
+                            "start_time": prev["start_time"],
+                            "end_time": m["end_time"],
+                            "beat_count": merged_count,
+                            "beats": merged_beats,
+                            "is_variable_length": bool(merged_count != common_length),
+                            "is_incomplete": bool(prev["is_incomplete"]),
+                            "source": prev["source"],
+                        }
+                        measures.pop(i)
+                        changed = True
+                        break
+                i += 1
+
+        # 重新給予連續 measure 編號
+        for idx, m in enumerate(measures):
+            m["measure"] = idx + 1
+
         return measures
 
     def _prune_ghost_downbeats(self, beat_rows, downbeat_indexes):
@@ -741,63 +844,7 @@ class MeasureMapNode(BaseNode):
 
         return pruned
 
-    def _merge_short_measures(self, measures, common_length):
-        """
-        Pass 188：把太短的「破碎小節」合併給前一個小節。
 
-        這些破碎小節通常由 SteadyPercussionCountAnchorNode 的交界處相位跳躍產生：
-        錨點從 base_idx 往後重標 1-2-3-4，但 base_idx 之前的拍點相位沒有同步
-        更新，導致 MeasureMapNode 從上一段的 beat 1 到 base_idx 之間切出一個
-        只有 1-3 拍的小節。
-
-        合併條件（三者皆符合才合併）：
-        - beat_count < round(common_length * SHORT_MEASURE_MERGE_THRESHOLD)
-          = beat_count < common_length（即任何不規則的少拍中間小節）
-        - 不是第一個小節（沒有前一個可合併）
-        - 不是最後一個小節（末尾截斷另有 is_incomplete 旗標，不強行合併）
-        - 合併後前一個小節的 beat_count <= common_length * 2 - 1（防止吃太多）
-
-        用 while 迴圈持續掃描直到穩定（處理連鎖情況）。
-        """
-        if not measures or common_length < 1:
-            return measures
-
-        merge_threshold = round(common_length * self.SHORT_MEASURE_MERGE_THRESHOLD)
-        max_merged_length = common_length * 2 - 1
-        changed = True
-        while changed:
-            changed = False
-            i = 1  # 從第 2 個開始（第 1 個沒有前一個可合併）
-            while i < len(measures) - 1:  # 不碰最後一個（末尾截斷）
-                m = measures[i]
-                if m["beat_count"] < merge_threshold:
-                    prev = measures[i - 1]
-                    merged_count = prev["beat_count"] + m["beat_count"]
-                    if merged_count <= max_merged_length:
-                        # 把這個破碎小節的 beats 併入前一個
-                        merged_beats = prev["beats"] + [
-                            {"beat": prev["beat_count"] + j + 1, "time": b["time"]}
-                            for j, b in enumerate(m["beats"])
-                        ]
-                        measures[i - 1] = {
-                            "measure": prev["measure"],
-                            "start_time": prev["start_time"],
-                            "end_time": m["end_time"],
-                            "beat_count": merged_count,
-                            "beats": merged_beats,
-                            "is_variable_length": bool(merged_count != common_length),
-                            "is_incomplete": bool(prev["is_incomplete"]),
-                            "source": prev["source"],
-                        }
-                        measures.pop(i)
-                        # 重新編號後續小節
-                        for j in range(i - 1, len(measures)):
-                            measures[j]["measure"] = j + 1
-                        changed = True
-                        # 不 i+=1，因為 i 現在指向原 i+1 的小節，繼續檢查
-                        continue
-                i += 1
-        return measures
 
     def _build_fallback_4beat(self, beat_rows):
         measures = []

@@ -59,27 +59,20 @@ def _count_irregular(measure_map, common_length=4):
 # ---------------------------------------------------------------------------
 
 def test_short_middle_measure_merged():
-    """[4拍, 2拍(破碎), 4拍] → 合併後 [6拍, 4拍]，irregular_count 從 1 → 1（6拍≠4拍，但破碎消失了；合理，因為這是保留了）"""
-    # pattern = [4, 2, 4] → downbeat 在 idx 0, 4, 6
-    # 預期合併後：[6拍小節, 4拍小節] → irregular_measure_count = 1（6拍異常）
-    # 重要：2拍那個破碎小節被消滅了（否則會有 2 個 irregular）
+    """Pass 192 防膨脹保護：[4拍, 2拍, 4拍] 不會把前一個 4 拍膨脹成 6 拍，保持 [4拍, 2拍(變拍/短小節), 4拍]"""
     node = MeasureMapNode()
     beats = _make_beats_from_downbeat_pattern([4, 2, 4])
 
-    # 驗證合成的 beats 有 3 個 downbeat（beat==1）
     downbeat_times = beats[beats[:, 1] == 1, 0]
     assert len(downbeat_times) == 3, f"預期 3 個 downbeat，實際 {len(downbeat_times)}"
 
     mm, status, warnings = node.build_measure_map(beats)
 
-    # 合併後應該只有 2 個小節（6拍 + 4拍），不是 3 個
-    assert len(mm) == 2, f"合併後預期 2 小節，實際 {len(mm)}: {[m['beat_count'] for m in mm]}"
-    assert mm[0]["beat_count"] == 6, f"第 1 小節預期 6 拍（4+2 合併），實際 {mm[0]['beat_count']}"
-    assert mm[1]["beat_count"] == 4, f"第 2 小節預期 4 拍，實際 {mm[1]['beat_count']}"
-
-    # 合併後 irregular_count：只有 6拍那個（6≠4），比合併前（2拍那個）更合理
-    irregular = _count_irregular(mm)
-    assert irregular == 1, f"合併後預期 1 個 irregular（6拍），實際 {irregular}"
+    # Pass 192 防膨脹保護：保持 3 個小節，不產生 6 拍不規則小節
+    assert len(mm) == 3, f"Pass 192 防膨脹預期 3 小節，實際 {len(mm)}: {[m['beat_count'] for m in mm]}"
+    assert mm[0]["beat_count"] == 4
+    assert mm[1]["beat_count"] == 2
+    assert mm[2]["beat_count"] == 4
 
 
 # ---------------------------------------------------------------------------
@@ -120,20 +113,15 @@ def test_first_measure_short_kept():
 # ---------------------------------------------------------------------------
 
 def test_chained_merge():
-    """真實場景：多個 4 拍小節中夾著一個 3 拍破碎小節。
-    3 拍不被 _prune_ghost_downbeats 移除（gap=3 >= 0.6*4=2.4）。
-    merge_threshold=round(4*1.0)=4，3 < 4 ✓，合併給前一個 4 拍 → 7 拍。
-    [4, 4, 4, 3, 4, 4] → [4, 4, 7, 4, 4]（5 小節）。
-    """
+    """Pass 192 防膨脹保護：[4, 4, 4, 3, 4, 4] 不會把 4 拍膨脹成 7 拍，保持 6 個小節"""
     node = MeasureMapNode()
     beats = _make_beats_from_downbeat_pattern([4, 4, 4, 3, 4, 4])
 
     mm, status, warnings = node.build_measure_map(beats)
 
-    # 3 拍小節（原第 4 個）合入前一個 4 拍 → 7 拍
-    assert len(mm) == 5, f"預期 5 小節（3 拍合入前 4 拍），實際 {len(mm)}: {[m['beat_count'] for m in mm]}"
-    assert mm[2]["beat_count"] == 7, f"第 3 小節預期 7 拍（4+3 合併），實際 {mm[2]['beat_count']}"
-    assert mm[3]["beat_count"] == 4, f"第 4 小節預期 4 拍，實際 {mm[3]['beat_count']}"
+    # Pass 192 防膨脹保護：3 拍小節不併入 4 拍形成 7 拍
+    assert len(mm) == 6, f"Pass 192 預期 6 小節（防膨脹），實際 {len(mm)}: {[m['beat_count'] for m in mm]}"
+    assert mm[3]["beat_count"] == 3
 
 
 # ---------------------------------------------------------------------------
