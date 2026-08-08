@@ -65,4 +65,25 @@ beats[idx, 1] = ((0 - step_back) % 4) + 1
 
 ## 4. 實作結果
 
-（待填寫）
+### 4.1 修改內容
+1. **`SteadyPercussionCountAnchorNode._apply_anchor()` 升級**：
+   - 傳入 `protected_ranges` 參數。
+   - 增加倒推標號迴圈 (Backward Phase Alignment)：自 `base_idx - 1` 開始往前倒數 `((0 - step_back) % 4) + 1` 標號，直到遭遇既有 `protected_ranges` 或曲首 `idx = 0`。
+   - 傳回精準的錨點本體起點與終點 `(base_idx, last_touched_idx)`。
+
+### 4.2 測試與回歸
+- **SDD 測試**：`tests/test_sdd_pass189.py` （2/2 PASSED）。
+- **單元回歸 suite**：`test_sdd_pass23/27/28/42/87/102/103/104/120/121/124/141/144/185/186/187/188/189` + `test_commercial_beat_quality` （86/86 PASSED）。
+- **Git Commit**：`0636616`。
+
+### 4.3 真實音訊完整管線回驗結果
+- **執行時間**：410.1s
+- **小節數**：112 小節 (黃金基準 -9)
+- **BPM 跳動**：0 次
+- **不規則小節數**：15 個
+
+**深度診斷與根因剖析**：
+- `SteadyPercussionCountAnchorNode` 內部單元測試證實倒推對齊邏輯成功消除錨點前方的相位跳躍。
+- 然而在完整管線中，位於下游的 **`KickBassDownbeatVerifierNode`** (Pass 168) 與 **`DownbeatRefineNode`** 會根據 Kick/Bass 能量再度寫入 `beat = 1` 標籤，若下游修訂點與保護區段存在相位位移，即會再次於 `MeasureMapNode` 切出 5/6/7 拍之過長小節。
+- 後續 Pass 190 需方針轉向：於 `MeasureMapNode` 之前加入或調優 **`DownbeatRefineNode` / `KickBassDownbeatVerifierNode` 尊重保護區段與 4/4 拍網格連貫性防衛**。
+
