@@ -637,11 +637,24 @@ class MeasureMapNode(BaseNode):
         print(f"[BT Node: {self.name}] Built {len(measure_map)} measures to {json_path}.")
         return NodeStatus.SUCCESS
 
+    def _normalize_beats(self, beats):
+        if beats is None:
+            return []
+        rows = []
+        for row in np.asarray(beats):
+            if len(row) < 2:
+                continue
+            rows.append({"time": float(row[0]), "beat": int(row[1])})
+        return sorted(rows, key=lambda item: item["time"])
+
     def build_measure_map(self, beats, beat_validation=None, downbeat_refinement=None):
         warnings = []
         beat_rows = self._normalize_beats(beats)
         if not beat_rows:
             return [], "FAIL", ["沒有可用 beat，無法建立 measure map。"]
+
+        # Pass 193：全曲 4/4 拍連貫重排，消除碎拍與亂切點
+        beat_rows = self._ensure_44_phase_continuity(beat_rows)
 
         downbeat_source = (downbeat_refinement or {}).get("source", "downbeat")
         using_fallback_refinement = downbeat_source.startswith("fallback")
@@ -667,19 +680,36 @@ class MeasureMapNode(BaseNode):
 
         return measure_map, status, warnings
 
-    def _normalize_beats(self, beats):
-        if beats is None:
-            return []
-        rows = []
-        for row in np.asarray(beats):
-            if len(row) < 2:
-                continue
-            rows.append({"time": float(row[0]), "beat": int(row[1])})
-        return sorted(rows, key=lambda item: item["time"])
+    def _ensure_44_phase_continuity(self, beat_rows):
+        """
+        Pass 193：全曲 4/4 拍相位連貫補全。
+        消除所有因 Downbeat 標籤缺失所產生的人造碎拍與亂切點。
+        以第一個可信 Downbeat 為基準點，強推全曲 (last_beat % 4) + 1 相位連貫。
+        """
+        if not beat_rows:
+            return beat_rows
+
+        first_db_idx = 0
+        for idx, r in enumerate(beat_rows):
+            if r.get("beat") == 1:
+                first_db_idx = idx
+                break
+
+        # 順向 1-2-3-4 重標號
+        for i in range(first_db_idx, len(beat_rows)):
+            if i == first_db_idx:
+                beat_rows[i]["beat"] = 1
+            else:
+                beat_rows[i]["beat"] = ((beat_rows[i - 1]["beat"] - 1 + 1) % 4) + 1
+
+        # 逆向 1-2-3-4 補全
+        for i in range(first_db_idx - 1, -1, -1):
+            beat_rows[i]["beat"] = ((beat_rows[i + 1]["beat"] - 1 - 1) % 4) + 1
+
+        return beat_rows
 
     def _build_from_downbeats(self, beat_rows, downbeat_indexes, source="downbeat"):
         # Pass 170 fix: 過濾相鄰 downbeat 間距過小的 ghost downbeat 索引
-        # 當兩個相鄰 downbeat 之間只有 1 個 beat (duration < 0.6 * common_step)，視為 ghost 重複 downbeat
         downbeat_indexes = self._prune_ghost_downbeats(beat_rows, downbeat_indexes)
 
         common_length = self._common_measure_length(downbeat_indexes)
@@ -704,61 +734,9 @@ class MeasureMapNode(BaseNode):
                 source=source,
             ))
 
-        # Pass 192: 拆分過長小節 (5, 6, 7 拍拆為標準 4 拍 + 剩餘)
-        measures = self._split_overlong_measures(measures, common_length)
-        # Pass 188 / Pass 192: 精確合併短小節（防膨脹保護）
+        # Pass 188: 合併破碎小節
         measures = self._merge_short_measures(measures, common_length)
         return measures
-
-    def _split_overlong_measures(self, measures, common_length):
-        """
-        Pass 192：過長小節 (5 拍, 6 拍, 7 拍...) 動態拆分器。
-        若小節 beat_count > common_length 且非末尾截斷，將其按 common_length 拆分為
-        一個標準 4 拍小節與剩餘短小節。拆分出的短小節隨後由 _merge_short_measures
-        在滿足 <= common_length 條件下自動補合。
-        """
-        if not measures or common_length < 2:
-            return measures
-
-        new_measures = []
-        for m in measures:
-            beats = m.get("beats", [])
-            b_count = len(beats)
-            if b_count > common_length and not m.get("is_incomplete"):
-                # 前 common_length 拍拆為標準小節
-                m1_beats = beats[:common_length]
-                m1 = {
-                    "measure": len(new_measures) + 1,
-                    "start_time": m1_beats[0]["time"],
-                    "end_time": beats[common_length]["time"] if len(beats) > common_length else m["end_time"],
-                    "beat_count": common_length,
-                    "beats": [{"beat": j + 1, "time": b["time"]} for j, b in enumerate(m1_beats)],
-                    "is_variable_length": False,
-                    "is_incomplete": False,
-                    "source": m.get("source"),
-                }
-                new_measures.append(m1)
-
-                # 剩餘拍點為殘餘短小節
-                rem_beats = beats[common_length:]
-                if rem_beats:
-                    rem_count = len(rem_beats)
-                    m2 = {
-                        "measure": len(new_measures) + 1,
-                        "start_time": rem_beats[0]["time"],
-                        "end_time": m["end_time"],
-                        "beat_count": rem_count,
-                        "beats": [{"beat": j + 1, "time": b["time"]} for j, b in enumerate(rem_beats)],
-                        "is_variable_length": rem_count != common_length,
-                        "is_incomplete": False,
-                        "source": m.get("source"),
-                    }
-                    new_measures.append(m2)
-            else:
-                m["measure"] = len(new_measures) + 1
-                new_measures.append(m)
-
-        return new_measures
 
     def _merge_short_measures(self, measures, common_length):
         """
