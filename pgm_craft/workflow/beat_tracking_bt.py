@@ -1716,15 +1716,19 @@ class KickBassDownbeatVerifierNode(BaseNode):
                         if _time_in_protected_ranges(float(fixed_beats[i, 0]), protected_ranges):
                             protected_labels[i] = fixed_beats[i, 1]
 
-                    fixed_beats[:, 1] = 0
-                    for idx in beat3_indices:
-                        # 跳過保護區段內的 index
-                        if idx not in protected_labels:
-                            fixed_beats[idx, 1] = 1
-
-                    # 蓋回保護區段的原始標號
-                    for i, label in protected_labels.items():
-                        fixed_beats[i, 1] = label
+                    # Pass 190：反相 180 度旋轉修復時，完整保留非保護區段 1-2-3-4 拍號網格連貫性。
+                    # 對於非保護區段拍號進行 +2 拍 (+180度) 平移旋轉：
+                    # Beat 3 -> Beat 1, Beat 4 -> Beat 2, Beat 1 -> Beat 3, Beat 2 -> Beat 4。
+                    # 避免將非保護拍號抹除成 0 導致交界處產生 5/6/7 拍破碎小節。
+                    for i in range(len(fixed_beats)):
+                        if i in protected_labels:
+                            fixed_beats[i, 1] = protected_labels[i]
+                        else:
+                            old_label = int(beats[i, 1])
+                            if old_label in (1, 2, 3, 4):
+                                fixed_beats[i, 1] = ((old_label - 1 + 2) % 4) + 1
+                            else:
+                                fixed_beats[i, 1] = 1
 
                     blackboard.set_val("beats", fixed_beats)
                     blackboard.set_val("refined_beats", fixed_beats)
