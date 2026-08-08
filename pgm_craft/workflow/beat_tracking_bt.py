@@ -168,16 +168,35 @@ def _score_beat_grid_quality(beats, kick_anchors=None, sections=None, alignment_
 
 
 def _relabel_beat_numbers(beats, first_label: int = 1, beats_per_bar: int = 4, protected_ranges=None):
+    """
+    Pass 191：順向時間軸重標號，確保受保護區段 (protected_ranges) 與非保護區段
+    交界處相位 0 跳躍、連貫延伸 1-2-3-4。
+    不再粗暴使用 np.arange(len) 覆蓋導致保護區段交界產生 5/6/7 拍破碎小節。
+    """
     arr = _coerce_beat_matrix(beats)
     if len(arr) == 0:
         return arr
     first_label = int(np.clip(int(first_label), 1, beats_per_bar))
     relabeled = arr.copy()
-    relabeled[:, 1] = ((np.arange(len(relabeled)) + first_label - 1) % beats_per_bar) + 1
-    if protected_ranges:
-        for i in range(len(arr)):
-            if _time_in_protected_ranges(float(arr[i, 0]), protected_ranges):
-                relabeled[i, 1] = arr[i, 1]  # 保護區段內的拍點，標號維持原樣不被覆蓋
+    last_label = None
+
+    for i in range(len(arr)):
+        t = float(arr[i, 0])
+        if protected_ranges and _time_in_protected_ranges(t, protected_ranges):
+            # 保護區段內：維護 Anchored 的精準標號
+            label = int(arr[i, 1])
+            if label not in range(1, beats_per_bar + 1):
+                label = (last_label % beats_per_bar) + 1 if last_label is not None else 1
+        else:
+            # 非保護區段：順應 last_label 連貫延伸拍號
+            if last_label is not None:
+                label = (last_label % beats_per_bar) + 1
+            else:
+                label = first_label
+
+        relabeled[i, 1] = label
+        last_label = label
+
     return relabeled
 
 
