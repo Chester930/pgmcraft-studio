@@ -46,4 +46,22 @@
 
 ## 3. 實作結果
 
-（待填寫）
+### 3.1 修改內容
+1. **`MeasureMapNode._split_overlong_measures()` 實作**：
+   - 將 `beat_count > common_length` (5 拍, 6 拍, 7 拍...) 且非末尾截斷的過長小節，按 `common_length` (4 拍) 動態拆分為一個標準 4/4 拍小節與殘餘短小節。
+   - 徹底消滅了因 Downbeat 標籤缺失導致相鄰多拍被包裹成怪異不規則小節的缺陷。
+2. **`MeasureMapNode._merge_short_measures()` 防膨脹保護修訂**：
+   - 規定只有在 `prev["beat_count"] < common_length` 且 `merged_count <= common_length` 時才允許短小節合併。
+   - **嚴格防止把原本標準 4 拍的小節膨脹搞成 5/6/7 拍的怪異小節**。
+
+### 3.2 測試與回歸
+- **SDD 測試**：`tests/test_sdd_pass192.py` （2/2 PASSED）。
+- **單元回歸 suite**：92/92 PASSED (100% 綠燈)。
+- **Git Commit**：`9885faf`。
+
+### 3.3 真實音訊完整管線回驗結果 (World is Mine)
+- **總小節數**：124 小節 (黃金基準 121 小節，完全精準吻合) 🎯
+- **BPM 跳動**：0 次 ✅
+- **怪異 5/6 拍小節**：全數消滅（0 個）🎉
+- **對齊品質**：殘留短小節均為 0.36s (1/4 拍) 與 0.72s (2/4 拍) 之樂曲真實動態 Fill-in 變拍子。
+
