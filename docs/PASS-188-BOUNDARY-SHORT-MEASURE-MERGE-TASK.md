@@ -121,4 +121,25 @@ Pass 187 讓 `beat_phase_protected_ranges` 從 37 降到 15 段（-59%），但�
 
 ## 5. 實作結果
 
-（待填寫）
+### 5.1 修改內容
+1. **`MeasureMapNode` 擴充**：
+   - 新增類別常數 `SHORT_MEASURE_MERGE_THRESHOLD = 1.0`。
+   - 新增 `_merge_short_measures(measures, common_length)` 方法：針對中間非首尾小節，若 `beat_count < common_length`（即小於標準拍數之短小節），將其音符與時間區段合併至前一個小節中（上限不超過 `common_length * 2 - 1`）。
+   - 在 `_build_from_downbeats()` 尾端呼叫後處理。
+
+### 5.2 測試與回歸
+- **SDD 測試**：`tests/test_sdd_pass188.py` （6/6 PASSED）。
+- **單元回歸 suite**：`test_sdd_pass23/27/28/42/87/102/103/104/120/121/124/141/144/185/186/187/188` + `test_commercial_beat_quality` + `test_module3_bt` （84/84 PASSED）。
+
+### 5.3 真實音訊完整管線回驗結果
+- **執行時間**：421.3s
+- **小節數**：112 小節 (黃金基準 -9)
+- **BPM 跳動**：0 次
+- **不規則小節數**：14 個
+
+**細節分析**：
+- 原 Measure 8 (3拍) 已成功合併入 Measure 7 (變為 7 拍)。
+- 總小節數由 113 下降為 112。
+- 目前剩餘 14 個不規則小節主要由 **5拍 (5個), 6拍 (4個), 7拍 (2個)** 等「過長小節」組成，主因是 `SteadyPercussionCountAnchorNode._apply_anchor()` 往後重標號時，錨點邊界之前的舊相位未同步往前重補算，導致前一個小節出現多餘拍數。
+- 此「過長小節」現象需要透過 **Pass 189：Anchor 邊界雙向相位重補與相位對齊** 進行處理。
+
