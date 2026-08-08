@@ -1140,7 +1140,9 @@ class SteadyPercussionCountAnchorNode(BaseNode):
             for k, (stem_key, run) in enumerate(accepted):
                 next_start = accepted[k + 1][1]["start_time"] if k + 1 < len(accepted) else float("inf")
                 before_labels = new_beats[:, 1].copy()
-                result, prot_start, prot_end = self._apply_anchor(new_beats, timestamps, run, next_start)
+                result, prot_start, prot_end = self._apply_anchor(
+                    new_beats, timestamps, run, next_start, protected_ranges
+                )
                 if result is not None:
                     new_beats = result
                     applied.append({
@@ -1344,10 +1346,17 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         )
         return unconfirmed <= self.max_unconfirmed_onsets
 
-    def _apply_anchor(self, beats: np.ndarray, timestamps: np.ndarray, run: dict, next_start: float):
+    def _apply_anchor(
+        self,
+        beats: np.ndarray,
+        timestamps: np.ndarray,
+        run: dict,
+        next_start: float,
+        protected_ranges: list = None,
+    ):
         """把這段連續擊點的第一下快照到最近的拍點，當作 Beat 1 錨點，再從
-        那個格點位置開始往後（含格點本身）用 1-2-3-4 循環重新標號，直到
-        下一個已接受的錨點（next_start）或曲末。找不到對應拍點就放棄。
+        那個格點位置開始往後用 1-2-3-4 循環重新標號，直到下一個已接受的錨點
+        （next_start）或曲末。找不到對應拍點就放棄。
 
         Pass 184：改成用「格點位置」（`idx - base_idx`）決定標號，不再用
         「onset 索引 k」（`(k % 4) + 1`）——舊寫法假設連續擊點對應到連續的
@@ -1356,7 +1365,13 @@ class SteadyPercussionCountAnchorNode(BaseNode):
         2，都能正確、連貫地標完整段格點。
 
         Pass 185：回傳 (beats, protected_start, protected_end)，讓 execute()
-        收集保護區段清單，下游節點不再覆蓋這段相位。"""
+        收集保護區段清單，下游節點不再覆蓋這段相位。
+
+        Pass 189：增加往前倒推重標號 (Backward Phase Alignment)——從 base_idx - 1
+        往前倒推標號直到遇到既有受保護區段或曲首 (idx=0)。解決錨點切入點前方
+        舊相位與新相位不對齊導致切出 5/6/7 拍過長小節的問題。"""
+        if protected_ranges is None:
+            protected_ranges = []
         onsets = run["onsets"]
         snapped_indexes = []
         for t in onsets:
@@ -1367,13 +1382,26 @@ class SteadyPercussionCountAnchorNode(BaseNode):
             snapped_indexes.append(idx)
 
         base_idx = snapped_indexes[0]
+        first_touched_idx = base_idx
         last_touched_idx = base_idx
+
+        # Pass 189：從 base_idx - 1 往前倒推標號，對齊交界處相位（遇到受保護區段即止）
+        for idx in range(base_idx - 1, -1, -1):
+            t = float(timestamps[idx])
+            if any(p_start <= t <= p_end for p_start, p_end in protected_ranges):
+                break
+            step_back = base_idx - idx
+            beats[idx, 1] = ((0 - step_back) % 4) + 1
+            first_touched_idx = idx
+
+        # 往後標號
         for idx in range(base_idx, len(beats)):
             if timestamps[idx] >= next_start:
                 break
             step = idx - base_idx
             beats[idx, 1] = (step % 4) + 1
             last_touched_idx = idx
+
         return beats, float(timestamps[base_idx]), float(timestamps[last_touched_idx])
 
 
