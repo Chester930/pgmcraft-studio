@@ -671,6 +671,7 @@ class MeasureMapNode(BaseNode):
                 beat_rows,
                 downbeat_indexes,
                 source="fallback_4beat" if using_fallback_refinement else "downbeat",
+                protected_ranges=protected_ranges,
             )
             status = "WARN" if using_fallback_refinement else "PASS"
             if using_fallback_refinement:
@@ -763,9 +764,11 @@ class MeasureMapNode(BaseNode):
 
         return beat_rows
 
-    def _build_from_downbeats(self, beat_rows, downbeat_indexes, source="downbeat"):
+    def _build_from_downbeats(self, beat_rows, downbeat_indexes, source="downbeat", protected_ranges=None):
         # Pass 170 fix: 過濾相鄰 downbeat 間距過小的 ghost downbeat 索引
-        downbeat_indexes = self._prune_ghost_downbeats(beat_rows, downbeat_indexes)
+        # Pass 196 修正：受保護區段（beat_phase_protected_ranges）內的 downbeat
+        # 是真實證據驗證過的錨點，永遠不當 ghost 剔除。
+        downbeat_indexes = self._prune_ghost_downbeats(beat_rows, downbeat_indexes, protected_ranges)
 
         common_length = self._common_measure_length(downbeat_indexes)
         measures = []
@@ -790,10 +793,10 @@ class MeasureMapNode(BaseNode):
             ))
 
         # Pass 188: 合併破碎小節
-        measures = self._merge_short_measures(measures, common_length)
+        measures = self._merge_short_measures(measures, common_length, protected_ranges)
         return measures
 
-    def _merge_short_measures(self, measures, common_length):
+    def _merge_short_measures(self, measures, common_length, protected_ranges=None):
         """
         Pass 188 / Pass 192 修訂：將太短的「破碎小節」精確合併。
 
@@ -801,9 +804,20 @@ class MeasureMapNode(BaseNode):
         只有當前一個小節也是短小節 (prev["beat_count"] < common_length)，且
         合併後的 merged_count <= common_length 時才進行合併。
         嚴格防止把原本標準 4 拍的小節膨脹搞成 5/6/7 拍的怪異小節！
+
+        Pass 196 修正：如果 `m`（將被吞併、往後接到 prev 的那個短小節）自己
+        的起點是受保護的 downbeat（`beat_phase_protected_ranges` 驗證過的
+        真實錨點），不能合併——合併後 `_measure_entry` 會用位置重新編號，
+        這個錨點的「beat 1」身分會被洗掉、變成合併小節裡的第 3、4 拍，
+        等於白白讓 Pass 196 在 `_prune_ghost_downbeats` 保住的證據，在這裡
+        又被吃掉一次。
         """
         if not measures or common_length < 1:
             return measures
+        protected_ranges = protected_ranges or []
+
+        def _is_protected(t):
+            return any(p_start <= t <= p_end for p_start, p_end in protected_ranges)
 
         changed = True
         while changed:
@@ -812,6 +826,9 @@ class MeasureMapNode(BaseNode):
             while i < len(measures):  # 掃描至最後一個小節
                 m = measures[i]
                 if m.get("is_incomplete"):
+                    i += 1
+                    continue
+                if _is_protected(m["start_time"]):
                     i += 1
                     continue
                 if m["beat_count"] < common_length:
@@ -844,10 +861,19 @@ class MeasureMapNode(BaseNode):
 
         return measures
 
-    def _prune_ghost_downbeats(self, beat_rows, downbeat_indexes):
+    def _prune_ghost_downbeats(self, beat_rows, downbeat_indexes, protected_ranges=None):
         """
         Pass 170: 過濾相鄰間距過小的重複 ghost downbeat 索引。
         當兩個相鄰 downbeat 之間的 beat 數量 < 0.6 * common_step，視為 ghost，移除後一個 downbeat。
+
+        Pass 196 修正：這個門檻是 Pass 170 時代的假設——當時 Stage 3 還沒有
+        `SteadyPercussionCountAnchorNode`（Pass 181 才引入）這種會針對局部
+        真實鼓點證據建立密集保護錨點的節點，「兩個離得很近的 downbeat 幾乎
+        一定是雜訊」在當時是合理的。但現在 `beat_phase_protected_ranges`
+        常常涵蓋大半首歌（真實資料觀測到 33 段），近距離 downbeat 候選
+        可能是兩個各自獨立、都有真實證據驗證過的保護錨點剛好相鄰，不再能
+        無差別當雜訊剔除——受保護區段內的 downbeat 永遠保留，不管間距
+        多近。
         """
         if len(downbeat_indexes) < 3:
             return downbeat_indexes
@@ -867,13 +893,19 @@ class MeasureMapNode(BaseNode):
             common_step = 4
 
         ghost_threshold = 0.6 * common_step
+        protected_ranges = protected_ranges or []
+
+        def _is_protected(t):
+            return any(p_start <= t <= p_end for p_start, p_end in protected_ranges)
 
         pruned = [downbeat_indexes[0]]
         for i in range(1, len(downbeat_indexes)):
-            gap = downbeat_indexes[i] - pruned[-1]
-            if gap >= ghost_threshold:
-                pruned.append(downbeat_indexes[i])
-            # 若 gap < threshold，此 downbeat 為 ghost，跳過
+            idx = downbeat_indexes[i]
+            gap = idx - pruned[-1]
+            t = float(beat_rows[idx]["time"])
+            if gap >= ghost_threshold or _is_protected(t):
+                pruned.append(idx)
+            # 若 gap < threshold 且不在保護區段內，此 downbeat 為 ghost，跳過
 
         return pruned
 

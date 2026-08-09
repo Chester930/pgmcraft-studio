@@ -1150,3 +1150,38 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   真正的根因（`_prune_ghost_downbeats`）待下一個任務評估是否/如何調整，
   範圍比這次大很多，需要重新設計。
 
+### Pass 196：`_prune_ghost_downbeats` / `_merge_short_measures` 尊重保護區段
+
+- 背景：見上方 Pass 195 條目的根因分析。核對真實資料證實，77.803s 和
+  78.542s 這種「間距只有 2 拍」的 downbeat 候選，其實各自落在
+  `SteadyPercussionCountAnchorNode` 建立的兩個相鄰保護區段內——都是
+  真實證據驗證過的錨點，不是雜訊。Pass 170 的 ghost-pruning 完全不知道
+  `beat_phase_protected_ranges` 這回事，純粹用陣列位置間距判斷，把後面
+  那個真實、受保護的錨點當雜訊剔除掉了。
+- 修法：`_prune_ghost_downbeats` 與 `_merge_short_measures` 都新增
+  `protected_ranges` 參數——受保護的 downbeat 永遠不被 ghost-pruning
+  剔除；即將被吞併進前一個小節的短小節，如果自己的起點是受保護的
+  downbeat，也不合併（否則 `_merge_short_measures` 會在下一步把
+  ghost-pruning 剛救回來的證據，用位置重新編號的方式又洗掉一次——這是
+  實作過程中發現、原訂計畫沒預料到的第二層問題）。
+- 測試：新增 `tests/test_sdd_pass196.py`（3 項全過）。既有
+  `tests/test_sdd_pass170/188/192/193/194.py`、`tests/test_bt_workflow.py`
+  共 38 項全數通過。
+- 真實資料：以 77.803s 為例，確認從「一個吃掉 78.542 真實錨點的 6 拍
+  怪異小節」變成「兩個正確的小節，78.542 正確標成 beat 1」。Pass 194
+  遺留的 9 個問題點裡 7 個（21.458s/32.382s/77.803s/81.446s/93.802s/
+  108.652s/152.023s）出現同樣的修復模式；2 個（8.041s/97.197s）這次
+  沒有被拆開，代表跟保護區段衝突無關，是別的問題，留待後續視聽感驗證
+  結果決定要不要繼續追查。整體：122 小節（差黃金基準 **+1**，是整個
+  Pass 178-196 系列裡最接近黃金基準、且是真實而非造假的一次結果）、
+  BPM 跳動維持 0、18-20 秒目標區段依然正確。`irregular_measure_count`
+  數字本身沒有下降（11），但組成完全不同——不再是少數大型怪異小節
+  吃掉證據，而是多個真實反映「這裡有兩個緊鄰驗證過重音」的小型精確
+  小節。
+- 任務書：
+  `docs/PASS-196-GHOST-DOWNBEAT-PRUNING-RESPECTS-PROTECTION-TASK.md`。
+- 尚待確認：請使用者實際試聽，確認這 7 個位置聽起來是否真的更準確，
+  以及 8.041s/97.197s 這兩個未解決位置的問題有多明顯。
+- 狀態：已實作、單元測試與真實音訊完整管線回歸皆已通過，確認是真正的
+  修復（不是又一次被指標騙過去），待使用者試聽確認最終聽感。
+
