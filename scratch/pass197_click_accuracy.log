@@ -1,0 +1,215 @@
+載入鼓組音軌，偵測真實 onset...
+kick: 537 onsets, snare: 511, hihat: 408, drums: 492
+
+==========================================================================================
+問題點 8.041s（6.0s - 12.0s）
+==========================================================================================
+  click@6.168s  最近=kick(差450.1ms)  [kick=450.1ms snare=687.6ms hihat=641.2ms drums=687.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@6.616s  最近=kick(差1.4ms)  [kick=1.4ms snare=1136.3ms hihat=1089.9ms drums=1136.3ms]  ✅ 有對應真實擊點
+  click@7.011s  最近=kick(差392.9ms)  [kick=392.9ms snare=1530.7ms hihat=1484.2ms drums=1530.7ms]  ❌ 附近沒有明顯鼓組擊點
+  click@7.251s  最近=kick(差633.2ms)  [kick=633.2ms snare=1771.0ms hihat=1724.5ms drums=1771.0ms]  ❌ 附近沒有明顯鼓組擊點
+  click@7.645s  最近=kick(差1027.5ms)  [kick=1027.5ms snare=2165.3ms hihat=2118.9ms drums=2165.3ms]  ❌ 附近沒有明顯鼓組擊點
+  click@8.041s  最近=kick(差1423.7ms)  [kick=1423.7ms snare=2561.5ms hihat=2515.0ms drums=2561.5ms]  ❌ 附近沒有明顯鼓組擊點
+  click@8.438s  最近=kick(差1820.3ms)  [kick=1820.3ms snare=2958.1ms hihat=2911.6ms drums=2958.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@8.832s  最近=kick(差2214.6ms)  [kick=2214.6ms snare=2777.7ms hihat=2847.3ms drums=2800.9ms]  ❌ 附近沒有明顯鼓組擊點
+  click@9.197s  最近=snare(差2413.0ms)  [kick=2579.3ms snare=2413.0ms hihat=2482.6ms drums=2436.2ms]  ❌ 附近沒有明顯鼓組擊點
+  click@9.482s  最近=snare(差2127.7ms)  [kick=2847.5ms snare=2127.7ms hihat=2197.4ms drums=2150.9ms]  ❌ 附近沒有明顯鼓組擊點
+  click@9.836s  最近=snare(差1773.9ms)  [kick=2493.7ms snare=1773.9ms hihat=1843.5ms drums=1797.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@10.192s  最近=snare(差1418.4ms)  [kick=2138.2ms snare=1418.4ms hihat=1488.1ms drums=1441.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@10.590s  最近=snare(差1019.6ms)  [kick=1739.4ms snare=1019.6ms hihat=1089.3ms drums=1042.8ms]  ❌ 附近沒有明顯鼓組擊點
+  click@11.007s  最近=snare(差602.8ms)  [kick=1322.7ms snare=602.8ms hihat=672.5ms drums=626.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@11.359s  最近=snare(差250.8ms)  [kick=970.6ms snare=250.8ms hihat=320.5ms drums=274.0ms]  ❌ 附近沒有明顯鼓組擊點
+  click@11.715s  最近=hihat(差35.0ms)  [kick=615.1ms snare=104.7ms hihat=35.0ms drums=81.5ms]  ✅ 有對應真實擊點
+
+==========================================================================================
+問題點 21.458s（19.0s - 25.0s）
+==========================================================================================
+  click@19.286s  最近=kick(差13.4ms)  [kick=13.4ms snare=83.0ms hihat=13.4ms drums=83.0ms]  ✅ 有對應真實擊點
+  click@19.645s  最近=snare(差47.5ms)  [kick=324.0ms snare=47.5ms hihat=47.5ms drums=47.5ms]  ✅ 有對應真實擊點
+  click@20.011s  最近=snare(差18.3ms)  [kick=41.5ms snare=18.3ms hihat=413.0ms drums=18.3ms]  ✅ 有對應真實擊點
+  click@20.359s  最近=kick(差18.7ms)  [kick=18.7ms snare=18.7ms hihat=329.6ms drums=18.7ms]  ✅ 有對應真實擊點
+  click@20.705s  最近=hihat(差16.3ms)  [kick=39.6ms snare=39.6ms hihat=16.3ms drums=39.6ms]  ✅ 有對應真實擊點
+  click@21.082s  最近=kick(差94.9ms)  [kick=94.9ms snare=164.6ms hihat=164.6ms drums=164.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@21.458s  最近=kick(差136.3ms)  [kick=136.3ms snare=136.3ms hihat=212.0ms drums=136.3ms]  ❌ 附近沒有明顯鼓組擊點
+  click@21.804s  最近=kick(差24.0ms)  [kick=24.0ms snare=24.0ms hihat=47.3ms drums=47.3ms]  ✅ 有對應真實擊點
+  click@22.158s  最近=snare(差29.4ms)  [kick=75.9ms snare=29.4ms hihat=29.4ms drums=29.4ms]  ✅ 有對應真實擊點
+  click@22.551s  最近=kick(差65.4ms)  [kick=65.4ms snare=251.2ms hihat=320.8ms drums=251.2ms]  ❌ 附近沒有明顯鼓組擊點
+  click@22.883s  最近=hihat(差11.3ms)  [kick=104.2ms snare=81.0ms hihat=11.3ms drums=81.0ms]  ✅ 有對應真實擊點
+  click@23.257s  最近=kick(差14.0ms)  [kick=14.0ms snare=14.0ms hihat=14.0ms drums=14.0ms]  ✅ 有對應真實擊點
+  click@23.601s  最近=snare(差9.2ms)  [kick=32.4ms snare=9.2ms hihat=9.2ms drums=9.2ms]  ✅ 有對應真實擊點
+  click@24.005s  最近=hihat(差65.1ms)  [kick=120.6ms snare=167.1ms hihat=65.1ms drums=167.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@24.343s  最近=snare(差31.8ms)  [kick=177.2ms snare=31.8ms hihat=339.7ms drums=31.8ms]  ✅ 有對應真實擊點
+  click@24.723s  最近=kick(差40.1ms)  [kick=40.1ms snare=40.1ms hihat=40.1ms drums=40.1ms]  ✅ 有對應真實擊點
+
+==========================================================================================
+問題點 32.382s（30.0s - 36.0s）
+==========================================================================================
+  click@30.183s  最近=kick(差20.2ms)  [kick=20.2ms snare=66.7ms hihat=66.7ms drums=66.7ms]  ✅ 有對應真實擊點
+  click@30.520s  最近=kick(差9.0ms)  [kick=9.0ms snare=9.0ms hihat=9.0ms drums=9.0ms]  ✅ 有對應真實擊點
+  click@30.880s  最近=hihat(差2.5ms)  [kick=20.7ms snare=20.7ms hihat=2.5ms drums=20.7ms]  ✅ 有對應真實擊點
+  click@31.257s  最近=kick(差3.3ms)  [kick=3.3ms snare=3.3ms hihat=3.3ms drums=3.3ms]  ✅ 有對應真實擊點
+  click@31.643s  最近=kick(差17.0ms)  [kick=17.0ms snare=17.0ms hihat=17.0ms drums=17.0ms]  ✅ 有對應真實擊點
+  click@32.010s  最近=kick(差12.5ms)  [kick=12.5ms snare=35.8ms hihat=35.8ms drums=35.8ms]  ✅ 有對應真實擊點
+  click@32.382s  最近=snare(差13.6ms)  [kick=36.8ms snare=13.6ms hihat=125.8ms drums=13.6ms]  ✅ 有對應真實擊點
+  click@32.738s  最近=kick(差44.3ms)  [kick=44.3ms snare=113.9ms hihat=113.9ms drums=113.9ms]  ✅ 有對應真實擊點
+  click@33.096s  最近=snare(差30.8ms)  [kick=54.0ms snare=30.8ms hihat=30.8ms drums=30.8ms]  ✅ 有對應真實擊點
+  click@33.448s  最近=kick(差34.4ms)  [kick=34.4ms snare=34.4ms hihat=34.4ms drums=34.4ms]  ✅ 有對應真實擊點
+  click@33.834s  最近=kick(差26.1ms)  [kick=26.1ms snare=26.1ms hihat=26.1ms drums=26.1ms]  ✅ 有對應真實擊點
+  click@34.166s  最近=snare(差9.1ms)  [kick=55.6ms snare=9.1ms hihat=9.1ms drums=9.1ms]  ✅ 有對應真實擊點
+  click@34.557s  最近=kick(差28.9ms)  [kick=28.9ms snare=28.9ms hihat=52.1ms drums=28.9ms]  ✅ 有對應真實擊點
+  click@34.904s  最近=kick(差27.5ms)  [kick=27.5ms snare=120.4ms hihat=27.5ms drums=27.5ms]  ✅ 有對應真實擊點
+  click@35.300s  最近=kick(差28.4ms)  [kick=28.4ms snare=28.4ms hihat=28.4ms drums=28.4ms]  ✅ 有對應真實擊點
+  click@35.637s  最近=hihat(差17.5ms)  [kick=40.7ms snare=87.1ms hihat=17.5ms drums=87.1ms]  ✅ 有對應真實擊點
+
+==========================================================================================
+Pass197仲裁 77.803s vs 78.542s（75.0s - 82.0s）
+==========================================================================================
+  click@75.268s  最近=snare(差12.1ms)  [kick=35.4ms snare=12.1ms hihat=312.9ms drums=12.1ms]  ✅ 有對應真實擊點
+  click@75.635s  最近=kick(差7.3ms)  [kick=7.3ms snare=53.8ms hihat=53.8ms drums=53.8ms]  ✅ 有對應真實擊點
+  click@76.007s  最近=snare(差7.7ms)  [kick=30.9ms snare=7.7ms hihat=154.9ms drums=7.7ms]  ✅ 有對應真實擊點
+  click@76.367s  最近=kick(差42.9ms)  [kick=42.9ms snare=42.9ms hihat=42.9ms drums=42.9ms]  ✅ 有對應真實擊點
+  click@76.737s  最近=kick(差18.8ms)  [kick=18.8ms snare=18.8ms hihat=18.8ms drums=18.8ms]  ✅ 有對應真實擊點
+  click@77.096s  最近=kick(差6.1ms)  [kick=6.1ms snare=29.3ms hihat=75.8ms drums=75.8ms]  ✅ 有對應真實擊點
+  click@77.450s  最近=kick(差35.0ms)  [kick=35.0ms snare=35.0ms hihat=58.2ms drums=35.0ms]  ✅ 有對應真實擊點
+  click@77.803s  最近=kick(差16.1ms)  [kick=16.1ms snare=39.4ms hihat=39.4ms drums=39.4ms]  ✅ 有對應真實擊點
+  click@78.180s  最近=kick(差22.1ms)  [kick=22.1ms snare=161.4ms hihat=138.2ms drums=138.2ms]  ✅ 有對應真實擊點
+  click@78.542s  最近=kick(差35.1ms)  [kick=35.1ms snare=35.1ms hihat=128.0ms drums=104.7ms]  ✅ 有對應真實擊點
+  click@78.889s  最近=snare(差10.3ms)  [kick=103.2ms snare=10.3ms hihat=361.2ms drums=10.3ms]  ✅ 有對應真實擊點
+  click@79.266s  最近=snare(差16.3ms)  [kick=62.8ms snare=16.3ms hihat=16.3ms drums=109.2ms]  ✅ 有對應真實擊點
+  click@79.672s  最近=snare(差27.3ms)  [kick=73.7ms snare=27.3ms hihat=228.1ms drums=27.3ms]  ✅ 有對應真實擊點
+  click@80.020s  最近=snare(差27.5ms)  [kick=50.7ms snare=27.5ms hihat=120.4ms drums=27.5ms]  ✅ 有對應真實擊點
+  click@80.377s  最近=kick(差35.8ms)  [kick=35.8ms snare=35.8ms hihat=59.0ms drums=35.8ms]  ✅ 有對應真實擊點
+  click@80.710s  最近=kick(差2.4ms)  [kick=2.4ms snare=2.4ms hihat=113.7ms drums=90.5ms]  ✅ 有對應真實擊點
+  click@81.083s  最近=kick(差22.0ms)  [kick=22.0ms snare=22.0ms hihat=22.0ms drums=22.0ms]  ✅ 有對應真實擊點
+  click@81.446s  最近=kick(差13.8ms)  [kick=13.8ms snare=37.0ms hihat=60.2ms drums=37.0ms]  ✅ 有對應真實擊點
+  click@81.818s  最近=kick(差13.7ms)  [kick=13.7ms snare=13.7ms hihat=357.8ms drums=13.7ms]  ✅ 有對應真實擊點
+
+==========================================================================================
+問題點 81.446s（79.0s - 86.0s）
+==========================================================================================
+  click@79.266s  最近=snare(差16.3ms)  [kick=62.8ms snare=16.3ms hihat=16.3ms drums=109.2ms]  ✅ 有對應真實擊點
+  click@79.672s  最近=snare(差27.3ms)  [kick=73.7ms snare=27.3ms hihat=228.1ms drums=27.3ms]  ✅ 有對應真實擊點
+  click@80.020s  最近=snare(差27.5ms)  [kick=50.7ms snare=27.5ms hihat=120.4ms drums=27.5ms]  ✅ 有對應真實擊點
+  click@80.377s  最近=kick(差35.8ms)  [kick=35.8ms snare=35.8ms hihat=59.0ms drums=35.8ms]  ✅ 有對應真實擊點
+  click@80.710s  最近=kick(差2.4ms)  [kick=2.4ms snare=2.4ms hihat=113.7ms drums=90.5ms]  ✅ 有對應真實擊點
+  click@81.083s  最近=kick(差22.0ms)  [kick=22.0ms snare=22.0ms hihat=22.0ms drums=22.0ms]  ✅ 有對應真實擊點
+  click@81.446s  最近=kick(差13.8ms)  [kick=13.8ms snare=37.0ms hihat=60.2ms drums=37.0ms]  ✅ 有對應真實擊點
+  click@81.818s  最近=kick(差13.7ms)  [kick=13.7ms snare=13.7ms hihat=357.8ms drums=13.7ms]  ✅ 有對應真實擊點
+  click@82.187s  最近=hihat(差11.3ms)  [kick=57.8ms snare=57.8ms hihat=11.3ms drums=57.8ms]  ✅ 有對應真實擊點
+  click@82.549s  最近=kick(差25.2ms)  [kick=25.2ms snare=25.2ms hihat=71.6ms drums=25.2ms]  ✅ 有對應真實擊點
+  click@82.905s  最近=drums整軌(差9.8ms)  [kick=79.5ms snare=33.0ms hihat=56.3ms drums=9.8ms]  ✅ 有對應真實擊點
+  click@83.275s  最近=kick(差31.8ms)  [kick=31.8ms snare=31.8ms hihat=31.8ms drums=31.8ms]  ✅ 有對應真實擊點
+  click@83.632s  最近=kick(差6.1ms)  [kick=6.1ms snare=40.4ms hihat=17.2ms drums=40.4ms]  ✅ 有對應真實擊點
+  click@84.004s  最近=kick(差17.9ms)  [kick=17.9ms snare=17.9ms hihat=87.5ms drums=17.9ms]  ✅ 有對應真實擊點
+  click@84.374s  最近=kick(差15.7ms)  [kick=15.7ms snare=38.9ms hihat=38.9ms drums=38.9ms]  ✅ 有對應真實擊點
+  click@84.722s  最近=kick(差15.3ms)  [kick=15.3ms snare=61.7ms hihat=84.9ms drums=38.5ms]  ✅ 有對應真實擊點
+  click@85.086s  最近=kick(差55.0ms)  [kick=55.0ms snare=124.6ms hihat=55.0ms drums=55.0ms]  ❌ 附近沒有明顯鼓組擊點
+  click@85.440s  最近=hihat(差36.7ms)  [kick=83.1ms snare=106.3ms hihat=36.7ms drums=83.1ms]  ✅ 有對應真實擊點
+  click@85.832s  最近=kick(差57.7ms)  [kick=57.7ms snare=57.7ms hihat=57.7ms drums=57.7ms]  ❌ 附近沒有明顯鼓組擊點
+
+==========================================================================================
+問題點 93.802s（91.0s - 97.0s）
+==========================================================================================
+  click@91.278s  最近=kick(差23.5ms)  [kick=23.5ms snare=69.4ms hihat=324.8ms drums=92.6ms]  ✅ 有對應真實擊點
+  click@91.633s  最近=kick(差30.7ms)  [kick=30.7ms snare=30.7ms hihat=30.7ms drums=30.7ms]  ✅ 有對應真實擊點
+  click@92.020s  最近=kick(差22.5ms)  [kick=22.5ms snare=22.5ms hihat=22.5ms drums=22.5ms]  ✅ 有對應真實擊點
+  click@92.340s  最近=kick(差29.0ms)  [kick=29.0ms snare=29.0ms hihat=63.9ms drums=63.9ms]  ✅ 有對應真實擊點
+  click@92.680s  最近=snare(差14.1ms)  [kick=37.3ms snare=14.1ms hihat=14.1ms drums=14.1ms]  ✅ 有對應真實擊點
+  click@93.062s  最近=snare(差20.0ms)  [kick=89.7ms snare=20.0ms hihat=368.3ms drums=112.9ms]  ✅ 有對應真實擊點
+  click@93.441s  最近=kick(差3.4ms)  [kick=3.4ms snare=26.7ms hihat=3.4ms drums=26.7ms]  ✅ 有對應真實擊點
+  click@93.802s  最近=kick(差16.3ms)  [kick=16.3ms snare=39.5ms hihat=285.5ms drums=16.3ms]  ✅ 有對應真實擊點
+  click@94.186s  最近=kick(差5.8ms)  [kick=5.8ms snare=5.8ms hihat=98.7ms drums=5.8ms]  ✅ 有對應真實擊點
+  click@94.544s  最近=kick(差16.0ms)  [kick=16.0ms snare=16.0ms hihat=332.3ms drums=16.0ms]  ✅ 有對應真實擊點
+  click@94.890s  最近=kick(差13.1ms)  [kick=13.1ms snare=59.5ms hihat=13.1ms drums=59.5ms]  ✅ 有對應真實擊點
+  click@95.256s  最近=kick(差30.8ms)  [kick=30.8ms snare=30.8ms hihat=30.8ms drums=30.8ms]  ✅ 有對應真實擊點
+  click@95.650s  最近=kick(差53.9ms)  [kick=53.9ms snare=53.9ms hihat=425.5ms drums=53.9ms]  ❌ 附近沒有明顯鼓組擊點
+  click@96.010s  最近=kick(差41.9ms)  [kick=41.9ms snare=413.4ms hihat=784.9ms drums=413.4ms]  ✅ 有對應真實擊點
+  click@96.372s  最近=kick(差404.0ms)  [kick=404.0ms snare=775.5ms hihat=1147.0ms drums=775.5ms]  ❌ 附近沒有明顯鼓組擊點
+  click@96.838s  最近=kick(差245.0ms)  [kick=245.0ms snare=1241.1ms hihat=1612.6ms drums=1241.1ms]  ❌ 附近沒有明顯鼓組擊點
+
+==========================================================================================
+問題點 97.197s（95.0s - 101.0s）
+==========================================================================================
+  click@95.256s  最近=kick(差30.8ms)  [kick=30.8ms snare=30.8ms hihat=30.8ms drums=30.8ms]  ✅ 有對應真實擊點
+  click@95.650s  最近=kick(差53.9ms)  [kick=53.9ms snare=53.9ms hihat=425.5ms drums=53.9ms]  ❌ 附近沒有明顯鼓組擊點
+  click@96.010s  最近=kick(差41.9ms)  [kick=41.9ms snare=413.4ms hihat=784.9ms drums=413.4ms]  ✅ 有對應真實擊點
+  click@96.372s  最近=kick(差404.0ms)  [kick=404.0ms snare=775.5ms hihat=1147.0ms drums=775.5ms]  ❌ 附近沒有明顯鼓組擊點
+  click@96.838s  最近=kick(差245.0ms)  [kick=245.0ms snare=1241.1ms hihat=1612.6ms drums=1241.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@97.197s  最近=kick(差114.9ms)  [kick=114.9ms snare=1324.8ms hihat=1719.5ms drums=1324.8ms]  ❌ 附近沒有明顯鼓組擊點
+  click@97.604s  最近=kick(差196.7ms)  [kick=196.7ms snare=917.9ms hihat=1312.6ms drums=917.9ms]  ❌ 附近沒有明顯鼓組擊點
+  click@98.022s  最近=kick(差129.0ms)  [kick=129.0ms snare=500.5ms hihat=895.3ms drums=500.5ms]  ❌ 附近沒有明顯鼓組擊點
+  click@98.439s  最近=kick(差83.2ms)  [kick=83.2ms snare=83.2ms hihat=477.9ms drums=83.2ms]  ❌ 附近沒有明顯鼓組擊點
+  click@98.804s  最近=kick(差90.0ms)  [kick=90.0ms snare=90.0ms hihat=113.2ms drums=90.0ms]  ❌ 附近沒有明顯鼓組擊點
+  click@99.317s  最近=kick(差203.4ms)  [kick=203.4ms snare=423.6ms hihat=273.0ms drums=423.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@99.740s  最近=hihat(差149.6ms)  [kick=219.3ms snare=221.9ms hihat=149.6ms drums=268.3ms]  ❌ 附近沒有明顯鼓組擊點
+  click@100.182s  最近=snare(差151.8ms)  [kick=500.1ms snare=151.8ms hihat=175.1ms drums=151.8ms]  ❌ 附近沒有明顯鼓組擊點
+  click@100.557s  最近=kick(差124.7ms)  [kick=124.7ms snare=124.7ms hihat=124.7ms drums=124.7ms]  ❌ 附近沒有明顯鼓組擊點
+
+==========================================================================================
+問題點 108.652s（106.0s - 112.0s）
+==========================================================================================
+  click@106.180s  最近=kick(差18.4ms)  [kick=18.4ms snare=41.6ms hihat=41.6ms drums=41.6ms]  ✅ 有對應真實擊點
+  click@106.520s  最近=snare(差10.1ms)  [kick=33.3ms snare=10.1ms hihat=33.3ms drums=33.3ms]  ✅ 有對應真實擊點
+  click@106.880s  最近=kick(差1.5ms)  [kick=1.5ms snare=21.8ms hihat=68.2ms drums=21.8ms]  ✅ 有對應真實擊點
+  click@107.240s  最近=kick(差13.0ms)  [kick=13.0ms snare=13.0ms hihat=33.5ms drums=13.0ms]  ✅ 有對應真實擊點
+  click@107.615s  最近=kick(差148.9ms)  [kick=148.9ms snare=172.1ms hihat=357.9ms drums=172.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@107.973s  最近=hihat(差0.1ms)  [kick=69.6ms snare=23.2ms hihat=0.1ms drums=23.2ms]  ✅ 有對應真實擊點
+  click@108.296s  最近=snare(差187.9ms)  [kick=211.1ms snare=187.9ms hihat=234.3ms drums=187.9ms]  ❌ 附近沒有明顯鼓組擊點
+  click@108.652s  最近=hihat(差63.9ms)  [kick=145.0ms snare=168.3ms hihat=63.9ms drums=63.9ms]  ❌ 附近沒有明顯鼓組擊點
+  click@109.010s  最近=hihat(差8.0ms)  [kick=54.4ms snare=54.4ms hihat=8.0ms drums=54.4ms]  ✅ 有對應真實擊點
+  click@109.460s  最近=kick(差24.7ms)  [kick=24.7ms snare=24.7ms hihat=24.7ms drums=24.7ms]  ✅ 有對應真實擊點
+  click@109.818s  最近=hihat(差10.8ms)  [kick=35.7ms snare=34.0ms hihat=10.8ms drums=10.8ms]  ✅ 有對應真實擊點
+  click@110.184s  最近=kick(差28.6ms)  [kick=28.6ms snare=28.6ms hihat=28.6ms drums=28.6ms]  ✅ 有對應真實擊點
+  click@110.536s  最近=snare(差32.4ms)  [kick=171.7ms snare=32.4ms hihat=102.1ms drums=102.1ms]  ✅ 有對應真實擊點
+  click@110.936s  最近=kick(差83.7ms)  [kick=83.7ms snare=107.0ms hihat=107.0ms drums=107.0ms]  ❌ 附近沒有明顯鼓組擊點
+  click@111.301s  最近=hihat(差8.2ms)  [kick=131.1ms snare=131.1ms hihat=8.2ms drums=131.1ms]  ✅ 有對應真實擊點
+  click@111.667s  最近=kick(差160.7ms)  [kick=160.7ms snare=160.7ms hihat=160.7ms drums=160.7ms]  ❌ 附近沒有明顯鼓組擊點
+
+==========================================================================================
+問題點 152.023s（149.0s - 156.0s）
+==========================================================================================
+  click@149.046s  最近=kick(差322.5ms)  [kick=322.5ms snare=1065.6ms hihat=1065.6ms drums=1065.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@149.460s  最近=kick(差736.1ms)  [kick=736.1ms snare=889.3ms hihat=819.6ms drums=889.3ms]  ❌ 附近沒有明顯鼓組擊點
+  click@149.813s  最近=hihat(差467.0ms)  [kick=536.6ms snare=536.6ms hihat=467.0ms drums=536.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@150.180s  最近=hihat(差99.5ms)  [kick=169.2ms snare=169.2ms hihat=99.5ms drums=169.2ms]  ❌ 附近沒有明顯鼓組擊點
+  click@150.540s  最近=kick(差5.0ms)  [kick=5.0ms snare=5.0ms hihat=18.2ms drums=5.0ms]  ✅ 有對應真實擊點
+  click@150.939s  最近=kick(差56.2ms)  [kick=56.2ms snare=102.7ms hihat=56.2ms drums=149.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@151.286s  最近=kick(差131.8ms)  [kick=131.8ms snare=155.0ms hihat=340.8ms drums=155.0ms]  ❌ 附近沒有明顯鼓組擊點
+  click@151.663s  最近=kick(差13.6ms)  [kick=13.6ms snare=36.8ms hihat=36.8ms drums=36.8ms]  ✅ 有對應真實擊點
+  click@152.023s  最近=kick(差140.9ms)  [kick=140.9ms snare=184.2ms hihat=396.3ms drums=184.2ms]  ❌ 附近沒有明顯鼓組擊點
+  click@152.392s  最近=drums整軌(差22.5ms)  [kick=163.3ms snare=115.4ms hihat=256.2ms drums=22.5ms]  ✅ 有對應真實擊點
+  click@152.743s  最近=kick(差71.3ms)  [kick=71.3ms snare=94.6ms hihat=94.6ms drums=94.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@153.089s  最近=snare(差23.1ms)  [kick=69.5ms snare=23.1ms hihat=46.3ms drums=23.1ms]  ✅ 有對應真實擊點
+  click@153.467s  最近=hihat(差6.1ms)  [kick=29.3ms snare=75.8ms hihat=6.1ms drums=6.1ms]  ✅ 有對應真實擊點
+  click@153.821s  最近=snare(差35.2ms)  [kick=58.4ms snare=35.2ms hihat=313.1ms drums=58.4ms]  ✅ 有對應真實擊點
+  click@154.181s  最近=kick(差23.4ms)  [kick=23.4ms snare=23.4ms hihat=46.7ms drums=23.4ms]  ✅ 有對應真實擊點
+  click@154.549s  最近=kick(差3.3ms)  [kick=3.3ms snare=19.9ms hihat=3.3ms drums=19.9ms]  ✅ 有對應真實擊點
+  click@154.948s  最近=kick(差47.8ms)  [kick=47.8ms snare=114.7ms hihat=396.1ms drums=114.7ms]  ✅ 有對應真實擊點
+  click@155.313s  最近=kick(差121.6ms)  [kick=121.6ms snare=144.8ms hihat=214.5ms drums=144.8ms]  ❌ 附近沒有明顯鼓組擊點
+  click@155.637s  最近=kick(差16.8ms)  [kick=16.8ms snare=16.8ms hihat=109.7ms drums=16.8ms]  ✅ 有對應真實擊點
+  click@155.996s  最近=kick(差4.7ms)  [kick=4.7ms snare=51.2ms hihat=51.2ms drums=51.2ms]  ✅ 有對應真實擊點
+
+==========================================================================================
+18-20秒目標區段（16.0s - 22.0s）
+==========================================================================================
+  click@16.040s  最近=kick(差957.2ms)  [kick=957.2ms snare=1039.7ms hihat=1016.5ms drums=1016.5ms]  ❌ 附近沒有明顯鼓組擊點
+  click@16.396s  最近=kick(差601.5ms)  [kick=601.5ms snare=1395.5ms hihat=1372.2ms drums=1372.2ms]  ❌ 附近沒有明顯鼓組擊點
+  click@16.744s  最近=kick(差253.0ms)  [kick=253.0ms snare=1743.9ms hihat=1720.7ms drums=1720.7ms]  ❌ 附近沒有明顯鼓組擊點
+  click@17.145s  最近=kick(差147.7ms)  [kick=147.7ms snare=1408.1ms hihat=2121.4ms drums=2058.2ms]  ❌ 附近沒有明顯鼓組擊點
+  click@17.460s  最近=kick(差47.8ms)  [kick=47.8ms snare=1092.7ms hihat=1812.5ms drums=1742.8ms]  ✅ 有對應真實擊點
+  click@17.825s  最近=kick(差317.0ms)  [kick=317.0ms snare=727.9ms hihat=1447.8ms drums=1378.1ms]  ❌ 附近沒有明顯鼓組擊點
+  click@18.188s  最近=kick(差85.9ms)  [kick=85.9ms snare=364.5ms hihat=1084.3ms drums=1014.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@18.568s  最近=snare(差14.8ms)  [kick=54.9ms snare=14.8ms hihat=705.0ms drums=635.4ms]  ✅ 有對應真實擊點
+  click@18.953s  最近=snare(差249.8ms)  [kick=319.4ms snare=249.8ms hihat=319.4ms drums=249.8ms]  ❌ 附近沒有明顯鼓組擊點
+  click@19.286s  最近=kick(差13.4ms)  [kick=13.4ms snare=83.0ms hihat=13.4ms drums=83.0ms]  ✅ 有對應真實擊點
+  click@19.645s  最近=snare(差47.5ms)  [kick=324.0ms snare=47.5ms hihat=47.5ms drums=47.5ms]  ✅ 有對應真實擊點
+  click@20.011s  最近=snare(差18.3ms)  [kick=41.5ms snare=18.3ms hihat=413.0ms drums=18.3ms]  ✅ 有對應真實擊點
+  click@20.359s  最近=kick(差18.7ms)  [kick=18.7ms snare=18.7ms hihat=329.6ms drums=18.7ms]  ✅ 有對應真實擊點
+  click@20.705s  最近=hihat(差16.3ms)  [kick=39.6ms snare=39.6ms hihat=16.3ms drums=39.6ms]  ✅ 有對應真實擊點
+  click@21.082s  最近=kick(差94.9ms)  [kick=94.9ms snare=164.6ms hihat=164.6ms drums=164.6ms]  ❌ 附近沒有明顯鼓組擊點
+  click@21.458s  最近=kick(差136.3ms)  [kick=136.3ms snare=136.3ms hihat=212.0ms drums=136.3ms]  ❌ 附近沒有明顯鼓組擊點
+  click@21.804s  最近=kick(差24.0ms)  [kick=24.0ms snare=24.0ms hihat=47.3ms drums=47.3ms]  ✅ 有對應真實擊點
+
+==========================================================================================
+總計：111/169 個目標區段內的 click 落在 50ms 容差內的真實鼓組擊點上
+==========================================================================================

@@ -25,9 +25,9 @@ from pgm_craft.workflow.audio_nodes import MeasureMapNode
 
 class TestSDDPass196GhostDownbeatPruningRespectsProtection:
 
-    def test_two_close_protected_downbeats_both_kept(self):
-        """兩個間距只有 2 拍（低於 ghost 門檻）的 downbeat，各自落在獨立的
-        保護區段內，都應該保留，不被 ghost-pruning 剔除任何一個。"""
+    def test_two_close_protected_downbeats_are_reconciled(self):
+        """Pass 197：兩個各自受保護但相隔 2 拍的候選不能同時是小節起點；
+        全域相位仲裁應保留符合前後 4/4 網格者。"""
         node = MeasureMapNode()
         beat_sec = 0.36
         # 建立一串正常 4 拍循環，中間插入兩個緊鄰（間距 2 拍）的 downbeat
@@ -50,7 +50,7 @@ class TestSDDPass196GhostDownbeatPruningRespectsProtection:
 
         downbeat_starts = [m["start_time"] for m in mm]
         assert times[12] in downbeat_starts, "第一個受保護 downbeat 不應被剔除"
-        assert times[14] in downbeat_starts, "第二個受保護 downbeat 不應被剔除"
+        assert times[14] not in downbeat_starts, "相位衝突的受保護候選應被仲裁掉"
 
     def test_no_protected_ranges_ghost_pruning_unchanged(self):
         """沒有保護區段時，ghost-pruning 行為維持 Pass 170 原本設計（向後相容）。"""
