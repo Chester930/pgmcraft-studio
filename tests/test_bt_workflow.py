@@ -332,8 +332,16 @@ class TestBTWorkflowEngine(unittest.TestCase):
         np.testing.assert_array_equal(blackboard.get_val("refined_beats"), beats)
         self.assertGreater(len(blackboard.get_val("downbeat_refine_warnings")), 0)
 
-    def test_measure_map_uses_downbeats_and_variable_lengths(self):
-        """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節並保留變動拍數"""
+    def test_measure_map_uses_downbeats_and_forces_44_continuity(self):
+        """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節。
+
+        Pass 193/194：`_ensure_44_phase_continuity` 會把全曲相位機械式
+        補全成連貫的 1-2-3-4 循環，所以就算輸入的 beat 標籤本身不規則
+        （這裡刻意給 3 拍 + 4 拍 + 1 拍），最終切出來的小節依然會是連貫的
+        標準 4 拍小節。這是本專案固定 4/4 拍號的設計決策——本專案不透過
+        MeasureMapNode 的 downbeat 標籤表達真正的變拍需求（那是 Stage 4
+        `DynamicMeterChangeGuardNode` 的職責），沒有保護區段介入時一律
+        強制拉平成連貫 4/4。"""
         node = MeasureMapNode()
         blackboard = Blackboard()
         blackboard.set_val("beat_validation", {"status": "PASS", "warnings": []})
@@ -353,14 +361,21 @@ class TestBTWorkflowEngine(unittest.TestCase):
 
         self.assertEqual(status, NodeStatus.SUCCESS)
         self.assertEqual(blackboard.get_val("measure_map_status"), "PASS")
-        self.assertEqual([measure["beat_count"] for measure in measure_map], [3, 4, 1])
-        self.assertTrue(measure_map[0]["is_variable_length"])
+        self.assertEqual([measure["beat_count"] for measure in measure_map], [4, 4])
+        self.assertFalse(measure_map[0]["is_variable_length"])
         self.assertFalse(measure_map[1]["is_variable_length"])
-        self.assertTrue(measure_map[2]["is_incomplete"])
         self.assertEqual(measure_map[0]["source"], "downbeat")
 
-    def test_measure_map_falls_back_without_downbeats(self):
-        """測試 MeasureMapNode：缺少 downbeat 時以 4 拍 fallback 並標記警告"""
+    def test_measure_map_manufactures_downbeat_without_any(self):
+        """測試 MeasureMapNode：完全沒有 downbeat 標籤時的行為。
+
+        Pass 193/194：`_ensure_44_phase_continuity` 在沒有保護區段、也
+        完全找不到任何 `beat==1` 時，會強制把陣列第一個拍點視為 beat 1
+        再往後連貫延伸，所以這裡即使輸入完全沒有 downbeat 標籤，最終依然
+        會產生 downbeat 並走 `_build_from_downbeats` 路徑（PASS、
+        source="downbeat"），不再是舊版的 4 拍 fallback（WARN、
+        source="fallback_4beat"）。`beat_validation` 原本帶入的警告訊息
+        仍會原樣保留在 `measure_map_warnings` 裡。"""
         node = MeasureMapNode()
         blackboard = Blackboard()
         blackboard.set_val("beat_validation", {"status": "WARN", "warnings": ["沒有偵測到 downbeat 標籤。"]})
@@ -376,9 +391,9 @@ class TestBTWorkflowEngine(unittest.TestCase):
         measure_map = blackboard.get_val("measure_map")
 
         self.assertEqual(status, NodeStatus.SUCCESS)
-        self.assertEqual(blackboard.get_val("measure_map_status"), "WARN")
+        self.assertEqual(blackboard.get_val("measure_map_status"), "PASS")
         self.assertEqual([measure["beat_count"] for measure in measure_map], [4, 1])
-        self.assertEqual(measure_map[0]["source"], "fallback_4beat")
+        self.assertEqual(measure_map[0]["source"], "downbeat")
         self.assertTrue(measure_map[1]["is_incomplete"])
         self.assertGreater(len(blackboard.get_val("measure_map_warnings")), 0)
 

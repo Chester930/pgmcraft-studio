@@ -1,54 +1,27 @@
 """
-SDD Pass 192 — MeasureMapNode 過長小節動態網格拆分與防膨脹合併修復
+SDD Pass 192 — MeasureMapNode 過長小節防膨脹合併修復
 
 背景：
 過長小節 (5 拍, 6 拍) 在節奏時間上每拍均勻極致平滑 (0.36s)，
 主因是由於 Downbeat 標籤缺失導致 MeasureMapNode 將多拍包裹為單個怪異小節。
-Pass 192 在 MeasureMapNode 中引入 _split_overlong_measures，將 5/6 拍過長小節拆分為 4 拍標準小節與變拍/短小節，
-並升級 _merge_short_measures 具備防膨脹保護（不將原本 4 拍標準小節膨脹至 > 4 拍）。
+Pass 192 當時在 MeasureMapNode 中引入 `_split_overlong_measures`，將
+5/6 拍過長小節拆分為 4 拍標準小節與變拍/短小節；但實際跑真實音訊後，
+使用者回報這個硬切邏輯製造大量 1 拍/2 拍碎小節、嚴重破壞聽感連貫性，
+Pass 193 已將 `_split_overlong_measures` 整個移除（改用全曲相位連貫
+補全取代），原本測試這個方法的 `test_split_overlong_measures` 因此
+一併移除。`_merge_short_measures` 的防膨脹保護（不將原本 4 拍標準小節
+膨脹至 > 4 拍）維持不變，繼續由下方測試驗證。
 
-詳見 docs/PASS-192-LONG-MEASURE-GRID-SPLITTER-TASK.md。
+詳見 docs/PASS-192-LONG-MEASURE-GRID-SPLITTER-TASK.md、
+docs/PASS-193-PHASE-COMPLETE-44-ALIGNMENT-TASK.md。
 
 本測試驗證：
-1. 6 拍與 5 拍過長小節被精確拆分為標準 4 拍小節與短小節。
-2. 防膨脹保護阻止標準 4 拍小節吸收短小節變為 6 拍。
-3. 兩個相鄰 2 拍短小節精確合併為一個 4 拍標準小節。
+1. 防膨脹保護阻止標準 4 拍小節吸收短小節變為 6 拍。
+2. 兩個相鄰 2 拍短小節精確合併為一個 4 拍標準小節。
 """
 
 import pytest
 from pgm_craft.workflow.audio_nodes import MeasureMapNode
-
-
-def test_split_overlong_measures():
-    """驗證過長小節 (6 拍) 被精確拆分為標準 4 拍小節與殘餘 2 拍小節"""
-    node = MeasureMapNode()
-    common_length = 4
-
-    beats_6 = [{"time": 0.0 + i * 0.36, "beat": i + 1} for i in range(6)]
-    measures = [
-        {
-            "measure": 1,
-            "start_time": 0.0,
-            "end_time": 2.16,
-            "beat_count": 6,
-            "beats": beats_6,
-            "is_variable_length": True,
-            "is_incomplete": False,
-            "source": "downbeat",
-        }
-    ]
-
-    split_result = node._split_overlong_measures(measures, common_length)
-
-    assert len(split_result) == 2
-    # 第一個小節為標準 4 拍小節
-    assert split_result[0]["beat_count"] == 4
-    assert split_result[0]["is_variable_length"] is False
-    assert split_result[0]["start_time"] == 0.0
-
-    # 第二個小節為殘餘 2 拍小節
-    assert split_result[1]["beat_count"] == 2
-    assert split_result[1]["is_variable_length"] is True
 
 
 def test_merge_short_measures_anti_bloat():
