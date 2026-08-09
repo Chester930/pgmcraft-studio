@@ -1102,10 +1102,15 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
   是否接著處理留待與使用者討論。
 - 任務書：
   `docs/PASS-194-PHASE-CONTINUITY-RESPECTS-PROTECTED-RANGES-TASK.md`。
-- 尚未完成：全套單元測試回歸仍在背景執行；Pass 193 遺留的 2 項
-  `test_bt_workflow.py` 既有失敗（`MeasureMapNode` 對本來就刻意不規則的
-  輸入資料一樣會被機械式拉平，喪失表達真實變動拍小節的能力）本次沒有
-  一併修正，留待與使用者確認設計方向。
-- 狀態：已實作、單元測試與真實音訊完整管線回歸皆通過，全套回歸與既有
-  失敗項目的處理方向待確認。
+- 全套單元測試回歸完成：863 項（860 passed / 3 failed），3 項失敗跟這次
+  改動無關，確認沒有引入新回歸。
+- 追記：跟使用者確認設計方向（本專案固定 4/4 拍號，真正的變拍需求由
+  Stage 4 `DynamicMeterChangeGuardNode` 處理，不透過 `MeasureMapNode` 的
+  downbeat 標籤表達），一併處理了 Pass 193 遺留的 3 項既有測試失敗：
+  `test_bt_workflow.py` 兩項改寫為驗證新的「機械式拉平成連貫 4/4」/
+  「無 downbeat 時強制製造一個並走一般路徑」行為；
+  `test_sdd_pass192.py::test_split_overlong_measures` 直接移除（測的
+  方法已被 Pass 193 移除）。重跑相關 20 項測試全數通過。
+- 狀態：已實作、單元測試（含既有失敗清理）與真實音訊完整管線回歸皆已
+  通過。
 

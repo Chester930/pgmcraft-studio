@@ -147,16 +147,29 @@ Pass 193 行為、真實 18-20 秒案例回歸。既有 `tests/test_sdd_pass193.
   問題。是否要接著處理，留待與使用者討論後再排入後續任務。
 - `bpm_jump_count`：0（維持）。
 
-### 4.4 尚未完成
+### 4.4 全套單元測試回歸與既有失敗處理
 
-全套單元測試回歸（`C:/Python313/python.exe -m pytest tests/ -q`）仍在
-背景執行中，結果待補。已知此 worktree 在 Pass 193 之後（本次修改之前）
-的基準本來就有 3 項既有測試失敗，其中 2 項（`test_bt_workflow.py` 的
-`test_measure_map_falls_back_without_downbeats`、
-`test_measure_map_uses_downbeats_and_variable_lengths`）跟這次的保護
-區段機制無關（測試沒有設定 `beat_phase_protected_ranges`，屬於 Pass 193
-的 `_ensure_44_phase_continuity` 在完全沒有保護區段時、對本來就刻意設計
-成不規則拍數的輸入資料一樣會機械式強制拉平成 4/4——`MeasureMapNode`
-因此喪失表達真實變動拍小節的能力，這次沒有一併修正，留待與使用者確認
-設計方向後處理）；第 3 項（`test_sdd_pass192.py::test_split_overlong_
-measures`）是舊測試沒清掉（測的方法已被 Pass 193 正式移除）。
+全套單元測試回歸（`C:/Python313/python.exe -m pytest tests/ -q`，863 項）
+結果：860 passed / 3 failed，3 項失敗跟這次改動無關（Pass 193 遺留、跟
+`beat_phase_protected_ranges` 保護機制無關），確認這次修正沒有引入任何
+新的回歸。
+
+跟使用者確認設計方向後（本專案固定 4/4 拍號，真正的變拍需求由 Stage 4
+`DynamicMeterChangeGuardNode` 另外處理，不透過 `MeasureMapNode` 的
+downbeat 標籤表達），已一併處理這 3 項既有失敗：
+
+1. `test_bt_workflow.py::test_measure_map_uses_downbeats_and_variable_
+   lengths` → 改寫為 `test_measure_map_uses_downbeats_and_forces_44_
+   continuity`，斷言改為驗證輸入不規則拍數時會被機械式拉平成連貫 4/4
+   （`[4, 4]`，兩個小節皆 `is_variable_length=False`）。
+2. `test_bt_workflow.py::test_measure_map_falls_back_without_downbeats`
+   → 改寫為 `test_measure_map_manufactures_downbeat_without_any`，斷言
+   改為驗證完全沒有 `beat==1` 時，相位補全會強制把第一個拍點當作
+   beat 1、改走一般 downbeat 路徑（`measure_map_status="PASS"`，
+   `source="downbeat"`），不再是舊版的 4 拍 fallback（`WARN`/
+   `fallback_4beat`）。
+3. `test_sdd_pass192.py::test_split_overlong_measures` → 直接移除
+   （測的 `_split_overlong_measures` 方法已被 Pass 193 正式移除）。
+
+重跑 `tests/test_bt_workflow.py` + `tests/test_sdd_pass192.py`（20 項）
+全數通過，確認改寫後的斷言正確反映新行為。
