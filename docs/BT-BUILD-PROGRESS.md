@@ -979,4 +979,133 @@ import_guide ➔ {project_dir}/pgm_project_package/IMPORT_GUIDE.md (DAW 匯入�
 - 尚未完成：真實音訊完整管線回歸，確認 `irregular_measure_count`
   （Pass 186 真實跑法是 14）這次真的下降，進行中。
 - 狀態：已實作、單元測試與真實資料量化驗證皆通過，完整管線回歸進行中。
+- **追記**：完整管線回歸完成，`irregular_measure_count` 維持 14，跟
+  Pass 186 完全相同的 14 個小節位置——證實這個方向沒有解決使用者聽到的
+  問題。無效保護區段（套用前後標號沒變）本來就不可能影響最終輸出，真正
+  的接縫來自那 11-15 個「真的需要保護」的區段本身，Pass 187 正確地沒有
+  動它們。真正需要做的是交界處相位銜接本身，見下方 Pass 188 起的條目
+  （這條主線後續由另一個 AI 工具在同一個 worktree 接續完成到 Pass 193，
+  本 session 於 Pass 194 補上文件與一項關鍵修正，詳見下方）。
+
+### Pass 188：`MeasureMapNode` 合併交界處產生的破碎小節
+
+- 背景：Pass 187 追記確認交界處接縫是真正需要處理的問題。
+- 修法：`MeasureMapNode` 新增 `_merge_short_measures`——小節 `beat_count`
+  小於 `common_length` 時，跟前一個小節合併（前一個也要是短小節，且合併
+  後不超過 `common_length`，避免合併出比標準小節還長的怪異小節）。
+- 任務書：`docs/PASS-188-BOUNDARY-SHORT-MEASURE-MERGE-TASK.md`。
+- 狀態：已實作，SDD 測試與回歸通過。
+
+### Pass 189：`SteadyPercussionCountAnchorNode` 往前倒推相位對齊
+
+- 背景：錨點套用時只往後標號，錨點切入點「前方」的舊相位常常跟新相位對
+  不上，切出交界處的過長小節。
+- 修法：`_apply_anchor` 新增往前倒推（Backward Phase Alignment）——從
+  `base_idx - 1` 往前倒推標號，直到遇到既有保護區段或曲首為止。
+- 任務書：`docs/PASS-189-BOUNDARY-PHASE-BACKTRACE-TASK.md`。
+- 真實資料：112 小節（差 -9）、不規則小節 15（比 Pass 187 的 14 略差）。
+- 狀態：已實作，真實管線回歸完成，數字尚未改善（見下方 Pass 191 才真正
+  把這個方向的效果做出來）。
+
+### Pass 190：`KickBassDownbeatVerifierNode` 180 度反相修復時保留拍號網格
+
+- 背景：這個節點修正強拍反相（beat1↔beat3 顛倒）時，原本的做法是先把
+  非保護區段標號全部歸零、再重新指定，這個「先清零」的中間態會跟保護
+  區段的既有標號網格對不上。
+- 修法：改成對非保護區段標號整體 +2（180 度）平移旋轉（beat1↔beat3、
+  beat2↔beat4），不再清零重建，保留標號網格連貫性。
+- 任務書：
+  `docs/PASS-190-KICK-BASS-DOWNBEAT-VERIFIER-GRID-REPRESERVATION-TASK.md`。
+- 真實資料：112 小節（差 -9）、不規則小節 15，跟 Pass 189 完全相同——這
+  個修法本身沒有改變這次真實跑法的最終數字（可能是這次跑法沒有觸發到
+  180 度反相修復分支，或影響被其他機制抵銷），但屬於獨立的正確性修正，
+  保留。
+- 狀態：已實作，真實管線回歸完成。
+
+### Pass 191：`_relabel_beat_numbers` 相位連貫延伸（不再用全域索引公式）
+
+- 背景：`_relabel_beat_numbers` 原本用 `np.arange(len) % 4` 整曲統一公式
+  計算標號，保護區段內維持原標號、但保護區段「之外」的部分完全不管跟
+  保護區段的銜接，一樣用全域公式硬算，導致保護區段前後的交界處常常對
+  不上相位。
+- 修法：改成順著時間軸逐拍走訪——保護區段內維持原標號（並更新「下一個
+  預期標號」的基準）；保護區段之外用 `(last_label % 4) + 1` 跟隨前一拍
+  連貫延伸，不再用全域陣列索引公式。
+- 任務書：`docs/PASS-191-RELABEL-BEAT-NUMBERS-PHASE-CONTINUITY-TASK.md`。
+- 真實資料：114 小節（差 -7，改善）、不規則小節 **11**（從 15 改善）。
+- 狀態：已實作，真實管線回歸完成，數字確實改善。
+
+### Pass 192：長小節格點分割器 + 防膨脹保護
+
+- 背景：Pass 191 之後仍有 11 個不規則小節（部分是 5/6/7 拍的過長小節），
+  嘗試直接把這些過長小節「硬切」成標準小節加上碎片，例如 5 拍切成
+  `[4拍] + [1拍]`、6 拍切成 `[4拍] + [2拍]`。
+- 修法：新增 `_split_overlong_measures`（本次任務新增，Pass 193 已移除，
+  見下方）；同時替 Pass 188 的 `_merge_short_measures` 加上防膨脹保護
+  （只有前一個小節也是短小節、且合併後不超過 `common_length` 才合併，
+  避免把標準 4 拍小節越合併越長）。
+- 任務書：`docs/PASS-192-LONG-MEASURE-GRID-SPLITTER-TASK.md`。
+- 真實資料：124 小節（差 **+3**，第一次反過來超過黃金基準）、不規則小節
+  11（跟 Pass 191 相同）。
+- **追記**：使用者實際試聽後回報「怎麼變這麼多碎拍。很多亂切的點。」——
+  硬切產生的大量 1 拍/2 拍碎小節，讓 Click 節拍器在樂曲中間順暢處突兀
+  發出強拍高音，嚴重破壞聽感連貫性。促成 Pass 193 徹底改弦更張。
+- 狀態：已實作，真實管線回歸完成，但使用者聽感回報明確的負面問題，
+  觸發 Pass 193 的重新設計。
+
+### Pass 193：`MeasureMapNode` 全曲相位連貫 4/4 拍重排，廢除硬切碎拍
+
+- 背景：Pass 192 追記——硬切碎拍嚴重破壞聽感。
+- 修法：廢除 `_split_overlong_measures`；新增
+  `_ensure_44_phase_continuity`——找到全曲第一個 `beat==1`，整曲機械式用
+  `(last_beat % 4) + 1` 往前往後硬推，強制整首歌變成連貫的 1-2-3-4 循環，
+  徹底消除人造碎拍。
+- 任務書：`docs/PASS-193-PHASE-COMPLETE-44-ALIGNMENT-TASK.md`。
+- 真實資料：118 小節（差 -3）、不規則小節從 11 大幅降到 **1**——數字非常
+  亮眼。
+- **追記（Pass 194 起點，本 session 檢查後發現）**：這個「無條件整曲機械
+  式重推」完全沒有讀取 `beat_phase_protected_ranges`（`MeasureMapNode.
+  optional_keys` 裡沒有這個 key），把 Pass 181-191 花了十輪反覆驗證、
+  鎖定在真實鼓點證據上的錨定相位整段蓋掉。直接核對真實輸出證實：Pass
+  184/186 驗證過的 18.563s/20.014s hi-hat 重音，在 Pass 193 輸出裡被偏移
+  成 18.953s/20.359s（整整一拍）——使用者最初回報的「Click 重音位置不對」
+  疑似被重新引入，只是這次連 `irregular_measure_count` 這個 metric 本身
+  都看不出來。另外，全套單元測試（非本次改動觸發，是 Pass 193 遺留的
+  既有問題）也有 2 項失敗（`test_bt_workflow.py` 的
+  `test_measure_map_falls_back_without_downbeats`、
+  `test_measure_map_uses_downbeats_and_variable_lengths`）——這兩個測試
+  完全沒有設定保護區段，純粹輸入本來就刻意設計成不規則拍數的資料，一樣
+  被機械式強制拉平，代表 `MeasureMapNode` 喪失表達真實變動拍小節的能力。
+  詳見下方 Pass 194。
+- 狀態：已實作，真實資料回驗數字亮眼，但發現嚴重的保護機制被繞過問題，
+  見 Pass 194。
+
+### Pass 194：`MeasureMapNode` 的相位補全尊重 `beat_phase_protected_ranges`
+
+- 背景：見上方 Pass 193 追記。本 worktree 由另一個 AI 工具接續完成到
+  Pass 193，本 session 受使用者要求檢查目前狀況時發現上述問題。
+- 修法：`MeasureMapNode.optional_keys` 加入
+  `"beat_phase_protected_ranges"`，`execute()` → `build_measure_map()` →
+  `_ensure_44_phase_continuity()` 全線貫穿。重寫
+  `_ensure_44_phase_continuity`：保護區段內的錨點標號完全不動；保護區段
+  之外用 `(last_label % 4) + 1` 從最近錨點連貫延伸（保留 Pass 193 消除
+  碎拍的效果）；完全沒有保護區段時退回 Pass 193 原本行為，向後相容。
+- 測試：新增 `tests/test_sdd_pass194.py`（5 項全過）。既有
+  `tests/test_sdd_pass193.py`（2 項）、`tests/test_sdd_pass188.py`（6 項）
+  維持通過。
+- 真實資料：18-20 秒目標區段 beat-1 正確回到 18.568s/20.011s（跟真實
+  錨點 18.563s/20.014s 誤差 <5ms），確認 Pass 193 的偏移問題已修復。
+  `irregular_measure_count` 從 Pass 193 的 1 回升到 **10**（114 小節，
+  差 -7）——這不是退步，是拿掉了「無視證據硬湊 4/4」的假象，暴露出目前
+  仍未解決的保護區段交界處相位銜接問題（分布在 8.041s/21.458s/32.382s/
+  77.803s/81.446s/93.802s/97.197s/108.652s/152.023s/171.737s，共 10 處），
+  是否接著處理留待與使用者討論。
+- 任務書：
+  `docs/PASS-194-PHASE-CONTINUITY-RESPECTS-PROTECTED-RANGES-TASK.md`。
+- 尚未完成：全套單元測試回歸仍在背景執行；Pass 193 遺留的 2 項
+  `test_bt_workflow.py` 既有失敗（`MeasureMapNode` 對本來就刻意不規則的
+  輸入資料一樣會被機械式拉平，喪失表達真實變動拍小節的能力）本次沒有
+  一併修正，留待與使用者確認設計方向。
+- 狀態：已實作、單元測試與真實音訊完整管線回歸皆通過，全套回歸與既有
+  失敗項目的處理方向待確認。
 

@@ -592,7 +592,10 @@ class DownbeatRefineNode(BaseNode):
 class MeasureMapNode(BaseNode):
     """將 beat/downbeat 資料整理成允許變動小節長度的 measure map。"""
     required_keys = ["beats", "beat_validation"]
-    optional_keys = ["refined_beats", "downbeat_refinement", "output_dir", "project_dir"]
+    optional_keys = [
+        "refined_beats", "downbeat_refinement", "output_dir", "project_dir",
+        "beat_phase_protected_ranges",
+    ]
     output_keys = ["measure_map", "measure_map_status", "measure_map_warnings", "measure_map_json"]
 
     FALLBACK_MEASURE_LENGTH = 4
@@ -614,7 +617,10 @@ class MeasureMapNode(BaseNode):
 
         downbeat_refinement = blackboard.get_val("downbeat_refinement", {})
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        measure_map, status, warnings = self.build_measure_map(beats, beat_validation, downbeat_refinement)
+        protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
+        measure_map, status, warnings = self.build_measure_map(
+            beats, beat_validation, downbeat_refinement, protected_ranges=protected_ranges
+        )
         blackboard.set_val("measure_map", measure_map)
         blackboard.set_val("measure_map_status", status)
         blackboard.set_val("measure_map_warnings", warnings)
@@ -647,14 +653,15 @@ class MeasureMapNode(BaseNode):
             rows.append({"time": float(row[0]), "beat": int(row[1])})
         return sorted(rows, key=lambda item: item["time"])
 
-    def build_measure_map(self, beats, beat_validation=None, downbeat_refinement=None):
+    def build_measure_map(self, beats, beat_validation=None, downbeat_refinement=None, protected_ranges=None):
         warnings = []
         beat_rows = self._normalize_beats(beats)
         if not beat_rows:
             return [], "FAIL", ["沒有可用 beat，無法建立 measure map。"]
 
-        # Pass 193：全曲 4/4 拍連貫重排，消除碎拍與亂切點
-        beat_rows = self._ensure_44_phase_continuity(beat_rows)
+        # Pass 193/194：全曲 4/4 拍連貫重排，消除碎拍與亂切點；
+        # Pass 194 修正：尊重 beat_phase_protected_ranges，不再無視錨定證據整曲重推。
+        beat_rows = self._ensure_44_phase_continuity(beat_rows, protected_ranges)
 
         downbeat_source = (downbeat_refinement or {}).get("source", "downbeat")
         using_fallback_refinement = downbeat_source.startswith("fallback")
@@ -680,31 +687,62 @@ class MeasureMapNode(BaseNode):
 
         return measure_map, status, warnings
 
-    def _ensure_44_phase_continuity(self, beat_rows):
+    def _ensure_44_phase_continuity(self, beat_rows, protected_ranges=None):
         """
-        Pass 193：全曲 4/4 拍相位連貫補全。
-        消除所有因 Downbeat 標籤缺失所產生的人造碎拍與亂切點。
-        以第一個可信 Downbeat 為基準點，強推全曲 (last_beat % 4) + 1 相位連貫。
+        Pass 193：全曲 4/4 拍相位連貫補全，消除因 Downbeat 標籤缺失所產生的
+        人造碎拍與亂切點。
+
+        Pass 194 修正：Pass 193 原本無條件整曲機械式重推（以第一個 beat==1
+        為基準往前往後硬推），完全無視 `beat_phase_protected_ranges`——會把
+        Pass 181-191 花了十輪反覆驗證、鎖定在真實鼓點證據上的錨定相位（例如
+        18.563s/20.014s 的 hi-hat 重音）整段蓋掉、偏移一整拍。改成只在
+        「保護區段之外」的空隙做機械式 1-2-3-4 補全；保護區段內的標號
+        （真實證據錨定）完全不動，只在進入保護區段的那一拍允許相位跳躍
+        （這是必要的——保護區段本來就是在斷言「這裡才是真正的第 1 拍」）。
+        沒有任何保護區段時（例如測試裡的合成資料），退回 Pass 193 的行為，
+        以全曲第一個 beat==1 為基準整曲機械式補全，維持向後相容。
         """
         if not beat_rows:
             return beat_rows
+        protected_ranges = protected_ranges or []
 
-        first_db_idx = 0
-        for idx, r in enumerate(beat_rows):
-            if r.get("beat") == 1:
-                first_db_idx = idx
-                break
+        def _is_protected(t):
+            return any(p_start <= t <= p_end for p_start, p_end in protected_ranges)
 
-        # 順向 1-2-3-4 重標號
-        for i in range(first_db_idx, len(beat_rows)):
-            if i == first_db_idx:
-                beat_rows[i]["beat"] = 1
-            else:
-                beat_rows[i]["beat"] = ((beat_rows[i - 1]["beat"] - 1 + 1) % 4) + 1
+        n = len(beat_rows)
+        is_anchor = [False] * n
+        for i, row in enumerate(beat_rows):
+            label = row.get("beat")
+            if _is_protected(row["time"]) and isinstance(label, int) and 1 <= label <= 4:
+                is_anchor[i] = True
 
-        # 逆向 1-2-3-4 補全
-        for i in range(first_db_idx - 1, -1, -1):
-            beat_rows[i]["beat"] = ((beat_rows[i + 1]["beat"] - 1 - 1) % 4) + 1
+        if not any(is_anchor):
+            # 沒有保護區段可用：退回 Pass 193 的做法，以全曲第一個 beat==1 為基準。
+            first_db_idx = 0
+            for idx, r in enumerate(beat_rows):
+                if r.get("beat") == 1:
+                    first_db_idx = idx
+                    break
+            is_anchor[first_db_idx] = True
+            beat_rows[first_db_idx]["beat"] = 1
+
+        # 順向：從每個錨點（保護區段內的原始標號）往後補到下一個錨點前為止。
+        last_label = None
+        for i in range(n):
+            if is_anchor[i]:
+                last_label = beat_rows[i]["beat"]
+                continue
+            if last_label is not None:
+                beat_rows[i]["beat"] = (last_label % 4) + 1
+                last_label = beat_rows[i]["beat"]
+
+        # 逆向：補全第一個錨點之前的拍點。
+        first_anchor_idx = next((i for i in range(n) if is_anchor[i]), None)
+        if first_anchor_idx is not None:
+            next_label = beat_rows[first_anchor_idx]["beat"]
+            for i in range(first_anchor_idx - 1, -1, -1):
+                next_label = ((next_label - 1 - 1) % 4) + 1
+                beat_rows[i]["beat"] = next_label
 
         return beat_rows
 

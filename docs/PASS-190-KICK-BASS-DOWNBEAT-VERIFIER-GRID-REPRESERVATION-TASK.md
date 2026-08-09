@@ -1,6 +1,8 @@
 # Pass 190 任務書：KickBassDownbeatVerifierNode 180度反相網格連貫性修復
 
-**狀態**：待實作
+**狀態**：已實作，真實音訊完整管線回歸已完成（數字跟 Pass 189 相同，
+112 小節/不規則 15，屬於獨立正確性修正，詳見 `docs/BT-BUILD-PROGRESS.md`
+Pass 190 條目）。
 
 ---
 

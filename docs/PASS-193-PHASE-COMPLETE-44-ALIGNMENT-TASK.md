@@ -1,6 +1,11 @@
 # Pass 193 任務書：消除碎拍與相位連貫 4/4 拍重排
 
-**狀態**：待實作
+**狀態**：已實作，真實音訊完整管線回歸已完成，`irregular_measure_count`
+大幅降到 1。**追記（Pass 194）**：本 session 檢查後發現這個「無條件整曲
+機械式重推」完全沒有讀取 `beat_phase_protected_ranges`，把 Pass 181-191
+驗證過的錨定相位整段蓋掉，導致 18-20 秒真實錨點被偏移一整拍——已由
+`docs/PASS-194-PHASE-CONTINUITY-RESPECTS-PROTECTED-RANGES-TASK.md` 修正，
+詳見該任務書與 `docs/BT-BUILD-PROGRESS.md` Pass 193/194 條目。
 
 ---
 
