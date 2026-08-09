@@ -6,6 +6,12 @@ Pass 192 將 Downbeat 缺失的過長小節硬切成 1 拍/2 拍碎小節，導�
 Pass 193 引入 _ensure_44_phase_continuity，將 Downbeat 標籤推導補全為連貫的 1-2-3-4 拍號，
 消除每 4 拍內部的人造強拍切點與碎小節。
 
+Pass 195 更新：_ensure_44_phase_continuity 改為只局部修復「相鄰既有
+downbeat 間距不是 4 的整數倍」的區段（不再整曲機械式覆蓋一切），本檔案
+下方兩個測試場景（中間缺失 downbeat 標籤）剛好都屬於這種真的需要修復的
+情況，斷言維持不變、依然通過；已經正確、間距本來就是 4 的倍數的區段則
+不受影響、不會被觸碰，詳見 docs/PASS-195-LOCAL-ONLY-PHASE-REPAIR-TASK.md。
+
 詳見 docs/PASS-193-PHASE-COMPLETE-44-ALIGNMENT-TASK.md。
 """
 

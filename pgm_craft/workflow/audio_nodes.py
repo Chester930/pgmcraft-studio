@@ -692,57 +692,74 @@ class MeasureMapNode(BaseNode):
         Pass 193：全曲 4/4 拍相位連貫補全，消除因 Downbeat 標籤缺失所產生的
         人造碎拍與亂切點。
 
-        Pass 194 修正：Pass 193 原本無條件整曲機械式重推（以第一個 beat==1
-        為基準往前往後硬推），完全無視 `beat_phase_protected_ranges`——會把
-        Pass 181-191 花了十輪反覆驗證、鎖定在真實鼓點證據上的錨定相位（例如
-        18.563s/20.014s 的 hi-hat 重音）整段蓋掉、偏移一整拍。改成只在
-        「保護區段之外」的空隙做機械式 1-2-3-4 補全；保護區段內的標號
-        （真實證據錨定）完全不動，只在進入保護區段的那一拍允許相位跳躍
-        （這是必要的——保護區段本來就是在斷言「這裡才是真正的第 1 拍」）。
-        沒有任何保護區段時（例如測試裡的合成資料），退回 Pass 193 的行為，
-        以全曲第一個 beat==1 為基準整曲機械式補全，維持向後相容。
+        Pass 194 修正：讓機械式補全尊重 `beat_phase_protected_ranges`，
+        保護區段內的錨定相位不被覆蓋。
+
+        Pass 195 修正（更根本）：Pass 193/194 都還是「從一個錨點開始，機械
+        式數 1-2-3-4 一路數到底」——只要曲子中間任何一處跟 BeatNet /
+        KickBassDownbeatVerifierNode / DownbeatRefineNode 等上游節點原本
+        已經正確判斷的重音位置對不上（不需要靠近保護區段，只要中途有任何
+        一點原本的相位選擇跟機械式計數不同），這個機械式數法就會悄悄跟真實
+        重音錯開、一路數到下一個錨點才重新對齊，沿路冒出一堆本來不存在的
+        5、6 拍怪異小節。直接比對 Pass 193/194 之前的基準（Pass 183）真實
+        資料證實：這些新冒出的不規則小節裡，只有不到一半落在保護區段邊界
+        附近，其餘都是在跟保護機制完全無關的地方，把上游本來就已經正確、
+        每 4 拍一個重音的乾淨區段整批洗掉重標。
+
+        改成只在「真的偵測到不規則」時才局部修復：
+        1. 先找出既有的所有 downbeat（beat==1）位置，不分是否在保護區段內
+           ——這些都是上游整條 Stage 3 拍點鏈已經做出的判斷，預設信任。
+        2. 只有當相鄰兩個既有 downbeat 之間的拍數**不是** `beats_per_bar`
+           的整數倍，或雖然是整數倍、但內部應該存在的中繼 downbeat 卻沒有
+           被標記（代表中間漏掉了一個重音標籤），才對這一小段做局部
+           1-2-3-4 補全——只影響這一小段本身，不會往前後任何方向擴散。
+        3. 已經乾淨、既有 downbeat 間距本來就正確的區段完全不碰，維持上游
+           原本的判斷（不管是不是在保護區段內）。
+        4. 保護區段內的標號永遠不被觸碰，即使剛好落在需要局部修復的區段裡。
         """
         if not beat_rows:
             return beat_rows
         protected_ranges = protected_ranges or []
+        beats_per_bar = 4
 
         def _is_protected(t):
             return any(p_start <= t <= p_end for p_start, p_end in protected_ranges)
 
         n = len(beat_rows)
-        is_anchor = [False] * n
-        for i, row in enumerate(beat_rows):
-            label = row.get("beat")
-            if _is_protected(row["time"]) and isinstance(label, int) and 1 <= label <= 4:
-                is_anchor[i] = True
+        downbeat_idx = [i for i, r in enumerate(beat_rows) if r.get("beat") == 1]
+        if not downbeat_idx:
+            beat_rows[0]["beat"] = 1
+            downbeat_idx = [0]
 
-        if not any(is_anchor):
-            # 沒有保護區段可用：退回 Pass 193 的做法，以全曲第一個 beat==1 為基準。
-            first_db_idx = 0
-            for idx, r in enumerate(beat_rows):
-                if r.get("beat") == 1:
-                    first_db_idx = idx
-                    break
-            is_anchor[first_db_idx] = True
-            beat_rows[first_db_idx]["beat"] = 1
-
-        # 順向：從每個錨點（保護區段內的原始標號）往後補到下一個錨點前為止。
-        last_label = None
-        for i in range(n):
-            if is_anchor[i]:
-                last_label = beat_rows[i]["beat"]
+        # 曲首（第一個既有 downbeat 之前）殘留的拍點，沿用第一個 downbeat
+        # 往前倒推給予合理標號（保護區段內不動）。
+        first_idx = downbeat_idx[0]
+        for i in range(first_idx - 1, -1, -1):
+            if _is_protected(float(beat_rows[i]["time"])):
                 continue
-            if last_label is not None:
-                beat_rows[i]["beat"] = (last_label % 4) + 1
-                last_label = beat_rows[i]["beat"]
+            steps_back = first_idx - i
+            beat_rows[i]["beat"] = ((0 - steps_back) % beats_per_bar) + 1
 
-        # 逆向：補全第一個錨點之前的拍點。
-        first_anchor_idx = next((i for i in range(n) if is_anchor[i]), None)
-        if first_anchor_idx is not None:
-            next_label = beat_rows[first_anchor_idx]["beat"]
-            for i in range(first_anchor_idx - 1, -1, -1):
-                next_label = ((next_label - 1 - 1) % 4) + 1
-                beat_rows[i]["beat"] = next_label
+        for k, start in enumerate(downbeat_idx):
+            end = downbeat_idx[k + 1] if k + 1 < len(downbeat_idx) else n
+            span = end - start
+            if span <= 0:
+                continue
+
+            needs_repair = span % beats_per_bar != 0
+            if not needs_repair and span > beats_per_bar:
+                for sub in range(beats_per_bar, span, beats_per_bar):
+                    if int(beat_rows[start + sub]["beat"]) != 1:
+                        needs_repair = True
+                        break
+            if not needs_repair:
+                continue
+
+            for offset in range(span):
+                i = start + offset
+                if _is_protected(float(beat_rows[i]["time"])):
+                    continue
+                beat_rows[i]["beat"] = (offset % beats_per_bar) + 1
 
         return beat_rows
 

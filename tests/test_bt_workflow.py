@@ -332,16 +332,15 @@ class TestBTWorkflowEngine(unittest.TestCase):
         np.testing.assert_array_equal(blackboard.get_val("refined_beats"), beats)
         self.assertGreater(len(blackboard.get_val("downbeat_refine_warnings")), 0)
 
-    def test_measure_map_uses_downbeats_and_forces_44_continuity(self):
-        """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節。
+    def test_measure_map_uses_downbeats_and_variable_lengths(self):
+        """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節並保留變動拍數。
 
-        Pass 193/194：`_ensure_44_phase_continuity` 會把全曲相位機械式
-        補全成連貫的 1-2-3-4 循環，所以就算輸入的 beat 標籤本身不規則
-        （這裡刻意給 3 拍 + 4 拍 + 1 拍），最終切出來的小節依然會是連貫的
-        標準 4 拍小節。這是本專案固定 4/4 拍號的設計決策——本專案不透過
-        MeasureMapNode 的 downbeat 標籤表達真正的變拍需求（那是 Stage 4
-        `DynamicMeterChangeGuardNode` 的職責），沒有保護區段介入時一律
-        強制拉平成連貫 4/4。"""
+        Pass 195：`_ensure_44_phase_continuity`（Pass 193 引入、Pass 194/195
+        修正）現在只局部修復「相鄰既有 downbeat 間距不是 4 的整數倍」的
+        區段本身——這裡的 3 拍 + 4 拍 + 1 拍序列，每一段內部（1-2-3 / 1-2-3-4
+        / 1）本來就已經自我一致，局部修復重算出來的標號跟原本完全相同，
+        等於沒有實際改動。不會再像 Pass 193/194 那樣整曲機械式拉平成連貫
+        4/4、抹掉上游本來就刻意給的變動拍數。"""
         node = MeasureMapNode()
         blackboard = Blackboard()
         blackboard.set_val("beat_validation", {"status": "PASS", "warnings": []})
@@ -361,9 +360,10 @@ class TestBTWorkflowEngine(unittest.TestCase):
 
         self.assertEqual(status, NodeStatus.SUCCESS)
         self.assertEqual(blackboard.get_val("measure_map_status"), "PASS")
-        self.assertEqual([measure["beat_count"] for measure in measure_map], [4, 4])
-        self.assertFalse(measure_map[0]["is_variable_length"])
+        self.assertEqual([measure["beat_count"] for measure in measure_map], [3, 4, 1])
+        self.assertTrue(measure_map[0]["is_variable_length"])
         self.assertFalse(measure_map[1]["is_variable_length"])
+        self.assertTrue(measure_map[2]["is_incomplete"])
         self.assertEqual(measure_map[0]["source"], "downbeat")
 
     def test_measure_map_manufactures_downbeat_without_any(self):
