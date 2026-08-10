@@ -86,30 +86,3 @@ class TestSDDPass198IntraBarPromotion:
 
         assert rows[4]["beat"] != 1
         assert decisions == []
-
-    def test_phase_b_marks_weak_existing_grid_point_as_interpolation(self):
-        beat = 0.3647
-        times = [beat * index for index in range(7)]
-        node = MeasureMapNode()
-        rows = node._normalize_beats(_rows(times, [0, 6]))
-        rows[4]["beat"] = 2
-
-        rows, decisions = node._interpolate_weak_evidence_gaps(
-            rows, [0, 6], [(times[0], times[0]), (times[6], times[6])]
-        )
-
-        assert rows[4]["beat"] == 1
-        assert decisions[0]["reason"] == "forced_44_interpolation_weak_evidence"
-
-    def test_phase_b_synthesizes_only_when_grid_point_is_missing(self):
-        beat = 0.3647
-        times = [0.0, beat, 2 * beat, 6 * beat]
-        node = MeasureMapNode()
-        rows = node._normalize_beats(_rows(times, [0, 3]))
-
-        rows, decisions = node._interpolate_weak_evidence_gaps(
-            rows, [0, 3], [(times[0], times[0]), (times[3], times[3])]
-        )
-
-        assert any(row["beat"] == 1 and abs(row["time"] - 4 * beat) < 1e-6 for row in rows)
-        assert decisions[0]["reason"] == "forced_44_interpolation_weak_evidence_synthetic"

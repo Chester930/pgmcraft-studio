@@ -723,23 +723,18 @@ class MeasureMapNode(BaseNode):
                 downbeat_indexes = [
                     index for index, row in enumerate(beat_rows) if row["beat"] == 1
                 ]
-            # Pass 198B: if Phase A found no audio-backed candidate, use the
-            # protected endpoint phase as an explicit, traceable fallback.
-            # Prefer an existing grid point so weak evidence does not inflate
-            # the beat count; synthesize a row only when the gap truly lacks
-            # one of the expected beat points.
-            beat_rows, weak_interpolation = self._interpolate_weak_evidence_gaps(
-                beat_rows, downbeat_indexes, protected_ranges
-            )
-            if weak_interpolation:
-                self.last_phase_reconciliation.extend(weak_interpolation)
-                warnings.append(
-                    f"Pass 198B 已對 {len(weak_interpolation)} 個弱證據位置做明確插值；"
-                    "這些位置不是音訊偵測結果。"
-                )
-                downbeat_indexes = [
-                    index for index, row in enumerate(beat_rows) if int(row["beat"]) == 1
-                ]
+            # Pass 198 section 9.2: stage B (_interpolate_weak_evidence_gaps)
+            # was removed. Its post-interpolation conflict-cleanup demoted
+            # legitimate downstream protected anchors whenever they landed
+            # under one bar length away (no jitter margin), producing a
+            # self-reinforcing cascade that replaced ~85% of the song's
+            # downbeats with a re-guessed grid. Verified offline (see
+            # docs/PASS-198-INTRA-BAR-DOWNBEAT-PROMOTION-TASK.md section 9)
+            # that stage A alone reproduces the trusted Pass 197 baseline
+            # (114 measures, 10 irregular) with the intra-bar promotions
+            # correctly relocating a few known problem points. The removed
+            # method's source remains in git history (commit 8bf39e8) if a
+            # safer replacement is designed later.
             measure_map = self._build_from_downbeats(
                 beat_rows,
                 downbeat_indexes,
@@ -1032,119 +1027,6 @@ class MeasureMapNode(BaseNode):
             cursor = max(0, candidate_pos)
 
         return beat_rows, promotions
-
-    def _interpolate_weak_evidence_gaps(self, beat_rows, downbeat_indexes, protected_ranges=None):
-        """Pass 198B：在雙端 protected 錨點間補齊全曲 4/4 的弱證據空隙。
-
-        Phase A 只接受穩定鼓點證據；這個階段則承認「沒有證據」的情況，
-        只用端點相位與 robust beat length 插值。既有拍點優先被重新標成
-        beat 1，避免平白增加一列造成新的 5/6 拍；只有區間少於預期拍數時
-        才建立合成 beat row。每個決策都標記為插值，不能與 Phase A 混為
-        真實偵測結果。
-        """
-        if len(downbeat_indexes) < 2 or not protected_ranges:
-            return beat_rows, []
-
-        times = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
-        diffs = np.diff(times)
-        diffs = diffs[diffs > 0]
-        if len(diffs) == 0:
-            return beat_rows, []
-        beat_sec = float(np.median(diffs))
-        if beat_sec <= 0:
-            return beat_rows, []
-
-        def is_protected(index):
-            t = float(beat_rows[index]["time"])
-            return any(start <= t <= end for start, end in protected_ranges)
-
-        decisions = []
-        cursor = 0
-        tolerance_beats = 0.75
-        while cursor < len(downbeat_indexes) - 1:
-            left = downbeat_indexes[cursor]
-            right = downbeat_indexes[cursor + 1]
-            if not (is_protected(left) and is_protected(right)):
-                cursor += 1
-                continue
-
-            span_beats = (float(beat_rows[right]["time"]) - float(beat_rows[left]["time"])) / beat_sec
-            if span_beats <= 4.0 + 0.15:
-                cursor += 1
-                continue
-
-            target_time = float(beat_rows[left]["time"]) + 4.0 * beat_sec
-            candidates = list(range(left + 1, right))
-            candidate = min(
-                candidates,
-                key=lambda index: abs(float(beat_rows[index]["time"]) - target_time),
-                default=None,
-            )
-            candidate_error = (
-                abs(float(beat_rows[candidate]["time"]) - target_time) / beat_sec
-                if candidate is not None else None
-            )
-
-            if candidate is not None and candidate_error <= tolerance_beats:
-                if int(beat_rows[candidate]["beat"]) != 1:
-                    beat_rows[candidate]["beat"] = 1
-                    # Keep the newly interpolated anchor from creating a run
-                    # of one/two/three-beat measures: discard non-protected
-                    # legacy downbeats in the following four-beat window,
-                    # exactly as Phase A does after a promotion.
-                    candidate_time = float(beat_rows[candidate]["time"])
-                    for other in range(candidate + 1, len(beat_rows)):
-                        distance = (float(beat_rows[other]["time"]) - candidate_time) / beat_sec
-                        if distance >= 4.0 - 0.15:
-                            break
-                        other_time = float(beat_rows[other]["time"])
-                        if int(beat_rows[other]["beat"]) == 1:
-                            beat_rows[other]["beat"] = 2
-                    decisions.append({
-                        "anchor_time": round(float(beat_rows[left]["time"]), 6),
-                        "interpolated_time": round(float(beat_rows[candidate]["time"]), 6),
-                        "target_time": round(float(target_time), 6),
-                        "residual_sec": round(abs(float(beat_rows[candidate]["time"]) - target_time), 6),
-                        "residual_beats": round(float(candidate_error), 6),
-                        "beat_sec": round(float(beat_sec), 6),
-                        "next_anchor_time": round(float(beat_rows[right]["time"]), 6),
-                        "reason": "forced_44_interpolation_weak_evidence",
-                    })
-                    downbeat_indexes = [
-                        index for index, row in enumerate(beat_rows) if int(row["beat"]) == 1
-                    ]
-                    cursor += 1
-                    continue
-
-            # A genuinely missing grid point is safe to synthesize only when
-            # fewer than four rows exist before the right protected endpoint.
-            if len(candidates) < 4:
-                synthetic = {"time": round(float(target_time), 6), "beat": 1}
-                insert_at = right
-                for index in candidates:
-                    if float(beat_rows[index]["time"]) > target_time:
-                        insert_at = index
-                        break
-                beat_rows.insert(insert_at, synthetic)
-                decisions.append({
-                    "anchor_time": round(float(beat_rows[left]["time"]), 6),
-                    "interpolated_time": synthetic["time"],
-                    "target_time": synthetic["time"],
-                    "residual_sec": None,
-                    "residual_beats": None,
-                    "beat_sec": round(float(beat_sec), 6),
-                    "next_anchor_time": round(float(beat_rows[right + 1]["time"]), 6),
-                    "reason": "forced_44_interpolation_weak_evidence_synthetic",
-                })
-                downbeat_indexes = [
-                    index for index, row in enumerate(beat_rows) if int(row["beat"]) == 1
-                ]
-                cursor += 1
-                continue
-
-            cursor += 1
-
-        return beat_rows, decisions
 
     def _steady_percussion_evidence(self, beat_rows, stems, stems_dir):
         """Return stable percussion runs using the Pass 181-187 detector.
