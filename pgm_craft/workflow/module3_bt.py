@@ -1022,13 +1022,12 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
 class Module3BarStartV2MergeNode(BaseNode):
     """
     Runs the real BarStart v2 engine and adopts its grid as the 節奏定位 tab's
-    main output whenever v2 completes cleanly (no unresolved bar spans) --
+    main output whenever v2 completes cleanly and is evidence-backed --
     see `evaluate_barstart_v2_completeness()`. v1's own grid is kept as a
     fallback for whatever portion of the song v2 could not resolve, and its
     click/mix are still exported as `module3_legacy_*` artifacts for
-    reference, but it is no longer compared against v2 on a quality score:
-    real listening tests confirmed v2 consistently sounds better, so v2 is
-    now the default rather than something that has to win a comparison.
+    reference. Adoption requires both zero unresolved spans and a low enough
+    fallback-carry ratio; the quality score remains informational.
 
     An earlier version of this node re-derived "v2" from v1's own
     measure_map/beat labels and wrote a hardcoded 88-vs-95 "listening test"
@@ -1094,9 +1093,11 @@ class Module3BarStartV2MergeNode(BaseNode):
         unresolved_spans = comparison["unresolved_spans"]
         full_song_loop_report = comparison["full_song_loop_report"]
 
-        completeness = evaluate_barstart_v2_completeness(unresolved_bar_spans=unresolved_spans)
-        # Informational only -- kept in the report for reference, no longer
-        # used to decide whether v2 is adopted.
+        completeness = evaluate_barstart_v2_completeness(
+            unresolved_bar_spans=unresolved_spans,
+            carried_bar_ratio=full_song_loop_report.get("carried_bar_ratio"),
+        )
+        # Informational only -- kept in the report for reference.
         quality_comparison = {
             "original_score": original_quality["score"],
             "barstart_v2_score": v2_quality["score"],
@@ -1126,10 +1127,9 @@ class Module3BarStartV2MergeNode(BaseNode):
             "promotion_gate": completeness,
             "quality_comparison": quality_comparison,
             "notes": [
-                "BarStart v2 is the default click grid whenever it completes "
-                "with no unresolved bar spans -- confirmed via real listening "
-                "tests to consistently sound better than v1, so it is no "
-                "longer compared on a quality score before being adopted.",
+                "BarStart v2 is adopted only when it has no unresolved bar "
+                "spans and its fallback-carry ratio stays below the evidence "
+                "threshold; otherwise legacy v1 remains the safe output.",
                 "Legacy Module 3 click artifacts are preserved for reference.",
             ],
         }
@@ -1224,10 +1224,7 @@ class BarStartV2AutoMergeNode(BaseNode):
 
     Runs the exact same v1-vs-v2 comparison (via `_run_barstart_v2_comparison`)
     and adopts v2's grid whenever `evaluate_barstart_v2_completeness()` says
-    it finished cleanly (no unresolved bar spans) -- v2 is the default
-    output everywhere now that real listening tests confirmed it
-    consistently sounds better than v1, so there is no quality-score
-    comparison or human-acceptance step left to gate on. It does not write
+    it finished with sufficient independent evidence. It does not write
     the legacy/comparison A/B audio artifacts Module3BarStartV2MergeNode
     produces for manual review -- the main pipeline only needs the final
     grid, not a side-by-side comparison file nobody asked to see.
@@ -1282,6 +1279,9 @@ class BarStartV2AutoMergeNode(BaseNode):
         }
         completeness = evaluate_barstart_v2_completeness(
             unresolved_bar_spans=comparison["unresolved_spans"],
+            carried_bar_ratio=(comparison["full_song_loop_report"] or {}).get(
+                "carried_bar_ratio"
+            ),
         )
         promoted = bool(completeness["adoptable"])
         if promoted:

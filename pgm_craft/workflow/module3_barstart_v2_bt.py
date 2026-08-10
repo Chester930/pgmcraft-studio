@@ -965,12 +965,21 @@ class BarStartCandidateCommitNode(BaseNode):
         # re-"committing" the same bar every tick forever with no progress.
         eligible = self._exclude_already_committed(candidates, committed)
         eligible = self._prefer_bar_length_plausible(eligible, committed, blackboard)
-        best = self._best_candidate(eligible)
+        eligible, consensus_report = self._aggregate_consensus_candidates(eligible)
+        best, arbitration_report = self._best_candidate(
+            eligible,
+            committed_bar_starts=committed,
+            blackboard=blackboard,
+            return_arbitration=True,
+        )
 
         report = {
             "threshold": threshold,
-            "candidate_count": len(candidates),
+            "candidate_count": len(eligible),
+            "raw_candidate_count": len(candidates),
             "active_bar_probe_window": window,
+            "consensus_aggregation": consensus_report,
+            "candidate_arbitration": arbitration_report,
             "status": "NO_CANDIDATE",
         }
 
@@ -1039,7 +1048,7 @@ class BarStartCandidateCommitNode(BaseNode):
             blackboard.set_val("unresolved_bar_spans", unresolved)
             blackboard.set_val("last_bar_probe_result", result)
 
-        blackboard.set_val("bar_start_candidates", candidates)
+        blackboard.set_val("bar_start_candidates", eligible)
         blackboard.set_val("bar_start_decision_report", report)
         return NodeStatus.SUCCESS
 
@@ -1078,10 +1087,165 @@ class BarStartCandidateCommitNode(BaseNode):
             })
         return sorted(out, key=lambda item: (item["time"], -item["confidence"]))
 
-    def _best_candidate(self, candidates: list[dict]) -> dict | None:
+    def _best_candidate(
+        self,
+        candidates: list[dict],
+        committed_bar_starts: list[float] | None = None,
+        blackboard: Blackboard | None = None,
+        return_arbitration: bool = False,
+    ):
         if not candidates:
-            return None
-        return max(candidates, key=lambda item: (item["confidence"], -item["time"]))
+            result = (None, {"triggered": False, "reason": "no_candidates"})
+            return result if return_arbitration else None
+
+        expected = self._expected_bar_duration(blackboard) if blackboard is not None else None
+        conflicts = self._conflicting_candidates(candidates, expected)
+        if len(conflicts) < 2 or not committed_bar_starts or not expected:
+            best = max(candidates, key=lambda item: (item["confidence"], -item["time"]))
+            result = (best, {
+                "triggered": False,
+                "reason": "no_close_conflict" if len(conflicts) < 2 else "missing_phase_model",
+                "candidate_count": len(candidates),
+            })
+            return result if return_arbitration else best
+
+        scored = []
+        for candidate in conflicts:
+            score = self._phase_consistency_score(
+                candidate["time"], committed_bar_starts, expected
+            )
+            scored.append({
+                "candidate": candidate,
+                "phase_consistency_score": score["score"],
+                "matching_committed_bars": score["matching_committed_bars"],
+                "mean_residual_sec": score["mean_residual_sec"],
+            })
+        winner = max(
+            scored,
+            key=lambda item: (
+                item["phase_consistency_score"],
+                item["candidate"]["confidence"],
+                -item["candidate"]["time"],
+            ),
+        )
+        best = winner["candidate"]
+        arbitration = {
+            "triggered": True,
+            "reason": "close_candidates_phase_arbitration",
+            "expected_bar_duration_sec": round(float(expected), 6),
+            "candidates": scored,
+            "winner_time": best["time"],
+            "winner_phase_consistency_score": winner["phase_consistency_score"],
+        }
+        return (best, arbitration) if return_arbitration else best
+
+    def _aggregate_consensus_candidates(self, candidates: list[dict]) -> tuple[list[dict], dict]:
+        """Merge near-identical candidates only when independent sources agree."""
+        if len(candidates) < 2:
+            return candidates, {"triggered": False, "groups": []}
+
+        groups = []
+        for candidate in sorted(candidates, key=lambda item: item["time"]):
+            if not groups or candidate["time"] - groups[-1][0]["time"] > 0.05:
+                groups.append([candidate])
+            else:
+                groups[-1].append(candidate)
+
+        output = []
+        report_groups = []
+        for group in groups:
+            source_ids = [self._candidate_source_id(item) for item in group]
+            distinct_sources = list(dict.fromkeys(source_ids))
+            evidence_sets = [
+                {str(source) for source in (item.get("evidence_sources", []) or [])}
+                for item in group
+            ]
+            independent = len(distinct_sources) >= 2 and all(
+                not (left & right)
+                for index, left in enumerate(evidence_sets)
+                for right in evidence_sets[index + 1:]
+            )
+            if not independent:
+                output.extend(group)
+                continue
+
+            weights = np.asarray([max(float(item["confidence"]), 1e-6) for item in group])
+            times = np.asarray([float(item["time"]) for item in group])
+            merged_time = float(np.average(times, weights=weights))
+            confidence = 1.0
+            for item in group:
+                confidence *= 1.0 - float(item["confidence"])
+            confidence = float(np.clip(1.0 - confidence, 0.0, 1.0))
+            evidence = []
+            for item in group:
+                for source in item.get("evidence_sources", []) or []:
+                    if source not in evidence:
+                        evidence.append(source)
+            merged = {
+                "candidate_id": "consensus:" + "+".join(str(item["candidate_id"]) for item in group),
+                "time": round(merged_time, 6),
+                "confidence": round(confidence, 6),
+                "evidence_sources": evidence,
+                "source_node": "BarStartCandidateConsensus",
+                "consensus_sources": distinct_sources,
+                "consensus_count": len(group),
+                "consensus_members": group,
+                "aggregation_reason": "independent_sources_within_50ms",
+            }
+            output.append(merged)
+            report_groups.append({
+                "time": merged["time"],
+                "member_count": len(group),
+                "distinct_sources": distinct_sources,
+                "member_times": [item["time"] for item in group],
+                "aggregated_confidence": merged["confidence"],
+            })
+        return sorted(output, key=lambda item: (item["time"], -item["confidence"])), {
+            "triggered": bool(report_groups),
+            "tolerance_sec": 0.05,
+            "groups": report_groups,
+        }
+
+    def _candidate_source_id(self, candidate: dict) -> str:
+        source_node = str(candidate.get("source_node") or "").strip()
+        if source_node and source_node != "unknown":
+            return source_node
+        sources = candidate.get("evidence_sources", []) or []
+        return str(sources[0]) if sources else "unknown"
+
+    def _conflicting_candidates(self, candidates: list[dict], expected: float | None) -> list[dict]:
+        if expected is None or expected <= 0 or len(candidates) < 2:
+            return []
+        return [
+            candidate for candidate in candidates
+            if any(
+                other is not candidate
+                and 0.05 < abs(float(candidate["time"]) - float(other["time"])) < expected
+                for other in candidates
+            )
+        ]
+
+    def _phase_consistency_score(
+        self, candidate_time: float, committed: list[float], expected: float
+    ) -> dict:
+        residuals = []
+        for previous in committed:
+            delta = float(candidate_time) - float(previous)
+            if delta <= 0:
+                continue
+            bars = max(1, int(round(delta / expected)))
+            residual = abs(delta - bars * expected)
+            residuals.append(residual)
+        if not residuals:
+            return {"score": 0.0, "matching_committed_bars": 0, "mean_residual_sec": None}
+        mean_residual = float(np.mean(residuals))
+        score = float(np.clip(1.0 - mean_residual / max(expected * 0.5, 1e-6), 0.0, 1.0))
+        matches = sum(1 for residual in residuals if residual <= expected * 0.18)
+        return {
+            "score": round(score, 6),
+            "matching_committed_bars": matches,
+            "mean_residual_sec": round(mean_residual, 6),
+        }
 
     def _exclude_already_committed(self, candidates: list[dict], committed: list[float]) -> list[dict]:
         if not committed:
@@ -3055,6 +3219,9 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "downbeat_fix_report": blackboard.get_val("downbeat_fix_report", {}),
             "promotion_gate": evaluate_barstart_v2_completeness(
                 unresolved_bar_spans=blackboard.get_val("unresolved_bar_spans", []),
+                carried_bar_ratio=(blackboard.get_val("full_song_loop_report", {}) or {}).get(
+                    "carried_bar_ratio"
+                ),
             ),
         }
         outputs["barstart_v2_report"] = report
@@ -3329,28 +3496,38 @@ class BarGridSanityPrunerNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
-def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None):
+FALLBACK_CARRY_RATIO_THRESHOLD = 0.5
+
+
+def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None, carried_bar_ratio=None):
     """Return whether v2's grid is complete enough to adopt as the main
     output.
 
-    Earlier versions gated v2 behind either a strict human-acceptance
-    promotion gate (evaluate_barstart_v2_promotion_gate) or an automatic
-    v1-vs-v2 quality-score comparison (evaluate_barstart_v2_auto_promotion_gate).
-    Both were retired once real listening tests confirmed v2 consistently
-    sounds better than v1 -- v2 is now the default output everywhere, so
-    there is nothing left to compare or get human sign-off on. The only
-    thing that can still legitimately block adoption is v2 itself failing
-    to finish: if the evidence ladder leaves unresolved bar spans, that
-    portion of the song has no real v2 answer and falling back to v1 is
-    safer than shipping a grid with known gaps.
+    A zero unresolved-span count is necessary but not sufficient: the loop can
+    reach it by carrying bars from the legacy v1 grid after repeated stalls.
+    V2 is adoptable only when it covers the song and the carried-bar ratio is
+    below the conservative research threshold. The ratio is supplied by the
+    full-song loop; a missing value remains backward-compatible for direct
+    callers of this helper, while production reports always provide it.
     """
     unresolved_count = len(unresolved_bar_spans or [])
-    blockers = ["UNRESOLVED_BAR_SPANS_PRESENT"] if unresolved_count else []
+    try:
+        ratio = float(carried_bar_ratio) if carried_bar_ratio is not None else 0.0
+    except (TypeError, ValueError):
+        ratio = 0.0
+    ratio = float(np.clip(ratio, 0.0, 1.0))
+    blockers = []
+    if unresolved_count:
+        blockers.append("UNRESOLVED_BAR_SPANS_PRESENT")
+    if ratio > FALLBACK_CARRY_RATIO_THRESHOLD:
+        blockers.append("EXCESSIVE_FALLBACK_CARRY_RATIO")
     return {
         "adoptable": not blockers,
         "status": "V2_READY" if not blockers else "V2_INCOMPLETE",
         "blockers": blockers,
         "unresolved_bar_span_count": unresolved_count,
+        "carried_bar_ratio": round(ratio, 6),
+        "carried_bar_ratio_threshold": FALLBACK_CARRY_RATIO_THRESHOLD,
     }
 
 
@@ -3454,6 +3631,7 @@ class FullSongBarStartLoopNode(BaseNode):
         duration_cap = NoDrumPhaseCarryNode()._audio_duration_cap(blackboard)
         stall_count = 0
         stall_recoveries = 0
+        carried_bar_count = 0
         iterations = 0
         stop_reason = "max_iterations_reached"
 
@@ -3484,6 +3662,7 @@ class FullSongBarStartLoopNode(BaseNode):
             provisional = self._normalize(blackboard.get_val("provisional_bar_starts"))
             if provisional:
                 merged = sorted(set(after) | set(provisional))
+                carried_bar_count += len(set(merged) - set(after))
                 blackboard.set_val("committed_bar_starts", merged)
                 stall_recoveries += 1
                 stall_count = 0
@@ -3508,11 +3687,17 @@ class FullSongBarStartLoopNode(BaseNode):
             BarGridSanityPrunerNode().execute(blackboard)
 
         final = self._normalize(blackboard.get_val("committed_bar_starts"))
+        carried_bar_ratio = (
+            float(np.clip(carried_bar_count / len(final), 0.0, 1.0))
+            if final else 0.0
+        )
         blackboard.set_val("full_song_loop_report", {
             "status": "COMPLETED" if stop_reason != "max_iterations_reached" else "MAX_ITERATIONS_REACHED",
             "iterations": iterations,
             "committed_bar_count": len(final),
             "stall_recoveries": stall_recoveries,
+            "carried_bar_count": carried_bar_count,
+            "carried_bar_ratio": round(carried_bar_ratio, 6),
             "stop_reason": stop_reason,
             "unresolved_span_count": len(blackboard.get_val("unresolved_bar_spans", []) or []),
         })
