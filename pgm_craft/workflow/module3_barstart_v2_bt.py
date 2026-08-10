@@ -491,10 +491,8 @@ class NoDrumPhaseCarryNode(BaseNode):
             blackboard.get_val("committed_bar_starts")
         )
         previous = float(anchors[-1]["time"]) if anchors else (committed[-1] if committed else None)
+        next_anchor = self._next_anchor(blackboard.get_val("lookahead_bar_candidates", []), previous)
         bar_duration = self._bar_duration(blackboard)
-        next_anchor = self._next_anchor(
-            blackboard.get_val("lookahead_bar_candidates", []), previous, bar_duration
-        )
         provisional = []
         status = "NO_SPAN"
         used_fallback = False
@@ -512,15 +510,7 @@ class NoDrumPhaseCarryNode(BaseNode):
                     while current < next_anchor - self.tolerance_sec:
                         provisional.append(round(current, 6))
                         current += bar_duration
-                    if not provisional and next_anchor - previous >= bar_duration * 0.9:
-                        # The lookahead candidate itself is a valid next bar,
-                        # but there is no interior v1 row to carry.  Do not
-                        # report NO_SPAN and stall: the candidate already
-                        # passed the one-bar spacing gate in _next_anchor.
-                        provisional = [round(next_anchor, 6)]
-                        status = "CARRIED_NEXT_ANCHOR_FALLBACK"
-                    else:
-                        status = "CARRIED" if provisional else "NO_SPAN"
+                    status = "CARRIED" if provisional else "NO_SPAN"
             else:
                 duration_cap = self._audio_duration_cap(blackboard)
                 v1_times = self._v1_grid_times_in_span(
@@ -589,7 +579,7 @@ class NoDrumPhaseCarryNode(BaseNode):
             pass
         return None
 
-    def _next_anchor(self, candidates, previous, bar_duration=None):
+    def _next_anchor(self, candidates, previous):
         values = []
         for item in candidates or []:
             try:
@@ -597,10 +587,6 @@ class NoDrumPhaseCarryNode(BaseNode):
             except (TypeError, ValueError):
                 continue
             if previous is None or time_sec > previous + self.tolerance_sec:
-                if previous is not None and bar_duration and bar_duration > 0:
-                    bar_distance = (time_sec - previous) / bar_duration
-                    if bar_distance < 1.0:
-                        continue
                 confidence = float(item.get("confidence", 0.0)) if isinstance(item, dict) else 0.0
                 values.append((confidence, time_sec))
         return max(values, key=lambda pair: (pair[0], -pair[1]))[1] if values else None
@@ -707,7 +693,6 @@ class LookaheadDrumAnchorSearchNode(BaseNode):
             blackboard.get_val("committed_bar_starts")
         )
         previous = committed[-1] if committed else None
-        bar_duration = NoDrumPhaseCarryNode()._bar_duration(blackboard)
         offsets = blackboard.get_val("lookahead_offsets_sec", [0.0, -0.5, 0.5, -1.0, 1.0])
         candidates = []
         for item in raw:
@@ -724,10 +709,6 @@ class LookaheadDrumAnchorSearchNode(BaseNode):
                 candidate_time = event_time + float(offset)
                 if previous is not None and candidate_time <= previous:
                     continue
-                if previous is not None and bar_duration > 0:
-                    bar_distance = (candidate_time - previous) / bar_duration
-                    if bar_distance < 1.0:
-                        continue
                 candidates.append({
                     "time": round(candidate_time, 6),
                     "event_time": round(event_time, 6),
@@ -3470,14 +3451,10 @@ class FullSongBarStartLoopNode(BaseNode):
         self.children = [self._tick]
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
-        self._initialize_timing(blackboard)
-        carry_node = NoDrumPhaseCarryNode()
-        duration_cap = carry_node._audio_duration_cap(blackboard)
-        bar_duration = carry_node._bar_duration(blackboard)
+        duration_cap = NoDrumPhaseCarryNode()._audio_duration_cap(blackboard)
         stall_count = 0
         stall_recoveries = 0
         iterations = 0
-        tick_trace = []
         stop_reason = "max_iterations_reached"
 
         while iterations < self.max_iterations:
@@ -3491,17 +3468,6 @@ class FullSongBarStartLoopNode(BaseNode):
                 # ever seeing zero unresolved spans.
                 stop_reason = "reached_audio_duration"
                 break
-            if (
-                duration_cap is not None
-                and before
-                and bar_duration > 0
-                and duration_cap - before[-1] <= bar_duration * 0.75
-            ):
-                # A final partial tail is not another unresolved bar.  Once
-                # the next full bar would start beyond the audio, finish at
-                # the last committed start instead of spinning three ticks.
-                stop_reason = "reached_audio_duration"
-                break
 
             iterations += 1
             self._tick.run(blackboard, parent=self.name)
@@ -3512,17 +3478,6 @@ class FullSongBarStartLoopNode(BaseNode):
                 continue
 
             stall_count += 1
-            no_drum_report = blackboard.get_val("no_drum_phase_report", {}) or {}
-            tick_trace.append({
-                "iteration": iterations,
-                "stall_count": stall_count,
-                "previous_bar_start": before[-1] if before else None,
-                "committed_bar_count": len(after),
-                "next_anchor": no_drum_report.get("next_anchor"),
-                "bar_duration_sec": no_drum_report.get("bar_duration_sec"),
-                "no_drum_status": no_drum_report.get("status"),
-                "provisional_count": len(blackboard.get_val("provisional_bar_starts", []) or []),
-            })
             if stall_count < self.stall_limit:
                 continue
 
@@ -3530,11 +3485,6 @@ class FullSongBarStartLoopNode(BaseNode):
             if provisional:
                 merged = sorted(set(after) | set(provisional))
                 blackboard.set_val("committed_bar_starts", merged)
-                # Every probe-level unresolved record accumulated since the
-                # previous commit belongs to the span just covered by this
-                # provisional carry.  Keep the final report about genuinely
-                # unresolved spans, not transient pre-recovery retries.
-                blackboard.set_val("unresolved_bar_spans", [])
                 stall_recoveries += 1
                 stall_count = 0
                 continue
@@ -3565,47 +3515,11 @@ class FullSongBarStartLoopNode(BaseNode):
             "stall_recoveries": stall_recoveries,
             "stop_reason": stop_reason,
             "unresolved_span_count": len(blackboard.get_val("unresolved_bar_spans", []) or []),
-            "stall_trace": tick_trace,
         })
         return NodeStatus.SUCCESS
 
     def _normalize(self, raw) -> list[float]:
         return ManualCommittedBarStartsSeedNode()._normalize_times(raw)
-
-    def _initialize_timing(self, blackboard: Blackboard) -> None:
-        """Populate the shared timing fields before the first probe tick.
-
-        BarStart V2 can run through long no-drum spans where no node has
-        emitted a tempo value yet.  Use the same robust median beat interval
-        as the v1/MeasureMap pipeline instead of silently falling back to
-        120 BPM (and a two-second 4/4 bar).
-        """
-        grid = blackboard.get_val("v1_reference_beat_grid")
-        if grid is None:
-            grid = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        try:
-            arr = np.asarray(grid, dtype=float)
-            if arr.ndim == 1:
-                times = arr
-            elif arr.ndim >= 2 and arr.shape[1] >= 1:
-                times = arr[:, 0]
-            else:
-                times = np.asarray([], dtype=float)
-            times = np.sort(times[np.isfinite(times)])
-            diffs = np.diff(times)
-            diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
-        except (TypeError, ValueError):
-            diffs = np.asarray([], dtype=float)
-        if len(diffs) == 0:
-            return
-        beat_sec = float(np.median(diffs))
-        if beat_sec <= 0:
-            return
-        beats_per_bar = int((blackboard.get_val("meter_profile", {}) or {}).get("beats_per_bar", 4))
-        if beats_per_bar <= 0:
-            beats_per_bar = 4
-        blackboard.set_val("tempo_bpm", 60.0 / beat_sec)
-        blackboard.set_val("bar_duration_sec", beat_sec * beats_per_bar)
 
 
 def build_module3_barstart_v2_pipeline_tree() -> BaseNode:
