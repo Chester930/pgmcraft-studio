@@ -1451,3 +1451,33 @@ SegmentSourceAttributionNode → BeatGridSynthesisNode`（`module3_bt.py:1364-13
 如何做穩健的拍點延續；（c）多來源證據（鼓/貝斯/和絃）在候選很接近
 時該用什麼方法交叉驗證，而不是只比信心分數高低。
 
+### Pass 200-204：後續任務書序列（轉交 Codex 依序執行）
+
+根據上述文獻研究跟已確認的缺口，寫成四份可執行任務書 + 一份決策點
+留白文件，轉交 Codex CLI 依序處理：
+
+- **Pass 200**（`docs/PASS-200-BEAT-THIS-BASELINE-COMPARISON-TASK.md`）：
+  用 `CPJKU/beat_this` 預訓練模型對測試曲目建立獨立基準比較，純
+  評估、不動 production 程式碼，逐一核對已知問題點（8.041s、
+  77.803s、97.197s 等）表現。成本最低、資訊量最高，作為後續方向的
+  判斷依據。
+- **Pass 201**（`docs/PASS-201-BARSTART-V2-PROMOTION-GATE-FALLBACK-RATIO-TASK.md`）：
+  修正 `evaluate_barstart_v2_completeness`（`module3_barstart_v2_bt.py:3332`）
+  只看 `unresolved_bar_span_count==0` 就判定 `adoptable` 的漏洞，
+  加入「有多少比例的小節其實是 fallback carry、不是真正證據判斷」
+  這個訊號。獨立、低風險、可以先做。
+- **Pass 202**（`docs/PASS-202-BARSTART-V2-CANDIDATE-ARBITRATION-TASK.md`）：
+  幫 `BarStartCandidateCommitNode._best_candidate`（`:1081`，目前
+  純選信心最高、無交叉驗證）加上兩層機制：多分軌共識聚合、候選
+  衝突時借用 `MeasureMapNode._reconcile_close_downbeats`（Pass 197A）
+  的一致性評分概念仲裁。獨立、可以先做。
+- **Pass 203**（`docs/PASS-203-EVIDENCE-FUSION-THRESHOLD-DIAGNOSIS-TASK.md`）：
+  診斷型任務——為什麼 124 個 commit 小節裡只有 18 個（15%）真正
+  達到 0.7 commit 門檻，其餘 85% 靠複製 v1 網格撐過去。用即時
+  instrumentation 抓真實資料逐 tick 的候選跟信心分數，找出是門檻
+  偏保守、證據來源沒觸發、還是這首歌編曲特性不利。只產出診斷報告，
+  不在這個任務書內直接修。
+- **Pass 204**（`docs/PASS-204-NEXT-STEP-DECISION-POINT.md`）：刻意
+  留白的決策點，要等 200、203 的結果出來，由使用者跟 Claude 決定
+  範圍後才寫，不讓 Codex 自己決定方向並動工。
+
