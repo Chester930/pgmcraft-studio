@@ -254,3 +254,95 @@ tick 21-500（178.1s 之後，遠遠超過全曲 176 秒的實際長度）：
    該有幾個小節」並嘗試搭橋，而是直接判定為品質倒退放棄。
 3. 這兩點都需要新的、範圍更小更精確的任務書，不是延續 Pass 203
    原本設計的「找信心公式哪裡偏低」方向。
+
+---
+
+## 6. 修正（同一系列後續調查）：31-94s 斷層不是證據真空，是 Pass 202 仲裁邏輯自己的 bug
+
+**第 5 節「31-94s 證據真空斷層」的結論已被推翻。** 針對使用者
+「針對 31-94s 這個斷層繼續深入調查」的指示，重新檢視 tick 7-13 的
+完整候選清單（不是只看最終 `best_candidate`），發現：
+
+- 這幾個 tick 的搜尋視窗裡**每一個都存在信心 1.0 的候選**（例如
+  tick 7 視窗裡的 `bar_start_candidate_20`，time=33.750204，
+  confidence=1.0）——跟第 5 節「這段完全沒有任何候選能達到 0.7
+  信心」的描述**直接矛盾**。
+- 真正發生的事：`BarStartCandidateCommitNode._best_candidate`
+  （`pgm_craft/workflow/module3_barstart_v2_bt.py:1091`）的仲裁排序
+  把 `phase_consistency_score` 放在**主排序鍵**，`confidence` 只是
+  次要排序鍵——這代表只要某個候選跟已 commit 的小節序列「相位」對得
+  上，就算它的原始信心遠低於 0.7 門檻，也會贏過同一視窗裡信心
+  1.0、只是相位分數略低的候選。tick 7 實際勝出的是
+  `bar_start_candidate_21`（time=34.017234, confidence=0.6,
+  phase_consistency_score=0.728582），不是任何一個信心 1.0 的候選。
+- 根本原因是 `_conflicting_candidates`（同檔 1217 行）把「一個 bar
+  duration（約 1.45 秒）之內的任意兩個候選」都判定為互斥衝突——但
+  探測視窗寬達 6-12+ 秒，天生會同時包含好幾個**合法、依序排列的
+  真實小節候選**，這些候選彼此之間本來就不是「同一小節的重複」，
+  而是「下一個小節、下下個小節……」，被過度寬鬆的衝突判定誤判成
+  必須互相淘汰的競爭者，讓仲裁機制反過來壓制了原本能直接達標的
+  高信心候選。
+
+換句話說：**根本不存在證據真空**，31-94s 這段音訊的鼓組/貝斯/和絃
+證據運作正常（甚至能給到滿分），問題出在 Pass 202 自己新增的仲裁
+邏輯，用相位一致性覆蓋了信心門檻本身的判斷。
+
+### 6.1 已完成的修復（Claude 直接實作並驗證，未經 Codex）
+
+`_best_candidate` 簽名新增 `commit_threshold` 參數，勝出排序鍵改為
+`(是否達到 commit_threshold, phase_consistency_score, confidence,
+-time)`——`clears_threshold` 現在是**第一優先**排序鍵，只有在同一
+衝突組裡**沒有任何候選達到門檻**時，才會退回原本「用相位分數決定
+勝負」的行為（這保留了 Pass 202 原始測試
+`test_close_conflict_uses_committed_phase_consistency` 的既有語意：
+兩個候選都達標時，相位分數合理地決定要選哪一個）。呼叫端
+（`BarStartCandidateCommitNode.execute`，同檔 969 行）已改為把
+`threshold` 傳入 `_best_candidate`。
+
+新增兩個回歸測試（`tests/test_sdd_pass202.py`）：
+- `test_threshold_clearing_candidate_beats_phase_only_preference`：
+  重現這次確認的真實 bug 場景（一個相位完美但信心不足的候選，輸給
+  另一個相位稍差但信心達標的候選）。
+- `test_no_threshold_clearing_candidate_falls_back_to_phase_score`：
+  確認「同組都沒人達標」時，舊行為（相位分數決勝）不受影響。
+
+`tests/test_sdd_pass202.py`、`tests/test_module3_bt.py`、既有全部
+21 個相關測試，以及涵蓋 barstart/module3/pass19x/pass20x 的 91 個
+測試全數通過。
+
+### 6.2 修復後全曲重跑：暴露出第二個、先前被這個 bug 掩蓋的問題
+
+用修好的仲裁邏輯重新跑一次 `scratch/run_pass203_evidence_fusion_diagnosis.py`
+全曲診斷，31-94s 這段的仲裁確實改選到高信心候選了（`winner_cleared_threshold=True`，
+勝出信心從 0.52-0.6 提升到 0.72-1.0），**但這並沒有讓 loop 恢復正常
+推進**——新的全曲結果是 500 tick 裡只成功 commit **1 次**（比修
+之前的 5 次還少）。
+
+原因：`BarStartCandidateCommitNode.execute` 裡的 `quality_regression`
+安全機制（`_score_bar_start_list_quality`，同檔 881 行；比較
+`quality_before`/`quality_after` 的小節間距標準差）現在變成新的主要
+瓶頸。具體數據（tick 2/3/6/10，`committed` 從 tick 1 之後就再也沒有
+成長過，`quality_before` 因此固定在 0.9197）：
+
+| tick | 候選時間 | 信心 | quality_before | quality_after | 結果 |
+|---|---:|---:|---:|---:|---|
+| 2 | 6.616259 | 0.94 | 0.9197 | 0.7663 | quality_regression 拒絕 |
+| 3 | 12.376236 | 1.00 | 0.9197 | 0.2199 | quality_regression 拒絕 |
+| 6 | 32.382177 | 0.72 | 0.9197 | 0.0000 | quality_regression 拒絕 |
+| 10 | 70.535193 | 0.72 | 0.9197 | 0.0000 | quality_regression 拒絕 |
+
+這是一個自我鎖死的迴圈：只要有一次 commit 因故失敗（例如中間某個
+小節本身證據被 fill/exclusion 排除），下一個「真正正確」的候選跟
+`committed` 最後一筆之間的間距，就會是預期小節長度（約 1.45s）的
+好幾倍——`_score_bar_start_list_quality` 只看**原始**相鄰間距的
+標準差，不知道中間有「已知的、被跳過的小節」，把這種合理的多小節
+跳躍當成嚴重的節奏不穩定，於是永遠拒絕，`committed` 從此凍結，
+`quality_before` 也永遠不會再改善——形成惡性循環。**這個問題先前
+被 Pass 202 的仲裁 bug 掩蓋了**：修之前，仲裁本身就常態性選到跟
+上一個 commit 只差一個 bar 的低信心候選（因為 `_conflicting_candidates`
+限定在一個 bar duration 之內），所以很少真的觸發需要跨越多個小節
+的 quality_regression 情境；修好仲裁之後，`_best_candidate` 老實
+選出真正正確、但離上次 commit 有好幾個 bar 遠的候選，quality
+regression 機制才第一次被大量觸發。
+
+**下一步任務書見 `docs/PASS-205-BARSTART-V2-QUALITY-REGRESSION-GATE-TASK.md`。**

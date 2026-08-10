@@ -971,6 +971,7 @@ class BarStartCandidateCommitNode(BaseNode):
             committed_bar_starts=committed,
             blackboard=blackboard,
             return_arbitration=True,
+            commit_threshold=threshold,
         )
 
         report = {
@@ -1093,6 +1094,7 @@ class BarStartCandidateCommitNode(BaseNode):
         committed_bar_starts: list[float] | None = None,
         blackboard: Blackboard | None = None,
         return_arbitration: bool = False,
+        commit_threshold: float | None = None,
     ):
         if not candidates:
             result = (None, {"triggered": False, "reason": "no_candidates"})
@@ -1120,9 +1122,20 @@ class BarStartCandidateCommitNode(BaseNode):
                 "matching_committed_bars": score["matching_committed_bars"],
                 "mean_residual_sec": score["mean_residual_sec"],
             })
+        # Phase-consistency scoring should only break ties AMONG candidates that
+        # already clear the commit threshold. Otherwise a low-confidence
+        # candidate that happens to land on a plausible bar-multiple offset can
+        # outrank a same-window, high-confidence candidate purely because the
+        # phase score was sorted first (Pass 202 arbitration bug).
+        clears_threshold = (
+            (lambda item: item["candidate"]["confidence"] >= commit_threshold)
+            if commit_threshold is not None
+            else (lambda item: True)
+        )
         winner = max(
             scored,
             key=lambda item: (
+                clears_threshold(item),
                 item["phase_consistency_score"],
                 item["candidate"]["confidence"],
                 -item["candidate"]["time"],
@@ -1133,9 +1146,11 @@ class BarStartCandidateCommitNode(BaseNode):
             "triggered": True,
             "reason": "close_candidates_phase_arbitration",
             "expected_bar_duration_sec": round(float(expected), 6),
+            "commit_threshold": commit_threshold,
             "candidates": scored,
             "winner_time": best["time"],
             "winner_phase_consistency_score": winner["phase_consistency_score"],
+            "winner_cleared_threshold": clears_threshold(winner),
         }
         return (best, arbitration) if return_arbitration else best
 

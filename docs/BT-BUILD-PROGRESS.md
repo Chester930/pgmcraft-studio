@@ -1537,3 +1537,43 @@ log 顯示「Pass 198B 已對 73 個弱證據位置做明確插值」——`docs
   斷層 + 搭橋機制為何失靈），但這個新方向的範圍還沒被評估過，
   Pass 204 仍未正式寫，需要先針對這個具體區間再做一輪聚焦調查。
 
+### 31-94s 斷層深入調查：真正根因是 Pass 202 仲裁 bug，不是證據真空（Claude 直接診斷+修復+驗證）
+
+延續使用者「針對 31-94s 這個斷層繼續深入調查」的指示，重新檢視
+tick 7-13 的**完整候選清單**（不只看 `best_candidate`），推翻了
+上面 Pass 203 全曲版的結論：
+
+- tick 7-13 每一個搜尋視窗裡都存在**信心 1.0 的候選**，跟「完全
+  沒有任何候選達到 0.7 信心」直接矛盾。
+- 真正的問題：`BarStartCandidateCommitNode._best_candidate`
+  （`module3_barstart_v2_bt.py:1091`）的仲裁排序把
+  `phase_consistency_score` 放在**主排序鍵**、`confidence` 只是次要
+  鍵，導致只要某候選跟已 commit 序列「相位」對得上，即使信心遠低於
+  0.7 門檻，也贏過同視窗裡信心 1.0、相位分數略低的候選。tick 7 實際
+  勝出的是 confidence=0.6 的候選，不是任何一個滿分候選。根因是
+  `_conflicting_candidates` 把「一個 bar duration（~1.45秒）之內的
+  任意兩候選」都當成互斥衝突，但探測視窗寬達 6-12+ 秒，天生同時
+  包含好幾個合法、依序排列的真實小節候選，被過度寬鬆的衝突判定
+  誤判成必須互相淘汰。**不存在證據真空，是 Pass 202 自己的仲裁邏輯
+  壓制了原本能直接達標的高信心候選。**
+
+**修復**（Claude 直接實作，未經 Codex）：`_best_candidate` 新增
+`commit_threshold` 參數，排序鍵改為 `(是否達到門檻, 相位分數, 信心,
+-時間)`——只有同組候選都沒人達標時才退回原本的相位分數決勝行為，
+保留 Pass 202 原始測試語意。新增兩個回歸測試
+（`tests/test_sdd_pass202.py`），連同既有 21 個相關測試、涵蓋
+barstart/module3/pass19x/20x 的 91 個測試全數通過。完整技術細節見
+`docs/PASS-203-EVIDENCE-FUSION-THRESHOLD-DIAGNOSIS-TASK.md` 第 6 節。
+
+**修復後全曲重跑，暴露第二個先前被掩蓋的問題**：31-94s 這段仲裁
+確實改選到高信心候選了，但全曲 commit 數從修前的 5 次**降到 1 次**
+——新瓶頸是 `_score_bar_start_list_quality`（品質倒退安全機制）：
+只要有一次 commit 因故失敗，下一個真正正確的候選離上次 commit 就會
+是好幾個小節長，這個機制只看原始相鄰間距標準差，把合理的多小節
+跳躍當成嚴重節奏不穩，永久拒絕，`committed` 從此凍結（`quality_before`
+全程固定在 0.9197，不再改善）。這個問題先前被 Pass 202 仲裁 bug
+意外掩蓋（仲裁常態性選到只差一個小節的候選，很少產生需要跨越多個
+小節的情境），修好仲裁後才第一次大量暴露。**下一步任務書：
+`docs/PASS-205-BARSTART-V2-QUALITY-REGRESSION-GATE-TASK.md`（已轉交
+Codex）。**
+

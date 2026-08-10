@@ -2,8 +2,8 @@
 
 ## Result
 
-- Ticks: **500**; commits: **5**; no-candidate ticks: **480**; candidate-but-below-threshold ticks: **15**.
-- Trace runtime: 761.33s.
+- Ticks: **500**; commits: **1**; no-candidate ticks: **481**; candidate-but-below-threshold ticks: **18**.
+- Trace runtime: 813.09s.
 - Existing pipeline report: `SUCCESS`.
 
 ## Evidence-source activity
@@ -12,22 +12,22 @@
 
 | Source | Ticks with candidates | Candidate instances (incl. support tags) | Standalone candidates |
 |---|---:|---:|---:|
-| drum | 21 | 572 | 0 |
-| drum_bass | 20 | 506 | 0 |
-| chord | 20 | 109 | 0 |
-| melody | 21 | 389 | 0 |
-| v1_grid | 21 | 203 | 0 |
+| drum | 19 | 575 | 0 |
+| drum_bass | 17 | 506 | 0 |
+| chord | 18 | 106 | 0 |
+| melody | 19 | 391 | 0 |
+| v1_grid | 20 | 203 | 0 |
 | beat_this | 0 | 0 | 0 |
 
 ## Below-threshold gap
 
-- Mean gap: -0.0340; minimum gap: -0.3000; maximum gap: 0.2500.
+- Mean gap: -0.1200; minimum gap: -0.3000; maximum gap: -0.0200.
 - Representative near-miss ticks:
-  - tick 14: time=95.178594, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
-  - tick 16: time=126.862222, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
-  - tick 17: time=135.604535, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'expected_bar_interval', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
-  - tick 18: time=147.202902, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'expected_bar_interval', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
-  - tick 19: time=156.049705, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
+  - tick 3: time=12.376236, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'harmonic_anchor_support', 'phrase_anchor_support']
+  - tick 14: time=112.41941, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'harmonic_anchor_support', 'phrase_anchor_support']
+  - tick 15: time=135.604535, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
+  - tick 16: time=147.202902, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
+  - tick 2: time=6.616259, confidence=0.94, threshold=0.7, sources=['v1_grid', 'harmonic_anchor_support', 'phrase_anchor_support']
 
 ## Interpretation
 
