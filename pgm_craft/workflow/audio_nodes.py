@@ -620,7 +620,9 @@ class MeasureMapNode(BaseNode):
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
         protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
         measure_map, status, warnings = self.build_measure_map(
-            beats, beat_validation, downbeat_refinement, protected_ranges=protected_ranges
+            beats, beat_validation, downbeat_refinement, protected_ranges=protected_ranges,
+            stems=blackboard.get_val("stems", {}) or {},
+            stems_dir=blackboard.get_val("stems_dir", "") or "",
         )
         blackboard.set_val("measure_map", measure_map)
         blackboard.set_val("measure_map_status", status)
@@ -660,7 +662,10 @@ class MeasureMapNode(BaseNode):
             rows.append({"time": float(row[0]), "beat": int(row[1])})
         return sorted(rows, key=lambda item: item["time"])
 
-    def build_measure_map(self, beats, beat_validation=None, downbeat_refinement=None, protected_ranges=None):
+    def build_measure_map(
+        self, beats, beat_validation=None, downbeat_refinement=None,
+        protected_ranges=None, stems=None, stems_dir=""
+    ):
         warnings = []
         self.last_phase_reconciliation = []
         beat_rows = self._normalize_beats(beats)
@@ -706,7 +711,8 @@ class MeasureMapNode(BaseNode):
                     index for index, row in enumerate(beat_rows) if row["beat"] == 1
                 ]
             beat_rows, promotion_reconciliation = self._promote_intra_bar_downbeats(
-                beat_rows, downbeat_indexes, protected_ranges
+                beat_rows, downbeat_indexes, protected_ranges,
+                stems=stems or {}, stems_dir=stems_dir,
             )
             if promotion_reconciliation:
                 self.last_phase_reconciliation.extend(promotion_reconciliation)
@@ -716,6 +722,23 @@ class MeasureMapNode(BaseNode):
                 )
                 downbeat_indexes = [
                     index for index, row in enumerate(beat_rows) if row["beat"] == 1
+                ]
+            # Pass 198B: if Phase A found no audio-backed candidate, use the
+            # protected endpoint phase as an explicit, traceable fallback.
+            # Prefer an existing grid point so weak evidence does not inflate
+            # the beat count; synthesize a row only when the gap truly lacks
+            # one of the expected beat points.
+            beat_rows, weak_interpolation = self._interpolate_weak_evidence_gaps(
+                beat_rows, downbeat_indexes, protected_ranges
+            )
+            if weak_interpolation:
+                self.last_phase_reconciliation.extend(weak_interpolation)
+                warnings.append(
+                    f"Pass 198B 已對 {len(weak_interpolation)} 個弱證據位置做明確插值；"
+                    "這些位置不是音訊偵測結果。"
+                )
+                downbeat_indexes = [
+                    index for index, row in enumerate(beat_rows) if int(row["beat"]) == 1
                 ]
             measure_map = self._build_from_downbeats(
                 beat_rows,
@@ -898,7 +921,10 @@ class MeasureMapNode(BaseNode):
                 })
         return beat_rows, decisions
 
-    def _promote_intra_bar_downbeats(self, beat_rows, downbeat_indexes, protected_ranges=None):
+    def _promote_intra_bar_downbeats(
+        self, beat_rows, downbeat_indexes, protected_ranges=None,
+        stems=None, stems_dir="", evidence_tolerance_sec=0.05,
+    ):
         """Pass 198A：把有量化證據支持的隱藏小節起點升格為 downbeat。
 
         只處理受保護錨點之間、長度超過 4 拍的區段。候選必須落在
@@ -907,6 +933,10 @@ class MeasureMapNode(BaseNode):
         """
         if len(downbeat_indexes) < 2 or not protected_ranges:
             return beat_rows, []
+
+        evidence_runs = self._steady_percussion_evidence(
+            beat_rows, stems or {}, stems_dir
+        )
 
         def is_protected(index):
             time = float(beat_rows[index]["time"])
@@ -954,6 +984,21 @@ class MeasureMapNode(BaseNode):
                 cursor += 1
                 continue
 
+            # Pass 198A safety gate: theoretical-grid agreement is not audio
+            # evidence.  Reuse SteadyPercussionCountAnchorNode's own onset/run
+            # logic and require the promoted point to land on a run boundary.
+            # Direct unit tests without stems intentionally retain the old
+            # deterministic grid-only behavior.
+            if evidence_runs is not None and not any(
+                min(
+                    abs(float(beat_rows[candidate]["time"]) - run["start_time"]),
+                    abs(float(beat_rows[candidate]["time"]) - run["end_time"]),
+                ) <= evidence_tolerance_sec
+                for run in evidence_runs
+            ):
+                cursor += 1
+                continue
+
             beat_rows[candidate]["beat"] = 1
             promoted.add(candidate)
             promotions.append({
@@ -987,6 +1032,160 @@ class MeasureMapNode(BaseNode):
             cursor = max(0, candidate_pos)
 
         return beat_rows, promotions
+
+    def _interpolate_weak_evidence_gaps(self, beat_rows, downbeat_indexes, protected_ranges=None):
+        """Pass 198B：在雙端 protected 錨點間補齊全曲 4/4 的弱證據空隙。
+
+        Phase A 只接受穩定鼓點證據；這個階段則承認「沒有證據」的情況，
+        只用端點相位與 robust beat length 插值。既有拍點優先被重新標成
+        beat 1，避免平白增加一列造成新的 5/6 拍；只有區間少於預期拍數時
+        才建立合成 beat row。每個決策都標記為插值，不能與 Phase A 混為
+        真實偵測結果。
+        """
+        if len(downbeat_indexes) < 2 or not protected_ranges:
+            return beat_rows, []
+
+        times = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
+        diffs = np.diff(times)
+        diffs = diffs[diffs > 0]
+        if len(diffs) == 0:
+            return beat_rows, []
+        beat_sec = float(np.median(diffs))
+        if beat_sec <= 0:
+            return beat_rows, []
+
+        def is_protected(index):
+            t = float(beat_rows[index]["time"])
+            return any(start <= t <= end for start, end in protected_ranges)
+
+        decisions = []
+        cursor = 0
+        tolerance_beats = 0.75
+        while cursor < len(downbeat_indexes) - 1:
+            left = downbeat_indexes[cursor]
+            right = downbeat_indexes[cursor + 1]
+            if not (is_protected(left) and is_protected(right)):
+                cursor += 1
+                continue
+
+            span_beats = (float(beat_rows[right]["time"]) - float(beat_rows[left]["time"])) / beat_sec
+            if span_beats <= 4.0 + 0.15:
+                cursor += 1
+                continue
+
+            target_time = float(beat_rows[left]["time"]) + 4.0 * beat_sec
+            candidates = list(range(left + 1, right))
+            candidate = min(
+                candidates,
+                key=lambda index: abs(float(beat_rows[index]["time"]) - target_time),
+                default=None,
+            )
+            candidate_error = (
+                abs(float(beat_rows[candidate]["time"]) - target_time) / beat_sec
+                if candidate is not None else None
+            )
+
+            if candidate is not None and candidate_error <= tolerance_beats:
+                if int(beat_rows[candidate]["beat"]) != 1:
+                    beat_rows[candidate]["beat"] = 1
+                    # Keep the newly interpolated anchor from creating a run
+                    # of one/two/three-beat measures: discard non-protected
+                    # legacy downbeats in the following four-beat window,
+                    # exactly as Phase A does after a promotion.
+                    candidate_time = float(beat_rows[candidate]["time"])
+                    for other in range(candidate + 1, len(beat_rows)):
+                        distance = (float(beat_rows[other]["time"]) - candidate_time) / beat_sec
+                        if distance >= 4.0 - 0.15:
+                            break
+                        other_time = float(beat_rows[other]["time"])
+                        if int(beat_rows[other]["beat"]) == 1:
+                            beat_rows[other]["beat"] = 2
+                    decisions.append({
+                        "anchor_time": round(float(beat_rows[left]["time"]), 6),
+                        "interpolated_time": round(float(beat_rows[candidate]["time"]), 6),
+                        "target_time": round(float(target_time), 6),
+                        "residual_sec": round(abs(float(beat_rows[candidate]["time"]) - target_time), 6),
+                        "residual_beats": round(float(candidate_error), 6),
+                        "beat_sec": round(float(beat_sec), 6),
+                        "next_anchor_time": round(float(beat_rows[right]["time"]), 6),
+                        "reason": "forced_44_interpolation_weak_evidence",
+                    })
+                    downbeat_indexes = [
+                        index for index, row in enumerate(beat_rows) if int(row["beat"]) == 1
+                    ]
+                    cursor += 1
+                    continue
+
+            # A genuinely missing grid point is safe to synthesize only when
+            # fewer than four rows exist before the right protected endpoint.
+            if len(candidates) < 4:
+                synthetic = {"time": round(float(target_time), 6), "beat": 1}
+                insert_at = right
+                for index in candidates:
+                    if float(beat_rows[index]["time"]) > target_time:
+                        insert_at = index
+                        break
+                beat_rows.insert(insert_at, synthetic)
+                decisions.append({
+                    "anchor_time": round(float(beat_rows[left]["time"]), 6),
+                    "interpolated_time": synthetic["time"],
+                    "target_time": synthetic["time"],
+                    "residual_sec": None,
+                    "residual_beats": None,
+                    "beat_sec": round(float(beat_sec), 6),
+                    "next_anchor_time": round(float(beat_rows[right + 1]["time"]), 6),
+                    "reason": "forced_44_interpolation_weak_evidence_synthetic",
+                })
+                downbeat_indexes = [
+                    index for index, row in enumerate(beat_rows) if int(row["beat"]) == 1
+                ]
+                cursor += 1
+                continue
+
+            cursor += 1
+
+        return beat_rows, decisions
+
+    def _steady_percussion_evidence(self, beat_rows, stems, stems_dir):
+        """Return stable percussion runs using the Pass 181-187 detector.
+
+        This deliberately calls the detector's own private methods so the
+        Phase-A gate cannot drift from the evidence logic used by the anchor
+        node.  An empty result means no usable stem was available; callers
+        then retain the legacy behavior for isolated/unit-test use.
+        """
+        if not stems and not stems_dir:
+            return None
+        try:
+            from pgm_craft.workflow.beat_tracking_bt import SteadyPercussionCountAnchorNode
+
+            detector = SteadyPercussionCountAnchorNode()
+            paths = []
+            for stem_key, rel_path in detector.STEM_CANDIDATES:
+                path = detector._resolve_stem_path(stem_key, rel_path, stems, stems_dir)
+                if path:
+                    paths.append(path)
+            whole_path = detector._resolve_stem_path(
+                "drums", detector.WHOLE_DRUM_STEM[1], stems, stems_dir
+            )
+            if whole_path:
+                paths.append(whole_path)
+            if not paths:
+                return None
+
+            timestamps = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
+            valid = np.diff(timestamps)
+            valid = valid[np.isfinite(valid) & (valid > 0.05)]
+            if len(valid) == 0:
+                return []
+            known_beat_length = float(np.median(valid))
+            runs = []
+            for path in paths:
+                onsets = detector._detect_onsets(path)
+                runs.extend(detector._find_steady_runs(onsets, known_beat_length, []))
+            return runs
+        except Exception:
+            return []
 
     def _ensure_44_phase_continuity(self, beat_rows, protected_ranges=None):
         """
