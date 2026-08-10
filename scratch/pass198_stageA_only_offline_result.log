@@ -1,0 +1,21 @@
+C:\Users\666\AppData\Roaming\Python\Python313\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.3.0) or chardet (7.4.3)/charset_normalizer (3.4.2) doesn't match a supported version!
+  warnings.warn(
+Pass 197A 仲裁: 8 次
+Pass 197B 空隙插值: 0 次
+Pass 198A 升格（含證據門檻）: 4 次
+  {'anchor_time': 21.458299, 'promoted_time': 22.882993, 'next_anchor_time': 23.257211, 'target_time': 22.916985, 'residual_sec': 0.033992, 'residual_beats': 0.093213, 'beat_sec': 0.364672, 'reason': 'intra_bar_downbeat_promotion'}
+  {'anchor_time': 32.382177, 'promoted_time': 33.834376, 'next_anchor_time': 34.165692, 'target_time': 33.840863, 'residual_sec': 0.006487, 'residual_beats': 0.017789, 'beat_sec': 0.364672, 'reason': 'intra_bar_downbeat_promotion'}
+  {'anchor_time': 33.834376, 'promoted_time': 35.299524, 'next_anchor_time': 35.636871, 'target_time': 35.293062, 'residual_sec': 0.006462, 'residual_beats': 0.01772, 'beat_sec': 0.364672, 'reason': 'intra_bar_downbeat_promotion'}
+  {'anchor_time': 152.02263, 'promoted_time': 153.46678, 'next_anchor_time': 154.180726, 'target_time': 153.481316, 'residual_sec': 0.014536, 'residual_beats': 0.039861, 'beat_sec': 0.364672, 'reason': 'intra_bar_downbeat_promotion'}
+
+total_measures=114 irregular_measure_count=10
+  measure=6 beat_count=5 start=8.041s
+  measure=16 beat_count=5 start=22.883s
+  measure=24 beat_count=5 start=35.300s
+  measure=53 beat_count=6 start=77.803s
+  measure=54 beat_count=6 start=80.020s
+  measure=63 beat_count=5 start=93.802s
+  measure=65 beat_count=5 start=97.197s
+  measure=72 beat_count=6 start=108.652s
+  measure=102 beat_count=6 start=153.467s
+  measure=114 beat_count=2 start=171.737s
