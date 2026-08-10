@@ -27,7 +27,14 @@ AUDIO_PATH = (
 )
 TRACE_PATH = ROOT / "scratch" / "debug_pass203_evidence_trace.jsonl"
 REPORT_PATH = ROOT / "scratch" / "pass203_evidence_fusion_diagnosis.md"
-OUTPUT_ROOT = ROOT / "outputs" / "pass203_evidence_fusion_diagnosis"
+# Pass 203 fix (2nd run): use a fresh output dir, not the one from the first
+# two (52-second) runs -- that folder's blackboard-derived JSON artifacts
+# (measure_map.json, committed_bar_starts, etc.) reflect the earlier
+# premature-stall state, and reusing the same project folder risks some
+# node short-circuiting on "already exists" rather than genuinely
+# re-deriving the full-song trace this run needs.
+OUTPUT_ROOT = ROOT / "outputs" / "pass203_evidence_fusion_diagnosis_fullsong"
+PRIOR_STEMS_SOURCE = ROOT / "outputs" / "pass203_evidence_fusion_diagnosis" / AUDIO_NAME / "stems"
 
 
 SOURCE_KEYS = {
@@ -37,6 +44,33 @@ SOURCE_KEYS = {
     "melody": "phrase_anchor_evidence_report",
     "v1_grid": "v1_grid_evidence_report",
     "beat_this": "beat_this_candidate_report",
+}
+
+# Pass 203 fix (2nd run): the original needle-matching scheme
+# (label.replace("_", "") searched against source_node/evidence_sources)
+# never matches how DrumBassEvidenceBarSearchNode/ChordTrackPKNode/
+# MelodyTrackPKNode actually tag their contribution -- confirmed by reading
+# module3_barstart_v2_bt.py directly: bass/chord/melody evidence attaches as
+# a *support tag* on an existing drum candidate (e.g. "bass_coincidence_support",
+# "harmonic_anchor_support", "phrase_anchor_support") rather than producing an
+# independently-tagged candidate in the common case. Match on the exact tags
+# each node actually writes (both the "boosts an existing candidate" and
+# "stands alone when no drum candidate exists" cases), not a generic needle.
+SOURCE_TAGS = {
+    "drum": {"drums", "kick", "drum_onset"},
+    "drum_bass": {"bass_coincidence_support", "bass", "bass_onset"},
+    "chord": {"harmonic_anchor_support", "harmonic_anchor"},
+    "melody": {"phrase_anchor_support", "phrase_anchor"},
+    "v1_grid": {"v1_grid"},
+    "beat_this": {"beat_this"},
+}
+SOURCE_NODE_NAMES = {
+    "drum": {"DrumEvidenceBarSearchNode"},
+    "drum_bass": {"DrumBassEvidenceBarSearchNode"},
+    "chord": {"ChordTrackPKNode"},
+    "melody": {"MelodyTrackPKNode"},
+    "v1_grid": {"V1GridEvidenceBarSearchNode"},
+    "beat_this": {"BeatThisCandidateAdapterNode"},
 }
 
 
@@ -54,17 +88,28 @@ def _json_safe(value):
 
 
 def _source_hits(candidates: list[dict]) -> dict:
+    """For each conceptual source, count candidates it either produced
+    standalone (source_node match) or contributed a support tag to (tag
+    match) -- a source with zero standalone candidates but many support-tag
+    hits is still active, just never wins the "who owns this candidate"
+    question on its own."""
     result = {}
     for label in SOURCE_KEYS:
+        tags = SOURCE_TAGS.get(label, set())
+        node_names = SOURCE_NODE_NAMES.get(label, set())
         hits = []
-        needle = label.replace("_", "").lower()
+        standalone = []
         for candidate in candidates:
-            values = [candidate.get("source_node", "")]
-            values.extend(candidate.get("evidence_sources", []) or [])
-            if any(needle in str(value).replace("_", "").lower() for value in values):
+            evidence = {str(item) for item in (candidate.get("evidence_sources", []) or [])}
+            is_standalone = candidate.get("source_node") in node_names
+            is_support = bool(evidence & tags)
+            if is_standalone or is_support:
                 hits.append(candidate)
+            if is_standalone:
+                standalone.append(candidate)
         result[label] = {
             "candidate_count": len(hits),
+            "standalone_count": len(standalone),
             "candidates": hits,
         }
     return result
@@ -111,6 +156,36 @@ def _install_runtime_probe(trace: list[dict]):
 
 def _restore_runtime_probe(target, original):
     target.execute = original
+
+
+# Pass 203 fix (2nd run): FullSongBarStartLoopNode's default stall_limit=3
+# means three consecutive non-committing ticks trigger its own give-up
+# logic, and when no provisional fallback exists it breaks the whole loop
+# (stop_reason="stalled_no_recovery") -- the first diagnostic run only ever
+# saw 9 ticks / the first 52 seconds because of exactly this. The probe
+# window still advances tick-to-tick regardless of commit success, so
+# raising stall_limit lets the diagnostic keep walking the rest of the song
+# for data-collection purposes even where V2 itself would give up; this
+# does not change what gets promoted to production (this script never
+# touches the real pipeline's default construction, only this one instance
+# for the duration of this run).
+DIAGNOSTIC_STALL_LIMIT = 10_000
+
+
+def _install_stall_override():
+    from pgm_craft.workflow.module3_barstart_v2_bt import FullSongBarStartLoopNode
+
+    original_init = FullSongBarStartLoopNode.__init__
+
+    def patched_init(self, max_iterations: int = 500, stall_limit: int = 3):
+        original_init(self, max_iterations=max_iterations, stall_limit=DIAGNOSTIC_STALL_LIMIT)
+
+    FullSongBarStartLoopNode.__init__ = patched_init
+    return FullSongBarStartLoopNode, original_init
+
+
+def _restore_stall_override(target, original_init):
+    target.__init__ = original_init
 
 
 def _write_trace(trace: list[dict]):
@@ -161,10 +236,12 @@ def _summarise(trace: list[dict], elapsed_sec: float, pipeline_report: dict):
     ]
     source_tick_counts = {}
     source_candidate_counts = {}
+    source_standalone_counts = {}
     for source in SOURCE_KEYS:
         values = [item["upstream_sources"][source] for item in trace]
         source_tick_counts[source] = sum(1 for value in values if value["candidate_count"] > 0)
         source_candidate_counts[source] = sum(value["candidate_count"] for value in values)
+        source_standalone_counts[source] = sum(value.get("standalone_count", 0) for value in values)
 
     examples = sorted(
         below,
@@ -181,11 +258,19 @@ def _summarise(trace: list[dict], elapsed_sec: float, pipeline_report: dict):
         "",
         "## Evidence-source activity",
         "",
-        "| Source | Ticks with candidates | Candidate instances |",
-        "|---|---:|---:|",
+        "(\"Candidate instances\" counts a source as active whenever it either produced its "
+        "own candidate or attached a support tag to someone else's -- e.g. "
+        "bass/harmonic/phrase evidence is designed to boost a drum candidate's confidence "
+        "rather than stand alone, so \"standalone\" can be 0 while the source is still working.)",
+        "",
+        "| Source | Ticks with candidates | Candidate instances (incl. support tags) | Standalone candidates |",
+        "|---|---:|---:|---:|",
     ]
     for source in SOURCE_KEYS:
-        lines.append(f"| {source} | {source_tick_counts[source]} | {source_candidate_counts[source]} |")
+        lines.append(
+            f"| {source} | {source_tick_counts[source]} | {source_candidate_counts[source]} | "
+            f"{source_standalone_counts[source]} |"
+        )
     if gaps:
         lines.extend([
             "",
@@ -212,11 +297,18 @@ def _summarise(trace: list[dict], elapsed_sec: float, pipeline_report: dict):
 
 
 def _reuse_stems_cache() -> None:
-    """Symlink/junction the already-computed Pass 198 stems into this run's
-    project folder so demucs doesn't redo ~10 minutes of stem separation."""
-    src = ROOT / "outputs" / "pass198_default_pipeline_reverify" / AUDIO_NAME / "stems"
+    """Symlink/junction already-computed stems into this run's fresh project
+    folder so demucs doesn't redo ~10 minutes of stem separation. Prefers the
+    prior pass203 run's stems (already includes the extra PeelCoreTrio/
+    submix layers this pipeline separates beyond the base demucs stems);
+    falls back to Pass 198's if that's not there."""
     dst = OUTPUT_ROOT / AUDIO_NAME / "stems"
-    if dst.exists() or not src.exists():
+    if dst.exists():
+        return
+    src = PRIOR_STEMS_SOURCE if PRIOR_STEMS_SOURCE.exists() else (
+        ROOT / "outputs" / "pass198_default_pipeline_reverify" / AUDIO_NAME / "stems"
+    )
+    if not src.exists():
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -241,6 +333,7 @@ def main() -> int:
     _reuse_stems_cache()
     trace = []
     target, original = _install_runtime_probe(trace)
+    stall_target, stall_original = _install_stall_override()
     started = time.time()
     try:
         pipeline_report = PGMCraftEngine(enable_stem_separation=True).run(
@@ -258,6 +351,7 @@ def main() -> int:
         return 1
     finally:
         _restore_runtime_probe(target, original)
+        _restore_stall_override(stall_target, stall_original)
 
     _write_trace(trace)
     _summarise(trace, time.time() - started, pipeline_report)
