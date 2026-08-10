@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from pgm_craft.pipeline import PGMCraftEngine
@@ -18,7 +19,61 @@ from pgm_craft.workflow.module3_bt import (
     SubdivisionGridNode,
     SyncopationClassificationNode,
 )
+from pgm_craft.workflow.module3_barstart_v2_bt import (
+    FullSongBarStartLoopNode,
+    LookaheadDrumAnchorSearchNode,
+    NoDrumPhaseCarryNode,
+)
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
+
+
+def test_pass199_initializes_bar_timing_from_v1_grid():
+    bb = Blackboard()
+    bb.set_val("v1_reference_beat_grid", np.asarray([
+        [index * 0.365, (index % 4) + 1] for index in range(12)
+    ], dtype=float))
+    bb.set_val("meter_profile", {"beats_per_bar": 4})
+
+    FullSongBarStartLoopNode()._initialize_timing(bb)
+
+    assert bb.get_val("tempo_bpm") == pytest.approx(60.0 / 0.365, rel=1e-6)
+    assert bb.get_val("bar_duration_sec") == pytest.approx(1.46, rel=1e-6)
+
+
+def test_pass199_skips_lookahead_anchor_that_is_less_than_one_bar_away():
+    node = NoDrumPhaseCarryNode()
+    candidates = [
+        {"time": 12.376236, "confidence": 0.99},
+        {"time": 12.82, "confidence": 0.80},
+    ]
+
+    assert node._next_anchor(candidates, 11.359184, 1.46) == pytest.approx(12.82)
+
+
+def test_pass199_lookahead_search_filters_short_candidates():
+    bb = Blackboard()
+    bb.set_val("committed_bar_starts", [11.359184])
+    bb.set_val("bar_duration_sec", 1.46)
+    bb.set_val("lookahead_drum_events", [
+        {"time": 12.376236, "confidence": 0.99},
+        {"time": 12.82, "confidence": 0.80},
+    ])
+    bb.set_val("lookahead_offsets_sec", [0.0])
+
+    assert LookaheadDrumAnchorSearchNode().execute(bb) == NodeStatus.SUCCESS
+    candidates = bb.get_val("lookahead_bar_candidates")
+    assert all(item["time"] >= 12.82 for item in candidates)
+
+
+def test_pass199_carries_valid_next_anchor_when_gap_has_no_interior_grid_row():
+    bb = Blackboard()
+    bb.set_val("committed_bar_starts", [11.359184])
+    bb.set_val("bar_duration_sec", 1.46)
+    bb.set_val("lookahead_bar_candidates", [{"time": 12.82, "confidence": 0.8}])
+
+    assert NoDrumPhaseCarryNode().execute(bb) == NodeStatus.SUCCESS
+    assert bb.get_val("provisional_bar_starts") == [12.82]
+    assert bb.get_val("no_drum_phase_report")["status"] == "CARRIED_NEXT_ANCHOR_FALLBACK"
 
 
 class _MockSeparator:

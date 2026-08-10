@@ -1,8 +1,12 @@
 # Pass 199 任務書：修好 BarStart V2 全曲迴圈的卡死問題
 
-**狀態**：根因已用即時 instrumentation 100% 確認（不是推測），修復規格
-明確，可直接轉交 Codex CLI 執行。跟 Pass 194-198 是不同的子系統
-（`module3_barstart_v2_bt.py`，不是 `audio_nodes.py` 的 `MeasureMapNode`）。
+**狀態**：Codex 已依規格實作，解決了原本的卡死問題，但獨立驗證+
+使用者實際聽感發現「修好卡死」不等於「修好」——85% 的小節其實是
+複製 v1 舊網格充數，不是 V2 自己的證據判斷，且破壞了一個既有安全
+測試、品質分數不升反降。**目前建議不要採用這次的 V2 結果，先退回
+Pass 197+198 階段 A 的舊方法**。完整發現見第 5 節追記。跟 Pass
+194-198 是不同的子系統（`module3_barstart_v2_bt.py`，不是
+`audio_nodes.py` 的 `MeasureMapNode`）。
 
 ---
 
@@ -222,3 +226,87 @@ median，不要用單一相鄰間距（容易被單一雜訊拍點污染）。
    核對全曲有沒有出現新的卡點**（不是只看第 10.4 秒這一處）。
 5. **如果 BarStart V2 真的被 promote 取代舊方法**：用 onset 量化
    核對 click 準確度，並整理清楚的前後對照供使用者實際試聽確認。
+
+---
+
+## 5. 追記：Codex 實作後獨立驗證，發現「修好卡死」不等於「修好」
+
+Codex 依照第 2 節規格實作完成（commit 前），真實資料回驗：
+`committed_bar_count=124`、`stop_reason=reached_audio_duration`、
+`unresolved_span_count=0`、`promotion_gate.adoptable=true`，已經被
+自動採用取代舊方法。使用者實際聽了輸出的
+`barstart_v2_mix_with_click.wav` 後回報：**「V2 模型很穩定，但就是
+完全沒有照著音樂做即時調整，一直穩定的進行」**。
+
+獨立驗證後確認這個聽感是對的，而且比聽起來嚴重：
+
+### 5.1 `stall_trace` 顯示 124 個小節裡 106 個（85%）不是真正的證據判斷
+
+```python
+Counter({'CARRIED_V1_GRID': 291, 'CARRIED_NEXT_ANCHOR_FALLBACK': 18,
+         'CARRIED': 3, 'CARRIED_FALLBACK_V1_GRID': 3, 'CARRIED_FALLBACK_NO_LOOKAHEAD': 3})
+# stall_recoveries: 106 / committed_bar_count: 124 / iterations: 319
+```
+
+**只有 18 個小節是 `BarStartCandidateCommitNode` 真的靠多來源證據
+（鼓組/貝斯/和絃）獨立判斷出來的，其餘 106 個（85%）都是連續卡住
+3 次之後，直接把 `v1_reference_beat_grid`（也就是我們整個 Pass
+194-198 系列一直在處理的同一份 Stage 3 拍點資料）複製過來充數**。
+這正是為什麼使用者覺得「聽起來很穩定但沒有跟著音樂走」——它幾乎
+不是在即時聽音樂做判斷，是在抄同一份舊資料，看起來自洽是因為抄的
+東西本來就是同一個來源，不是因為 V2 自己的證據邏輯真的運作起來。
+
+### 5.2 修復本身破壞了一個既有的安全測試
+
+`tests/test_module3_bt.py::test_module3_barstart_v2_merge_node_compares_but_does_not_promote_when_v2_incomplete`
+**現在會失敗**：這個測試給完全靜音的音檔（只提供合成的 `beats`
+陣列，沒有真實鼓/貝斯/和絃證據），驗證「V2 應該老實回報解不出來、
+不能冒充完成」（`barstart_v2_promoted_to_main is False`）。修復後
+這個測試斷言 `True is False` 失敗——**因為新的 `_initialize_timing`
+會從合成的 `beats` 陣列算出 `bar_duration_sec`，讓 `CARRIED_V1_GRID`
+分支足以「走完」整個靜音音檔、回報 `unresolved_span_count=0`，即使
+完全沒有真實音訊證據**。這證明第 5.1 節的問題不只是「這首歌剛好
+這樣」，是修復本身讓「完成」這個判斷標準變得可以被純粹的資料延續
+騙過去，不需要真正的證據。
+
+### 5.3 品質分數不升反降，但自動採用邏輯完全忽略分數
+
+```python
+quality_comparison: {'original_score': 88.47, 'barstart_v2_score': 58.15, 'v2_scores_higher': False}
+```
+
+分數比上一輪（62.2，見第 0 節）還低、遠低於舊方法（88.47），但因為
+`barstart_v2_report.notes` 記載的政策是「只要沒有 unresolved span
+就直接採用，不再比較分數」，這次還是被自動判定
+`promotion_gate.adoptable=true` 而上線——**這個政策本身現在看來有
+問題：分數大幅下降理應是一個警訊，不該被完全忽略**。
+
+### 5.4 結論與建議：這次不算修好，先不要採用 V2 的結果
+
+修復本身（第 2 節規格：算對 `bar_duration_sec`、過濾不合理候選）
+**方向沒有錯**，也確實解決了原本卡死的問題，但暴露出更根本的缺口：
+**`BarStartCandidateCommitNode` 的多來源證據判斷，對這首歌絕大多數
+小節根本達不到 0.7 的 commit 門檻**（`default_threshold=0.7`，見
+`:962-973`），導致幾乎每個 tick 都卡住 3 次、幾乎全靠複製 v1 網格
+撐過去。真正該追的問題是**「為什麼獨立證據融合幾乎每次都不夠格」**，
+不是「怎麼讓卡住後的恢復機制更寬鬆」——第 2 節的修復把後者做得太
+成功，反而讓前者的缺陷被隱藏起來（`unresolved_span_count=0` 看起來
+很漂亮，實際上是用複製舊資料換來的）。
+
+**建議**：
+1. 先不要讓這次的 V2 結果保持 promoted 狀態——先退回使用舊方法
+   （Pass 197 + 198 階段 A 的結果：114 小節、10 不規則、已知每個
+   不規則小節的具體原因，是誠實、已驗證的結果）。
+2. 修好第 5.2 節破壞的安全測試（不能讓完全沒有真實證據的靜音音檔
+   被判定為「完成」）。
+3. `promotion_gate` 的自動採用邏輯應該把品質分數納入考量，不能只看
+   `unresolved_span_count==0`；至少當分數明顯低於舊方法時應該拒絕
+   自動採用、交給人工確認。
+4. 如果還要繼續往 BarStart V2 這條路走，核心工作是研究
+   `DrumEvidenceBarSearchNode`/`DrumBassEvidenceBarSearchNode`/
+   `ChordTrackPKNode` 等證據來源，對這首歌為什麼絕大多數小節都湊
+   不到 0.7 分——這是比第 2 節大很多的題目（可能是信心公式本身
+   偏低、可能是證據來源彼此沒有適當加成、可能是這首歌的音色特性
+   不利於這套證據邏輯），需要另開任務書，不建議直接讓 Codex 憑
+   猜測調參數（這個系列已經連續好幾次證明調參數不看真實資料驗證
+   會出事）。
