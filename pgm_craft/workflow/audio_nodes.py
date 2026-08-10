@@ -705,6 +705,18 @@ class MeasureMapNode(BaseNode):
                 downbeat_indexes = [
                     index for index, row in enumerate(beat_rows) if row["beat"] == 1
                 ]
+            beat_rows, promotion_reconciliation = self._promote_intra_bar_downbeats(
+                beat_rows, downbeat_indexes, protected_ranges
+            )
+            if promotion_reconciliation:
+                self.last_phase_reconciliation.extend(promotion_reconciliation)
+                warnings.append(
+                    f"Pass 198A 已升格 {len(promotion_reconciliation)} 個小節內隱藏 downbeat；"
+                    "詳細殘差與候選時間已寫入 measure_map.json。"
+                )
+                downbeat_indexes = [
+                    index for index, row in enumerate(beat_rows) if row["beat"] == 1
+                ]
             measure_map = self._build_from_downbeats(
                 beat_rows,
                 downbeat_indexes,
@@ -885,6 +897,96 @@ class MeasureMapNode(BaseNode):
                     "reason": "protected_endpoint_gap_interpolation",
                 })
         return beat_rows, decisions
+
+    def _promote_intra_bar_downbeats(self, beat_rows, downbeat_indexes, protected_ranges=None):
+        """Pass 198A：把有量化證據支持的隱藏小節起點升格為 downbeat。
+
+        只處理受保護錨點之間、長度超過 4 拍的區段。候選必須落在
+        `start + 4 * robust_median_beat_sec` 的 0.15 拍內；沒有足夠證據
+        就不改動，避免把雜訊或真正的變拍誤判成新小節。
+        """
+        if len(downbeat_indexes) < 2 or not protected_ranges:
+            return beat_rows, []
+
+        def is_protected(index):
+            time = float(beat_rows[index]["time"])
+            return any(start <= time <= end for start, end in protected_ranges)
+
+        times = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
+        diffs = np.diff(times)
+        diffs = diffs[diffs > 0]
+        if len(diffs) == 0:
+            return beat_rows, []
+        beat_sec = float(np.median(diffs))
+        if beat_sec <= 0:
+            return beat_rows, []
+
+        tolerance_beats = 0.15
+        promotions = []
+        working = list(downbeat_indexes)
+        promoted = set()
+        cursor = 0
+        while cursor < len(working) - 1:
+            left, right = working[cursor], working[cursor + 1]
+            if not (is_protected(left) or left in promoted):
+                cursor += 1
+                continue
+            if not is_protected(right):
+                cursor += 1
+                continue
+            span_beats = (float(beat_rows[right]["time"]) - float(beat_rows[left]["time"])) / beat_sec
+            if span_beats <= 4.0 + tolerance_beats or right <= left + 4:
+                cursor += 1
+                continue
+
+            target_time = float(beat_rows[left]["time"]) + 4.0 * beat_sec
+            candidate = min(
+                range(left + 1, right),
+                key=lambda index: abs(float(beat_rows[index]["time"]) - target_time),
+                default=None,
+            )
+            if candidate is None:
+                cursor += 1
+                continue
+            residual_sec = abs(float(beat_rows[candidate]["time"]) - target_time)
+            residual_beats = residual_sec / beat_sec
+            if residual_beats > tolerance_beats or int(beat_rows[candidate]["beat"]) == 1:
+                cursor += 1
+                continue
+
+            beat_rows[candidate]["beat"] = 1
+            promoted.add(candidate)
+            promotions.append({
+                "anchor_time": round(float(beat_rows[left]["time"]), 6),
+                "promoted_time": round(float(beat_rows[candidate]["time"]), 6),
+                "next_anchor_time": round(float(beat_rows[right]["time"]), 6),
+                "target_time": round(float(target_time), 6),
+                "residual_sec": round(float(residual_sec), 6),
+                "residual_beats": round(float(residual_beats), 6),
+                "beat_sec": round(float(beat_sec), 6),
+                "reason": "intra_bar_downbeat_promotion",
+            })
+
+            # The old right anchor may now be an intra-bar beat of the new
+            # promoted bar. Remove every downbeat less than four beats after
+            # the promotion, then continue from the promoted anchor to the
+            # next surviving anchor.
+            candidate_pos = cursor + 1
+            working.insert(candidate_pos, candidate)
+            remove_positions = []
+            for position in range(candidate_pos + 1, len(working)):
+                other = working[position]
+                distance = (float(beat_rows[other]["time"]) - float(beat_rows[candidate]["time"])) / beat_sec
+                if distance >= 4.0 - tolerance_beats:
+                    break
+                if other not in promoted:
+                    beat_rows[other]["beat"] = 2
+                    remove_positions.append(position)
+            for position in reversed(remove_positions):
+                working.pop(position)
+            cursor = max(0, candidate_pos)
+
+        return beat_rows, promotions
 
     def _ensure_44_phase_continuity(self, beat_rows, protected_ranges=None):
         """
