@@ -3387,6 +3387,9 @@ class Module3BarStartV2SummaryNode(BaseNode):
                 ),
                 bar_grid_repair_report=blackboard.get_val("bar_grid_repair_report", {}),
                 final_bar_count=len(blackboard.get_val("committed_bar_starts", []) or []),
+                tail_extrapolated_bar_count=(
+                    blackboard.get_val("tail_extrapolated_bar_count", 0) or 0
+                ),
             ),
         }
         outputs["barstart_v2_report"] = report
@@ -3670,6 +3673,7 @@ def evaluate_barstart_v2_completeness(
     carried_bar_ratio=None,
     bar_grid_repair_report=None,
     final_bar_count=None,
+    tail_extrapolated_bar_count=None,
 ):
     """Return whether v2's grid is complete enough to adopt as the main
     output.
@@ -3679,7 +3683,8 @@ def evaluate_barstart_v2_completeness(
     V2 is adoptable only when it covers the song and the non-evidence bar ratio
     stays below the conservative research threshold. The ratio supplied by the
     full-song loop is retained for compatibility, while bars inserted by the
-    downstream grid-repair node are counted separately and together.
+    downstream grid-repair node are counted separately and together. Pass 211
+    tail extrapolation is counted in the same non-evidence pool.
     """
     unresolved_count = len(unresolved_bar_spans or [])
     try:
@@ -3692,6 +3697,10 @@ def evaluate_barstart_v2_completeness(
         inserted_count = max(0, int(repair_report.get("inserted_bar_count", 0) or 0))
     except (TypeError, ValueError):
         inserted_count = 0
+    try:
+        tail_count = max(0, int(tail_extrapolated_bar_count or 0))
+    except (TypeError, ValueError):
+        tail_count = 0
     if final_bar_count is None:
         final_bar_count = repair_report.get("bar_count_after", 0)
     try:
@@ -3702,7 +3711,11 @@ def evaluate_barstart_v2_completeness(
         float(np.clip(inserted_count / final_count, 0.0, 1.0))
         if final_count else 0.0
     )
-    non_evidence_ratio = float(np.clip(ratio + repaired_ratio, 0.0, 1.0))
+    non_evidence_count = inserted_count + tail_count
+    non_evidence_ratio = (
+        float(np.clip(ratio + (non_evidence_count / final_count), 0.0, 1.0))
+        if final_count else 0.0
+    )
     blockers = []
     if unresolved_count:
         blockers.append("UNRESOLVED_BAR_SPANS_PRESENT")
@@ -3721,6 +3734,13 @@ def evaluate_barstart_v2_completeness(
         "carried_bar_ratio_threshold": FALLBACK_CARRY_RATIO_THRESHOLD,
         "bar_grid_inserted_count": inserted_count,
         "repaired_bar_ratio": round(repaired_ratio, 6),
+        "tail_extrapolated_bar_count": tail_count,
+        "tail_extrapolation_ratio": round(
+            float(np.clip(tail_count / final_count, 0.0, 1.0))
+            if final_count else 0.0,
+            6,
+        ),
+        "non_evidence_bar_count": non_evidence_count,
         "non_evidence_bar_ratio": round(non_evidence_ratio, 6),
         "final_bar_count": final_count,
     }
@@ -3785,6 +3805,116 @@ def build_module3_barstart_v2_probe_tick_tree() -> SequenceNode:
         TransitionConfidenceNode(),
         BarStartCandidateCommitNode(),
     ])
+
+
+class TailBarExtrapolationNode(BaseNode):
+    """Fill an evidence-poor tail from the last trusted bar only.
+
+    This is intentionally separate from the bidirectional transition nodes:
+    the audio duration is the only available right-hand boundary at the end of
+    a song. The number of bar intervals is estimated from the recent committed
+    intervals, then the entire remaining range is divided evenly so the tail
+    cannot inherit a fixed-step remainder artifact.
+    """
+
+    optional_keys = [
+        "committed_bar_starts",
+        "audio_duration_sec",
+        "y",
+        "sr",
+        "unresolved_bar_spans",
+    ]
+    output_keys = [
+        "committed_bar_starts",
+        "tail_extrapolation_report",
+        "tail_extrapolated_bars",
+    ]
+
+    def __init__(self, recent_interval_count: int = 4):
+        super().__init__("TailBarExtrapolationNode")
+        self.recent_interval_count = max(1, int(recent_interval_count))
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        bars = ManualCommittedBarStartsSeedNode()._normalize_times(
+            blackboard.get_val("committed_bar_starts")
+        )
+        duration_cap = NoDrumPhaseCarryNode()._audio_duration_cap(blackboard)
+        unresolved = list(blackboard.get_val("unresolved_bar_spans", []) or [])
+        report = {
+            "triggered": False,
+            "reason": "NOOP",
+            "anchor_time": bars[-1] if bars else None,
+            "duration_cap_sec": duration_cap,
+            "expected_bar_duration_sec": None,
+            "expected_bar_duration_source": "recent_committed_median",
+            "remaining_sec": None,
+            "extrapolated_bar_count": 0,
+            "step_sec": None,
+            "bars": [],
+        }
+        blackboard.set_val("tail_extrapolated_bars", [])
+        blackboard.set_val("tail_extrapolated_bar_count", 0)
+
+        if len(bars) < 2 or duration_cap is None:
+            report["reason"] = "MISSING_ANCHOR_OR_DURATION"
+            blackboard.set_val("tail_extrapolation_report", report)
+            return NodeStatus.SUCCESS
+
+        intervals = np.diff(np.asarray(bars, dtype=float))
+        valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+        recent = valid[-self.recent_interval_count:]
+        expected = float(np.median(recent)) if len(recent) else None
+        remaining = float(duration_cap) - float(bars[-1])
+        report["expected_bar_duration_sec"] = round(expected, 6) if expected else None
+        report["remaining_sec"] = round(max(0.0, remaining), 6)
+
+        has_tail_failure = any(
+            span.get("reason") in {"no_candidates", "no_upstream_candidates"}
+            and self._overlaps_tail(span, bars[-1], duration_cap)
+            for span in unresolved
+        )
+        if not has_tail_failure:
+            report["reason"] = "NO_UNRESOLVED_TAIL"
+        elif expected is None or remaining <= expected * 0.5:
+            report["reason"] = "TAIL_REMAINDER_WITHIN_HALF_BAR"
+        else:
+            count = max(1, int(round(remaining / expected)))
+            step = remaining / count
+            extrapolated = [
+                round(float(bars[-1] + step * index), 6)
+                for index in range(1, count + 1)
+            ]
+            entries = [
+                {
+                    "time": time_sec,
+                    "confidence": 0.0,
+                    "evidence_sources": ["tail_extrapolation"],
+                    "source": "tail_extrapolation",
+                }
+                for time_sec in extrapolated
+            ]
+            merged = sorted(set(bars + extrapolated))
+            blackboard.set_val("committed_bar_starts", merged)
+            blackboard.set_val("tail_extrapolated_bars", entries)
+            blackboard.set_val("tail_extrapolated_bar_count", len(entries))
+            report.update({
+                "triggered": True,
+                "reason": "EXTRAPOLATED_FROM_DURATION_CAP",
+                "extrapolated_bar_count": len(entries),
+                "step_sec": round(step, 6),
+                "bars": entries,
+            })
+
+        blackboard.set_val("tail_extrapolation_report", report)
+        return NodeStatus.SUCCESS
+
+    def _overlaps_tail(self, span: dict, anchor: float, duration_cap: float) -> bool:
+        try:
+            start = float(span.get("start_time"))
+            end = float(span.get("end_time"))
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return start >= anchor - 0.05 and end >= duration_cap - 0.05
 
 
 class FullSongBarStartLoopNode(BaseNode):
@@ -3936,6 +4066,13 @@ class FullSongBarStartLoopNode(BaseNode):
         if postprocess_flags.get("sanity_pruner", True):
             BarGridSanityPrunerNode().execute(blackboard)
 
+        # Pass 211: only after the normal probe and post-process path has
+        # stopped, use the duration cap as the missing right-hand anchor for
+        # an unresolved tail. This never participates in candidate selection.
+        TailBarExtrapolationNode().execute(blackboard)
+        tail_extrapolation_report = dict(
+            blackboard.get_val("tail_extrapolation_report", {}) or {}
+        )
         final = self._normalize(blackboard.get_val("committed_bar_starts"))
         unresolved_before_reconciliation = list(
             blackboard.get_val("unresolved_bar_spans", []) or []
@@ -3944,6 +4081,17 @@ class FullSongBarStartLoopNode(BaseNode):
             blackboard, final, unresolved_before_reconciliation
         )
         blackboard.set_val("unresolved_bar_spans", unresolved)
+        if tail_extrapolation_report.get("triggered"):
+            anchor = tail_extrapolation_report.get("anchor_time")
+            duration_cap_for_tail = tail_extrapolation_report.get("duration_cap_sec")
+            unresolved = [
+                span
+                for span in unresolved
+                if not TailBarExtrapolationNode()._overlaps_tail(
+                    span, float(anchor), float(duration_cap_for_tail)
+                )
+            ]
+            blackboard.set_val("unresolved_bar_spans", unresolved)
         all_probe_failures_ever = list(
             blackboard.get_val("all_probe_failures_ever", []) or []
         )
@@ -3972,6 +4120,10 @@ class FullSongBarStartLoopNode(BaseNode):
             "stop_reason": stop_reason,
             "unresolved_span_count": len(unresolved),
             "all_probe_failures_ever": all_probe_failures_ever,
+            "tail_extrapolation": tail_extrapolation_report,
+            "tail_extrapolated_bar_count": int(
+                blackboard.get_val("tail_extrapolated_bar_count", 0) or 0
+            ),
             "diagnostic_classification_counts": diagnostic_counts,
             "diagnostic_trace": diagnostic_trace,
         }

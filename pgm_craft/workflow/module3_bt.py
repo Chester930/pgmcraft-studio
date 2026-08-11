@@ -1113,6 +1113,9 @@ class Module3BarStartV2MergeNode(BaseNode):
             carried_bar_ratio=full_song_loop_report.get("carried_bar_ratio"),
             bar_grid_repair_report=comparison["bar_grid_repair_report"],
             final_bar_count=len(committed_bar_starts),
+            tail_extrapolated_bar_count=full_song_loop_report.get(
+                "tail_extrapolated_bar_count", 0
+            ),
         )
         # Informational only -- kept in the report for reference.
         quality_comparison = {
@@ -1301,6 +1304,9 @@ class BarStartV2AutoMergeNode(BaseNode):
             ),
             bar_grid_repair_report=comparison["bar_grid_repair_report"],
             final_bar_count=len(comparison["committed_bar_starts"]),
+            tail_extrapolated_bar_count=(comparison["full_song_loop_report"] or {}).get(
+                "tail_extrapolated_bar_count", 0
+            ),
         )
         promoted = bool(completeness["adoptable"])
         if promoted:

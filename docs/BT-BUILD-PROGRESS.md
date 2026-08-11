@@ -1854,6 +1854,46 @@ hi-hat 26、whole drums 17），但四條 stem 的 steady run 都是 0 段；
 不是音檔長度差，也不能單靠它決定是否放寬 gate。是否為尾聲無證據例外而
 調整 `UNRESOLVED_BAR_SPANS_PRESENT`，保留給使用者/Claude 下一步決定。
 
+### Pass 211：尾聲單側參考外推與均分補齊（實作完成，gate 首次放行但不自動升格）
+
+Pass211 新增 `TailBarExtrapolationNode`，只在全曲探測與既有 post-process
+完成、且仍有與最後 committed bar 重疊的 `no_candidates`/`no_upstream_candidates`
+尾聲 unresolved 時觸發。它不參與正常候選選擇：以最後 4 個已 commit 間距的
+中位數作為 `expected_bar_duration`（本次真實資料為 `1.543s`），以
+`duration_cap` 代替缺少的右側錨點，計算 `round(remaining / expected)`，再把
+整個剩餘區間均分。這比固定步長插入更能保證尾段沒有奇怪餘數。
+
+本次真實資料：最後 committed 為 `172.6909s`，duration cap 為
+`176.645827664s`，剩餘 `3.954928s`；推估 3 個區間，均分 step 為
+`1.318309s`，外推出的時間為：
+
+```text
+174.009209s, 175.327518s, 176.645828s
+```
+
+每個外推項目都記錄 `evidence_sources=["tail_extrapolation"]`、confidence
+`0.0`，並寫入 `tail_extrapolation_report` / `tail_extrapolated_bars`；
+`full_song_loop_report` 也記錄外推數量。promotion gate 將這 3 個小節併入
+非證據小節分子，而不是把它們當成真實候選 commit。
+
+指定回歸套件結果：**40 passed**（Pass211、210、209、208、206、205、202、
+201 與 `test_module3_bt.py`）。真實 clean production verify 結果：
+
+- `unresolved_bar_span_count=0`，promotion gate 首次為
+  `V2_READY` / `adoptable=true`。
+- V2 分數 **88.14**，舊方法 **88.47**；最終 119 小節。
+- 下游 continuity repair 插入 19 個，尾聲外推 3 個；
+  `non_evidence_bar_ratio=0.184874`、`tail_extrapolation_ratio=0.025210`、
+  `carried_bar_ratio=0`。
+- 外推結果與黃金基準最後 downbeat 附近的 `175.685s` onset **沒有對上**：
+  最近的外推點是 `175.327518s`，差約 `357.5ms`。因此這次證明的是
+  「尾聲可以用單側參考做結構性均分補齊」，不是證明最後 downbeat 有真實
+  onset 支持。
+
+Promotion gate 雖然已放行，但這些數字仍須交由使用者/Claude 決定是否正式
+升格；本 Pass 不自行宣稱 BarStart V2 已取代舊方法。新產生的 click/mix
+維持 provisional 聽感驗證用途。
+
 **Claude 獨立覆核**：36 測試重跑全過；直接讀 JSON 核對
 `unresolved_bar_span_count` 從 4 降到 1（只剩 173.7-176.7s 那段尾聲
 `no_upstream_candidates`）、V2 分數 83.14 相符；Pass 210 第 2 節的
