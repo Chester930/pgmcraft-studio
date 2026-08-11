@@ -114,6 +114,7 @@ class TestBothMergeNodesIgnoreQualityScore:
         # Fully seeding the whole (short) song guarantees zero unresolved
         # spans regardless of how good/bad v2's resulting grid scores.
         bb.set_val("manual_bar_starts", [0.0, 1.0, 2.0])
+        bb.set_val("barstart_v2_promotion_approved", True)
 
         assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
         report = bb.get_val("barstart_v2_report")
@@ -138,6 +139,7 @@ class TestBothMergeNodesIgnoreQualityScore:
         bb.set_val("project_dir", str(tmp_path))
         bb.set_val("audio_duration_sec", 2.0)
         bb.set_val("manual_bar_starts", [0.0, 1.0, 2.0])
+        bb.set_val("barstart_v2_promotion_approved", True)
 
         assert BarStartV2AutoMergeNode().execute(bb) == NodeStatus.SUCCESS
         report = bb.get_val("barstart_v2_auto_report")

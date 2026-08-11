@@ -92,6 +92,7 @@ class TestBarStartV2AutoMergeNode:
         bb.set_val("project_dir", str(tmp_path))
         bb.set_val("audio_duration_sec", 4.0)
         bb.set_val("manual_bar_starts", [0.0, 1.0, 2.0, 3.0, 4.0])
+        bb.set_val("barstart_v2_promotion_approved", True)
         # No barstart_v2_reference_acceptance / barstart_v2_manual_acceptance set.
 
         assert BarStartV2AutoMergeNode().execute(bb) == NodeStatus.SUCCESS

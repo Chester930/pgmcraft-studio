@@ -1876,7 +1876,7 @@ Pass211 新增 `TailBarExtrapolationNode`，只在全曲探測與既有 post-pro
 `full_song_loop_report` 也記錄外推數量。promotion gate 將這 3 個小節併入
 非證據小節分子，而不是把它們當成真實候選 commit。
 
-指定回歸套件結果：**40 passed**（Pass211、210、209、208、206、205、202、
+指定回歸套件結果：**43 passed**（Pass211、210、209、208、206、205、202、
 201 與 `test_module3_bt.py`）。真實 clean production verify 結果：
 
 - `unresolved_bar_span_count=0`，promotion gate 首次為
@@ -1893,6 +1893,20 @@ Pass211 新增 `TailBarExtrapolationNode`，只在全曲探測與既有 post-pro
 Promotion gate 雖然已放行，但這些數字仍須交由使用者/Claude 決定是否正式
 升格；本 Pass 不自行宣稱 BarStart V2 已取代舊方法。新產生的 click/mix
 維持 provisional 聽感驗證用途。
+
+後續覆核補上兩個政策與報告邊界：`promotion_gate.adoptable=true` 只代表
+客觀條件已達可採用，不會自動取代 legacy v1；只有 blackboard 明確設定
+`barstart_v2_promotion_approved=true` 才能實際升格。另因
+`BarGridContinuityRepairNode` 在 full-song loop 之後仍可能插入小節，報告現在
+分開記錄 loop 原始結果與下游修補後的 `final_committed_bar_starts`，避免把
+119 對 100 的階段差異誤報成 state inconsistency。這兩項政策由 3 個 Pass 211
+測試覆核。
+
+注意：上述 clean production 數字是在這兩項報告/升格邊界修正前取得的基準；
+修正後的第二次完整 production verify 在 10 分鐘上限內逾時且沒有寫出新
+`reverify_report.json`，因此不能把舊 JSON 宣稱為修正後的重新驗證結果。指定
+回歸 43/43 通過；完整 `pytest -q` 同樣在 10 分鐘上限內逾時，未觀察到失敗
+traceback。正式升格仍暫不執行。
 
 **Claude 獨立覆核**：36 測試重跑全過；直接讀 JSON 核對
 `unresolved_bar_span_count` 從 4 降到 1（只剩 173.7-176.7s 那段尾聲

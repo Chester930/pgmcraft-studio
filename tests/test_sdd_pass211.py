@@ -1,8 +1,16 @@
 """PASS-211: extrapolate an evidence-poor song tail from one trusted side."""
 
+import numpy as np
+import soundfile as sf
+
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     TailBarExtrapolationNode,
     evaluate_barstart_v2_completeness,
+)
+from pgm_craft.workflow.module3_bt import (
+    Module3BarStartV2MergeNode,
+    _barstart_v2_promotion_decision,
+    _synchronize_barstart_v2_loop_report,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
@@ -75,3 +83,76 @@ def test_tail_extrapolation_requires_a_real_unresolved_tail():
     assert TailBarExtrapolationNode().execute(bb) == NodeStatus.SUCCESS
     assert bb.get_val("committed_bar_starts") == [0.0, 1.0, 2.0, 3.0]
     assert bb.get_val("tail_extrapolation_report")["triggered"] is False
+
+
+def test_adoptable_gate_does_not_auto_promote_without_manual_approval():
+    gate = {"adoptable": True, "status": "V2_READY", "blockers": []}
+
+    decision = _barstart_v2_promotion_decision(gate, manual_approval=False)
+
+    assert decision["gate_adoptable"] is True
+    assert decision["manual_approval"] is False
+    assert decision["promoted"] is False
+    assert decision["reason"] == "MANUAL_APPROVAL_REQUIRED"
+
+
+def test_loop_report_separates_loop_output_from_downstream_repairs():
+    report = _synchronize_barstart_v2_loop_report(
+        {
+            "final_committed_bar_starts": [0.0, 1.0, 2.0],
+            "committed_bar_count": 3,
+            "last_committed_time": 2.0,
+        },
+        [0.0, 1.0, 2.0, 3.0],
+    )
+
+    assert report["loop_final_committed_bar_starts"] == [0.0, 1.0, 2.0]
+    assert report["final_committed_bar_starts"] == [0.0, 1.0, 2.0, 3.0]
+    assert report["committed_bar_count"] == 4
+    assert report["last_committed_time"] == 3.0
+
+
+def test_merge_reports_adoptable_but_keeps_legacy_default_without_approval(
+    tmp_path, monkeypatch
+):
+    audio_path = tmp_path / "source.wav"
+    sf.write(audio_path, np.zeros(22050 * 2, dtype=np.float32), 22050)
+    original = np.array([[0.0, 1], [0.5, 2], [1.0, 3], [1.5, 4]], dtype=float)
+    v2 = np.array([[0.0, 1], [0.25, 2], [0.5, 3], [0.75, 4]], dtype=float)
+
+    monkeypatch.setattr(
+        "pgm_craft.workflow.module3_bt._run_barstart_v2_comparison",
+        lambda blackboard: {
+            "success": True,
+            "original_beat_grid": original,
+            "v2_beat_grid": v2,
+            "original_quality": {"score": 80.0},
+            "v2_quality": {"score": 79.0},
+            "unresolved_spans": [],
+            "bar_grid_repair_report": {},
+            "committed_bar_starts": [0.0, 1.0],
+            "full_song_loop_report": {
+                "final_committed_bar_starts": [0.0, 1.0],
+                "carried_bar_ratio": 0.0,
+                "tail_extrapolated_bar_count": 0,
+            },
+            "state_consistency": {
+                "committed_bar_starts_match_loop_report": True,
+            },
+        },
+    )
+
+    bb = Blackboard()
+    bb.set_val("beats", original.copy())
+    bb.set_val("refined_beats", original.copy())
+    bb.set_val("audio_path", str(audio_path))
+    bb.set_val("project_dir", str(tmp_path))
+
+    assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
+    report = bb.get_val("barstart_v2_report")
+
+    assert report["promotion_gate"]["adoptable"] is True
+    assert report["promotion_decision"]["reason"] == "MANUAL_APPROVAL_REQUIRED"
+    assert report["status"] == "COMPARED_NOT_PROMOTED"
+    assert report["replaces_module3_click"] is False
+    np.testing.assert_array_equal(bb.get_val("beats"), original)

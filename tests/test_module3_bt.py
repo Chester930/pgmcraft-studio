@@ -104,6 +104,7 @@ def test_module3_barstart_v2_merge_node_ignores_duplicate_probe_failures(tmp_pat
     bb.set_val("click_track", "main_click.wav")
     bb.set_val("audio_path", str(audio_path))
     bb.set_val("project_dir", str(tmp_path))
+    bb.set_val("barstart_v2_promotion_approved", True)
 
     assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
 
@@ -163,6 +164,7 @@ def test_module3_barstart_v2_merge_node_promotes_when_v2_completes_cleanly(tmp_p
     bb.set_val("audio_path", str(audio_path))
     bb.set_val("project_dir", str(tmp_path))
     bb.set_val("audio_duration_sec", 4.0)
+    bb.set_val("barstart_v2_promotion_approved", True)
     # pre-seeding the whole song as manual_bar_starts means the walking loop
     # stops before spending a single probe tick, so zero unresolved spans
     # accumulate -- this is what a real reference-verified grid looks like.

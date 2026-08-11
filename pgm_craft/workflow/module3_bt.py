@@ -903,6 +903,68 @@ class Module3OutputSummaryNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
+def _barstart_v2_promotion_decision(completeness: dict, *, manual_approval: bool = False) -> dict:
+    """Separate an adoptable gate from the human decision to promote it.
+
+    ``adoptable`` is an objective readiness signal.  It must not silently
+    replace the legacy output: promotion is an explicit, caller-supplied
+    approval because Pass 211 requires the complete comparison to be handed
+    to the reviewer before any formal upgrade.
+    """
+    gate_adoptable = bool((completeness or {}).get("adoptable"))
+    approved = bool(manual_approval)
+    promoted = gate_adoptable and approved
+    return {
+        "gate_adoptable": gate_adoptable,
+        "manual_approval": approved,
+        "promoted": promoted,
+        "reason": (
+            "PROMOTED_BY_MANUAL_APPROVAL"
+            if promoted
+            else "MANUAL_APPROVAL_REQUIRED"
+            if gate_adoptable
+            else "PROMOTION_GATE_BLOCKED"
+        ),
+    }
+
+
+def _synchronize_barstart_v2_loop_report(
+    full_song_loop_report: dict | None,
+    final_committed_bar_starts,
+) -> dict:
+    """Record both loop output and the post-loop repaired final grid.
+
+    ``BarGridContinuityRepairNode`` runs after ``FullSongBarStartLoopNode``.
+    Keeping the loop's own result under a separate key prevents a downstream
+    repair from looking like a blackboard/report state inconsistency.
+    """
+    report = dict(full_song_loop_report or {})
+
+    def normalize(values):
+        normalized = []
+        for value in values or []:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value):
+                normalized.append(round(value, 6))
+        return sorted(set(normalized))
+
+    loop_final = normalize(report.get("final_committed_bar_starts"))
+    final = normalize(final_committed_bar_starts)
+    if loop_final != final:
+        report["loop_final_committed_bar_starts"] = loop_final
+        report["loop_final_committed_bar_count"] = len(loop_final)
+        report["loop_final_last_committed_time"] = loop_final[-1] if loop_final else None
+        report["post_loop_final_committed_bar_starts"] = final
+
+    report["final_committed_bar_starts"] = final
+    report["committed_bar_count"] = len(final)
+    report["last_committed_time"] = final[-1] if final else None
+    return report
+
+
 def _run_barstart_v2_comparison(blackboard: Blackboard):
     """Run the real v2 evidence-ladder engine on an isolated copy of
     blackboard and score both v1's existing grid and v2's grid with the same
@@ -989,7 +1051,11 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         if v2_beats is not None
         else np.empty((0, 2), dtype=float)
     )
-    full_song_loop_report = v2_blackboard.get_val("full_song_loop_report", {})
+    full_song_loop_report = _synchronize_barstart_v2_loop_report(
+        v2_blackboard.get_val("full_song_loop_report", {}),
+        v2_blackboard.get_val("committed_bar_starts"),
+    )
+    v2_blackboard.set_val("full_song_loop_report", full_song_loop_report)
 
     if core_status != NodeStatus.SUCCESS or len(v2_beat_grid) == 0:
         return {"success": False, "full_song_loop_report": full_song_loop_report}
@@ -1123,7 +1189,13 @@ class Module3BarStartV2MergeNode(BaseNode):
             "barstart_v2_score": v2_quality["score"],
             "v2_scores_higher": v2_quality["score"] > original_quality["score"],
         }
-        promoted = bool(completeness["adoptable"])
+        promotion_decision = _barstart_v2_promotion_decision(
+            completeness,
+            manual_approval=blackboard.get_val(
+                "barstart_v2_promotion_approved", False
+            ),
+        )
+        promoted = promotion_decision["promoted"]
 
         legacy_artifacts = self._write_legacy_artifacts(blackboard, original_beat_grid)
         comparison_artifacts = self._write_barstart_v2_artifacts(blackboard, v2_beat_grid, committed_bar_starts)
@@ -1145,11 +1217,11 @@ class Module3BarStartV2MergeNode(BaseNode):
             "comparison_artifacts": comparison_artifacts,
             "legacy_artifacts": legacy_artifacts,
             "promotion_gate": completeness,
+            "promotion_decision": promotion_decision,
             "quality_comparison": quality_comparison,
             "notes": [
-                "BarStart v2 is adopted only when it has no unresolved bar "
-                "spans and its fallback-carry ratio stays below the evidence "
-                "threshold; otherwise legacy v1 remains the safe output.",
+                "The promotion gate reports objective readiness; replacing "
+                "legacy v1 additionally requires explicit manual approval.",
                 "Legacy Module 3 click artifacts are preserved for reference.",
             ],
         }
@@ -1308,7 +1380,13 @@ class BarStartV2AutoMergeNode(BaseNode):
                 "tail_extrapolated_bar_count", 0
             ),
         )
-        promoted = bool(completeness["adoptable"])
+        promotion_decision = _barstart_v2_promotion_decision(
+            completeness,
+            manual_approval=blackboard.get_val(
+                "barstart_v2_promotion_approved", False
+            ),
+        )
+        promoted = promotion_decision["promoted"]
         if promoted:
             blackboard.set_val("refined_beats", comparison["v2_beat_grid"])
             blackboard.set_val("beats", comparison["v2_beat_grid"])
@@ -1317,6 +1395,7 @@ class BarStartV2AutoMergeNode(BaseNode):
             "status": "AUTO_PROMOTED" if promoted else "AUTO_COMPARED_NOT_PROMOTED",
             "promoted": promoted,
             "auto_promotion_gate": completeness,
+            "promotion_decision": promotion_decision,
             "quality_comparison": quality_comparison,
             "bar_count": max(0, len(comparison["committed_bar_starts"]) - 1),
             "unresolved_bar_span_count": len(comparison["unresolved_spans"]),
