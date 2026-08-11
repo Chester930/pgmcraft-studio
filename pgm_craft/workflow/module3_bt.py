@@ -1006,6 +1006,17 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
     committed_bar_starts = ManualCommittedBarStartsSeedNode()._normalize_times(
         v2_blackboard.get_val("committed_bar_starts")
     )
+    loop_report_bars = ManualCommittedBarStartsSeedNode()._normalize_times(
+        full_song_loop_report.get("final_committed_bar_starts")
+    )
+    state_consistency = {
+        "run_id": full_song_loop_report.get("run_id"),
+        "committed_bar_starts_match_loop_report": committed_bar_starts == loop_report_bars,
+        "committed_bar_count": len(committed_bar_starts),
+        "loop_report_committed_bar_count": len(loop_report_bars),
+        "last_committed_time": committed_bar_starts[-1] if committed_bar_starts else None,
+        "loop_report_last_committed_time": loop_report_bars[-1] if loop_report_bars else None,
+    }
 
     return {
         "success": True,
@@ -1016,6 +1027,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         "unresolved_spans": unresolved_spans,
         "committed_bar_starts": committed_bar_starts,
         "full_song_loop_report": full_song_loop_report,
+        "state_consistency": state_consistency,
     }
 
 
@@ -1121,6 +1133,7 @@ class Module3BarStartV2MergeNode(BaseNode):
             "committed_bar_starts": committed_bar_starts,
             "beat_count": int(len(v2_beat_grid)),
             "full_song_loop_report": full_song_loop_report,
+            "state_consistency": comparison["state_consistency"],
             "unresolved_bar_span_count": len(unresolved_spans),
             "comparison_artifacts": comparison_artifacts,
             "legacy_artifacts": legacy_artifacts,
@@ -1296,6 +1309,7 @@ class BarStartV2AutoMergeNode(BaseNode):
             "bar_count": max(0, len(comparison["committed_bar_starts"]) - 1),
             "unresolved_bar_span_count": len(comparison["unresolved_spans"]),
             "full_song_loop_report": comparison["full_song_loop_report"],
+            "state_consistency": comparison["state_consistency"],
         })
         return NodeStatus.SUCCESS
 

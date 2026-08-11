@@ -1608,3 +1608,68 @@ Codex）。**
   證實解除，但 BarStart V2 仍未能跑完整首歌。下一步不應生成未驗證的
   新 click 或宣稱通過；Pass 204 的決策應維持等待，另開調查處理
   171.7s 之後的 `no_candidates`／證據搜尋缺口。
+
+### Pass 206：候選過濾診斷分類 + run_id/逐 tick trace + 一致性檢查（Codex 實作，純觀測性、無邏輯變更）
+
+Codex 接著在 `BarStartCandidateCommitNode`/`FullSongBarStartLoopNode`
+加上 `candidate_filter_diagnostics`（每個過濾階段還剩幾個候選）、
+`diagnostic_classification`（沒 commit 的原因分類）、`barstart_v2_run_id`
+（供逐 tick trace 跟匯出報告對齊）、`_run_barstart_v2_comparison` 的
+`state_consistency`（比對 loop report 跟最終 `committed_bar_starts`
+是否一致）。純加欄位，沒改任何 commit/拒絕的判斷邏輯，3 個新測試
+（`tests/test_sdd_pass206.py`）+ 既有 91 個測試全過（Claude 獨立
+覆核確認）。
+
+**這個新增的 `state_consistency` 檢查意外抓到一個關鍵線索**：
+`committed_bar_starts_match_loop_report` 是 `False`——loop 自己收工時
+的清單跟最終匯出的清單筆數不同。順著這條線索往下查，才發現上面
+Pass 205 條目回報的「V2 分數 37.15、404 個未解析區間」數字是被
+`run_pass203_evidence_fusion_diagnosis.py` 的 `stall_limit=10000`
+monkeypatch 污染的（見下一條 Pass 207）。
+
+### Pass 207：乾淨（無 monkeypatch）全曲驗證，推翻 Pass 205 條目的「404 未解析」結論
+
+新增 `scratch/run_pass207_clean_production_verify.py`——跟
+`run_pass203_evidence_fusion_diagnosis.py` 唯一的差別是**完全不做任何
+monkeypatch**，`FullSongBarStartLoopNode` 用正式管線預設的
+`stall_limit=3`。重跑後（Claude 直接執行+驗證）：
+
+- Loop 本身：104 tick、96 次成功 commit、只有 8 個未解析（不是 404）、
+  `carried_bar_ratio=0.02`（2%，遠低於 0.5 門檻）、`status=COMPLETED`
+  （不是 `MAX_ITERATIONS_REACHED`）。追查發現上一輪的 404 這個數字，
+  400 個是 `run_pass203_evidence_fusion_diagnosis.py` 的
+  `stall_limit=10000` monkeypatch 對整個 Python 行程生效、連帶影響了
+  同一行程裡「真正的」`_run_barstart_v2_comparison` 呼叫，導致搜尋
+  視窗滑到超出全曲 176.65 秒實際長度之後產生大量無效 tick（Pass 203
+  任務書第 5.3 節記錄過的既有邏輯缺口，這次才第一次真的被監測到
+  影響了「正式」比較路徑，不只是診斷腳本自己）。**Loop 本身的真實
+  表現遠比上一輪回報的好。**
+- 但最終匯出的 118 個小節起點（loop 收工後又經過
+  `BarGridContinuityRepairNode`/`BarStartTempoSmoothingNode` ×2/
+  `KickBassDownbeatVerifierNode` 等下游節點處理）本身仍然很不規則：
+  BPM 跳動 50/117 段（43%），還有多個間距 < 0.5 秒的近乎重複小節
+  跟最長到 7.72 秒的大跳空隙。`barstart_v2_score` 依然只有 37.15——
+  這次確認低分不是因為 loop 沒跑完，是下游修復/平滑節點鏈本身在
+  製造新的不規則間距。
+- 另外確認一個閘門盲點：`BarGridContinuityRepairNode` 這次插入了 19
+  個小節（佔最終 118 個的 16.1%），但 Pass 201 的 `carried_bar_ratio`
+  閘門完全沒有算到這個數字（只算 loop 自己的 stall-recovery carry，
+  這次是 2%）——這次比例還沒超過 0.5 門檻不影響現在的結論，但閘門
+  本身確實看不到這個插值來源，換一首證據更稀疏的歌可能會被放過。
+- **已寫成 `docs/PASS-208-BARSTART-V2-POSTPROCESS-GRID-ARTIFACTS-TASK.md`
+  轉交 Codex**：第 1 節是診斷型（用 instrumentation 定位是哪個下游
+  節點在製造近乎重複小節/大跳空隙，附一個尚待驗證的假設：
+  `BarGridContinuityRepairNode` 用固定 `median_interval` 步長插入、
+  最後一段到原始候選的餘數間距完全沒被品質檢查過）；第 2 節是修復型
+  （把 `bar_grid_repair_report` 併入 `_run_barstart_v2_comparison` 的
+  回傳值、擴充 `carried_bar_ratio` 或新增獨立欄位涵蓋這個插值來源）。
+- **教訓（第八次同類案例）**：這是本系列第八次「聚合數字看起來合理，
+  其實被別的因素污染」——這次特別的是，連「已經修好診斷方法」的
+  Pass 203 全曲版腳本本身，都還帶著一個會污染「正式」比較路徑的
+  monkeypatch 副作用，而且是靠 Pass 206 新加的一致性檢查才意外抓到，
+  不是靠人工檢查發現的。**日後任何會 monkeypatch 全域類別/函式的
+  診斷腳本，都要在文件裡明確標註「這個 monkeypatch 會影響同一行程裡
+  所有呼叫方，不只是診斷腳本自己直接呼叫的路徑」**，並且優先用像
+  `scratch/run_pass207_clean_production_verify.py` 這種完全不
+  monkeypatch、只跑正式管線預設值的腳本來做最終的「這是不是真的」
+  驗證，不要只信任診斷專用腳本的輸出。

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import importlib.util
+from uuid import uuid4
 from typing import Iterable
 
 import numpy as np
@@ -956,16 +957,33 @@ class BarStartCandidateCommitNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         committed = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
         window = dict(blackboard.get_val("active_bar_probe_window", {}) or {})
-        candidates = self._normalize_candidates(blackboard.get_val("bar_start_candidates", []), window)
+        raw_candidate_input = blackboard.get_val("bar_start_candidates", [])
+        input_candidate_count = (
+            1 if isinstance(raw_candidate_input, dict) else len(raw_candidate_input or [])
+        )
+        candidates = self._normalize_candidates(raw_candidate_input, window)
         threshold = self._threshold(blackboard.get_val("candidate_commit_confidence_threshold"))
         # The probe window's own start_time is anchored at the last committed
         # bar, so that bar's own anchors are still inside the window and would
         # otherwise keep winning the confidence tie-break (earliest-time-wins)
         # against the genuinely next candidates further ahead -- silently
         # re-"committing" the same bar every tick forever with no progress.
-        eligible = self._exclude_already_committed(candidates, committed)
-        eligible = self._prefer_bar_length_plausible(eligible, committed, blackboard)
-        eligible, consensus_report = self._aggregate_consensus_candidates(eligible)
+        after_duplicate_filter = self._exclude_already_committed(candidates, committed)
+        after_bar_gap_filter = self._prefer_bar_length_plausible(
+            after_duplicate_filter, committed, blackboard
+        )
+        eligible, consensus_report = self._aggregate_consensus_candidates(after_bar_gap_filter)
+        candidate_filter_diagnostics = {
+            "input_candidate_count": input_candidate_count,
+            "after_probe_window_count": len(candidates),
+            "after_duplicate_filter_count": len(after_duplicate_filter),
+            "after_min_bar_gap_filter_count": len(after_bar_gap_filter),
+            "after_consensus_count": len(eligible),
+            "removed_by_probe_window": max(0, input_candidate_count - len(candidates)),
+            "removed_as_duplicate": max(0, len(candidates) - len(after_duplicate_filter)),
+            "removed_by_min_bar_gap": max(0, len(after_duplicate_filter) - len(after_bar_gap_filter)),
+            "merged_by_consensus": max(0, len(after_bar_gap_filter) - len(eligible)),
+        }
         best, arbitration_report = self._best_candidate(
             eligible,
             committed_bar_starts=committed,
@@ -975,12 +993,14 @@ class BarStartCandidateCommitNode(BaseNode):
         )
 
         report = {
+            "run_id": blackboard.get_val("barstart_v2_run_id"),
             "threshold": threshold,
             "candidate_count": len(eligible),
             "raw_candidate_count": len(candidates),
             "active_bar_probe_window": window,
             "consensus_aggregation": consensus_report,
             "candidate_arbitration": arbitration_report,
+            "candidate_filter_diagnostics": candidate_filter_diagnostics,
             "status": "NO_CANDIDATE",
         }
 
@@ -1056,9 +1076,33 @@ class BarStartCandidateCommitNode(BaseNode):
             blackboard.set_val("unresolved_bar_spans", unresolved)
             blackboard.set_val("last_bar_probe_result", result)
 
+        report["diagnostic_classification"] = self._classify_decision(
+            report, candidate_filter_diagnostics
+        )
         blackboard.set_val("bar_start_candidates", eligible)
         blackboard.set_val("bar_start_decision_report", report)
         return NodeStatus.SUCCESS
+
+    def _classify_decision(self, report: dict, filters: dict) -> str:
+        """Explain where a non-commit tick stopped without changing behavior."""
+        if report.get("status") == "COMMITTED":
+            return "committed"
+        reason = report.get("reason")
+        if reason == "quality_regression":
+            return "quality_regression"
+        if reason == "confidence_below_threshold":
+            return "best_candidate_below_threshold"
+        if filters["input_candidate_count"] == 0:
+            return "no_upstream_candidates"
+        if filters["after_probe_window_count"] == 0:
+            return "all_candidates_outside_probe_window"
+        if filters["after_duplicate_filter_count"] == 0:
+            return "all_candidates_already_committed"
+        if filters["after_min_bar_gap_filter_count"] == 0:
+            return "all_candidates_below_min_bar_gap"
+        if filters["after_consensus_count"] == 0:
+            return "all_candidates_removed_by_consensus"
+        return "no_candidate_selected"
 
     def _normalize_candidates(self, raw, window: dict) -> list[dict]:
         if isinstance(raw, dict):
@@ -3239,6 +3283,8 @@ class Module3BarStartV2SummaryNode(BaseNode):
         "bar_grid_repair_report",
         "barstart_v2_quality_score",
         "full_song_loop_report",
+        "barstart_v2_run_id",
+        "barstart_v2_diagnostic_trace",
     ]
     output_keys = ["module3_outputs", "barstart_v2_report"]
 
@@ -3279,6 +3325,8 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "bar_start_decision_report": blackboard.get_val("bar_start_decision_report", {}),
             "unresolved_bar_spans": blackboard.get_val("unresolved_bar_spans", []),
             "full_song_loop_report": blackboard.get_val("full_song_loop_report", {}),
+            "run_id": blackboard.get_val("barstart_v2_run_id"),
+            "diagnostic_trace": blackboard.get_val("barstart_v2_diagnostic_trace", []),
             "bar_grid_repair_report": blackboard.get_val("bar_grid_repair_report", {}),
             "quality_score": blackboard.get_val("barstart_v2_quality_score", {}),
             "downbeat_fix_report": blackboard.get_val("downbeat_fix_report", {}),
@@ -3683,7 +3731,11 @@ class FullSongBarStartLoopNode(BaseNode):
         "sr",
         "provisional_bar_starts",
     ]
-    output_keys = ["committed_bar_starts", "full_song_loop_report"]
+    output_keys = [
+        "committed_bar_starts",
+        "full_song_loop_report",
+        "barstart_v2_diagnostic_trace",
+    ]
 
     def __init__(self, max_iterations: int = 500, stall_limit: int = 3):
         super().__init__("FullSongBarStartLoopNode")
@@ -3694,6 +3746,10 @@ class FullSongBarStartLoopNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         duration_cap = NoDrumPhaseCarryNode()._audio_duration_cap(blackboard)
+        run_id = str(blackboard.get_val("barstart_v2_run_id") or uuid4())
+        blackboard.set_val("barstart_v2_run_id", run_id)
+        initial_committed = self._normalize(blackboard.get_val("committed_bar_starts"))
+        diagnostic_trace = []
         stall_count = 0
         stall_recoveries = 0
         carried_bar_count = 0
@@ -3715,31 +3771,47 @@ class FullSongBarStartLoopNode(BaseNode):
             iterations += 1
             self._tick.run(blackboard, parent=self.name)
             after = self._normalize(blackboard.get_val("committed_bar_starts"))
+            decision = dict(blackboard.get_val("bar_start_decision_report", {}) or {})
+            carried_this_tick = 0
 
             if len(after) > len(before):
                 stall_count = 0
-                continue
+            else:
+                stall_count += 1
+                if stall_count >= self.stall_limit:
+                    provisional = self._normalize(blackboard.get_val("provisional_bar_starts"))
+                    if provisional:
+                        merged = sorted(set(after) | set(provisional))
+                        carried_this_tick = len(set(merged) - set(after))
+                        carried_bar_count += carried_this_tick
+                        blackboard.set_val("committed_bar_starts", merged)
+                        after = merged
+                        stall_recoveries += 1
+                        stall_count = 0
+                    else:
+                        stop_reason = "stalled_no_recovery"
 
-            stall_count += 1
-            if stall_count < self.stall_limit:
-                continue
-
-            provisional = self._normalize(blackboard.get_val("provisional_bar_starts"))
-            if provisional:
-                merged = sorted(set(after) | set(provisional))
-                carried_bar_count += len(set(merged) - set(after))
-                blackboard.set_val("committed_bar_starts", merged)
-                stall_recoveries += 1
-                stall_count = 0
-                continue
-
-            stop_reason = "stalled_no_recovery"
-            break
+            diagnostic_trace.append(self._tick_diagnostic(
+                run_id=run_id,
+                tick=iterations,
+                before=before,
+                after=after,
+                decision=decision,
+                window=blackboard.get_val("active_bar_probe_window", {}) or {},
+                stall_count=stall_count,
+                carried_this_tick=carried_this_tick,
+                blackboard=blackboard,
+            ))
+            if stop_reason == "stalled_no_recovery":
+                break
 
         # Pass 171: 後處理節點旗標開關，供多版本比較 harness 獨立開關 Pass 168/169/170，
         # 藉此在同一份程式碼上跑出多個變體、用實測數據 (而非臆測) 定位回歸來源。
         # 未指定時三者皆預設為 True，行為與 Pass 170 完全相同。
         postprocess_flags = blackboard.get_val("barstart_v2_postprocess_flags", {}) or {}
+        loop_committed_before_postprocess = self._normalize(
+            blackboard.get_val("committed_bar_starts")
+        )
 
         # Pass 168: 執行雙向確信錨點跳過與拍位反推，修復切分音搶拍導致的第 1 拍位移
         if postprocess_flags.get("twoway_backtrace", True):
@@ -3756,17 +3828,75 @@ class FullSongBarStartLoopNode(BaseNode):
             float(np.clip(carried_bar_count / len(final), 0.0, 1.0))
             if final else 0.0
         )
-        blackboard.set_val("full_song_loop_report", {
+        diagnostic_counts = {}
+        for item in diagnostic_trace:
+            classification = item.get("diagnostic_classification", "unknown")
+            diagnostic_counts[classification] = diagnostic_counts.get(classification, 0) + 1
+        loop_report = {
+            "run_id": run_id,
             "status": "COMPLETED" if stop_reason != "max_iterations_reached" else "MAX_ITERATIONS_REACHED",
             "iterations": iterations,
             "committed_bar_count": len(final),
+            "initial_committed_bar_starts": initial_committed,
+            "loop_committed_bar_starts": loop_committed_before_postprocess,
+            "final_committed_bar_starts": final,
+            "last_committed_time": final[-1] if final else None,
+            "duration_cap_sec": duration_cap,
+            "final_probe_window": blackboard.get_val("active_bar_probe_window", {}) or {},
             "stall_recoveries": stall_recoveries,
             "carried_bar_count": carried_bar_count,
             "carried_bar_ratio": round(carried_bar_ratio, 6),
             "stop_reason": stop_reason,
             "unresolved_span_count": len(blackboard.get_val("unresolved_bar_spans", []) or []),
-        })
+            "diagnostic_classification_counts": diagnostic_counts,
+            "diagnostic_trace": diagnostic_trace,
+        }
+        blackboard.set_val("barstart_v2_diagnostic_trace", diagnostic_trace)
+        blackboard.set_val("full_song_loop_report", loop_report)
         return NodeStatus.SUCCESS
+
+    def _tick_diagnostic(
+        self,
+        run_id: str,
+        tick: int,
+        before: list[float],
+        after: list[float],
+        decision: dict,
+        window: dict,
+        stall_count: int,
+        carried_this_tick: int,
+        blackboard: Blackboard,
+    ) -> dict:
+        source_keys = {
+            "drum": "drum_bar_evidence_report",
+            "drum_bass": "drum_bass_evidence_report",
+            "chord": "harmonic_anchor_evidence_report",
+            "melody": "phrase_anchor_evidence_report",
+            "v1_grid": "v1_grid_evidence_report",
+            "beat_this": "beat_this_candidate_report",
+        }
+        source_reports = {}
+        for source, key in source_keys.items():
+            report = dict(blackboard.get_val(key, {}) or {})
+            source_reports[source] = {
+                "status": report.get("status"),
+                "candidate_count": report.get("candidate_count", 0),
+            }
+        return {
+            "run_id": run_id,
+            "tick": tick,
+            "window": dict(window),
+            "before_committed_bar_count": len(before),
+            "after_committed_bar_count": len(after),
+            "last_committed_time": after[-1] if after else None,
+            "stall_count": stall_count,
+            "carried_this_tick": carried_this_tick,
+            "decision_status": decision.get("status"),
+            "decision_reason": decision.get("reason"),
+            "diagnostic_classification": decision.get("diagnostic_classification", "unknown"),
+            "candidate_filter_diagnostics": decision.get("candidate_filter_diagnostics", {}),
+            "source_reports": source_reports,
+        }
 
     def _normalize(self, raw) -> list[float]:
         return ManualCommittedBarStartsSeedNode()._normalize_times(raw)

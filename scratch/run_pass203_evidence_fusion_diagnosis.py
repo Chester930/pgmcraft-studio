@@ -218,7 +218,22 @@ def _write_blocked_report(reason: str, error: str | None = None):
     REPORT_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _summarise(trace: list[dict], elapsed_sec: float, pipeline_report: dict):
+def _load_pipeline_artifact_report() -> dict:
+    report_path = OUTPUT_ROOT / AUDIO_NAME / "reports" / "module3_beat_click_report.json"
+    if not report_path.exists():
+        return {}
+    try:
+        return json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _summarise(
+    trace: list[dict],
+    elapsed_sec: float,
+    pipeline_report: dict,
+    artifact_report: dict | None = None,
+):
     total = len(trace)
     commits = [item for item in trace if item.get("commit_succeeded")]
     no_candidates = [
@@ -243,6 +258,31 @@ def _summarise(trace: list[dict], elapsed_sec: float, pipeline_report: dict):
         source_candidate_counts[source] = sum(value["candidate_count"] for value in values)
         source_standalone_counts[source] = sum(value.get("standalone_count", 0) for value in values)
 
+    classification_counts = Counter(
+        item.get("decision_report", {}).get("diagnostic_classification", "unknown")
+        for item in trace
+    )
+    artifact_v2 = (artifact_report or {}).get("barstart_v2_report", {}) or {}
+    artifact_loop = artifact_v2.get("full_song_loop_report", {}) or {}
+    trace_commit_times = [
+        item.get("decision_report", {}).get("committed_time")
+        for item in commits
+        if item.get("decision_report", {}).get("committed_time") is not None
+    ]
+    consistency = {
+        "trace_run_id": (trace[0].get("decision_report", {}) or {}).get("run_id"),
+        "trace_tick_count": total,
+        "trace_commit_count": len(trace_commit_times),
+        "trace_last_committed_time": trace_commit_times[-1] if trace_commit_times else None,
+        "artifact_committed_bar_count": len(artifact_v2.get("committed_bar_starts", []) or []),
+        "artifact_last_committed_time": (
+            (artifact_v2.get("committed_bar_starts", []) or [])[-1]
+            if artifact_v2.get("committed_bar_starts") else None
+        ),
+        "artifact_run_id": artifact_loop.get("run_id"),
+        "production_state_consistency": artifact_v2.get("state_consistency", {}),
+    }
+
     examples = sorted(
         below,
         key=lambda item: float(item["final_threshold"]) - float(item["best_candidate"]["confidence"]),
@@ -255,6 +295,7 @@ def _summarise(trace: list[dict], elapsed_sec: float, pipeline_report: dict):
         f"- Ticks: **{total}**; commits: **{len(commits)}**; no-candidate ticks: **{len(no_candidates)}**; candidate-but-below-threshold ticks: **{len(below)}**.",
         f"- Trace runtime: {elapsed_sec:.2f}s.",
         f"- Existing pipeline report: `{pipeline_report.get('workflow_status', 'unknown')}`.",
+        f"- Trace/report consistency: `{json.dumps(consistency, ensure_ascii=False)}`.",
         "",
         "## Evidence-source activity",
         "",
@@ -271,6 +312,15 @@ def _summarise(trace: list[dict], elapsed_sec: float, pipeline_report: dict):
             f"| {source} | {source_tick_counts[source]} | {source_candidate_counts[source]} | "
             f"{source_standalone_counts[source]} |"
         )
+    lines.extend([
+        "",
+        "## Decision classification",
+        "",
+        "| Classification | Ticks |",
+        "|---|---:|",
+    ])
+    for classification, count in sorted(classification_counts.items()):
+        lines.append(f"| {classification} | {count} |")
     if gaps:
         lines.extend([
             "",
@@ -354,7 +404,12 @@ def main() -> int:
         _restore_stall_override(stall_target, stall_original)
 
     _write_trace(trace)
-    _summarise(trace, time.time() - started, pipeline_report)
+    _summarise(
+        trace,
+        time.time() - started,
+        pipeline_report,
+        _load_pipeline_artifact_report(),
+    )
     print(f"[PASS-203] ticks={len(trace)} trace={TRACE_PATH} report={REPORT_PATH}")
     return 0
 

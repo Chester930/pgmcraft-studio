@@ -2,9 +2,10 @@
 
 ## Result
 
-- Ticks: **500**; commits: **1**; no-candidate ticks: **481**; candidate-but-below-threshold ticks: **18**.
-- Trace runtime: 813.09s.
+- Ticks: **500**; commits: **96**; no-candidate ticks: **402**; candidate-but-below-threshold ticks: **2**.
+- Trace runtime: 4933.08s.
 - Existing pipeline report: `SUCCESS`.
+- Trace/report consistency: `{"trace_run_id": "d759f578-c8e9-4576-b61f-85894c93c2b7", "trace_tick_count": 500, "trace_commit_count": 96, "trace_last_committed_time": 171.736837, "artifact_committed_bar_count": 116, "artifact_last_committed_time": 175.774608, "artifact_run_id": "d759f578-c8e9-4576-b61f-85894c93c2b7", "production_state_consistency": {"run_id": "d759f578-c8e9-4576-b61f-85894c93c2b7", "committed_bar_starts_match_loop_report": false, "committed_bar_count": 116, "loop_report_committed_bar_count": 97, "last_committed_time": 175.774608, "loop_report_last_committed_time": 172.6909}}`.
 
 ## Evidence-source activity
 
@@ -12,22 +13,28 @@
 
 | Source | Ticks with candidates | Candidate instances (incl. support tags) | Standalone candidates |
 |---|---:|---:|---:|
-| drum | 19 | 575 | 0 |
-| drum_bass | 17 | 506 | 0 |
-| chord | 18 | 106 | 0 |
-| melody | 19 | 391 | 0 |
-| v1_grid | 20 | 203 | 0 |
+| drum | 97 | 774 | 0 |
+| drum_bass | 89 | 654 | 0 |
+| chord | 79 | 186 | 0 |
+| melody | 95 | 549 | 0 |
+| v1_grid | 92 | 208 | 0 |
 | beat_this | 0 | 0 | 0 |
+
+## Decision classification
+
+| Classification | Ticks |
+|---|---:|
+| all_candidates_already_committed | 1 |
+| best_candidate_below_threshold | 2 |
+| committed | 96 |
+| no_upstream_candidates | 401 |
 
 ## Below-threshold gap
 
-- Mean gap: -0.1200; minimum gap: -0.3000; maximum gap: -0.0200.
+- Mean gap: 0.2900; minimum gap: 0.2500; maximum gap: 0.3300.
 - Representative near-miss ticks:
-  - tick 3: time=12.376236, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'harmonic_anchor_support', 'phrase_anchor_support']
-  - tick 14: time=112.41941, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'harmonic_anchor_support', 'phrase_anchor_support']
-  - tick 15: time=135.604535, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
-  - tick 16: time=147.202902, confidence=1.0, threshold=0.7, sources=['drums', 'kick', 'snare_backbeat_support', 'outside_fill_exclusion', 'bass_coincidence_support', 'phrase_anchor_support']
-  - tick 2: time=6.616259, confidence=0.94, threshold=0.7, sources=['v1_grid', 'harmonic_anchor_support', 'phrase_anchor_support']
+  - tick 49: time=101.331882, confidence=0.45, threshold=0.7, sources=['drums', 'kick', 'exclusion_penalty', 'bass_coincidence_support', 'phrase_anchor_support']
+  - tick 61: time=118.816508, confidence=0.37, threshold=0.7, sources=['drums', 'kick', 'exclusion_penalty', 'bass_coincidence_support']
 
 ## Interpretation
 
