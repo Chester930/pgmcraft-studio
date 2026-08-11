@@ -1673,3 +1673,39 @@ monkeypatch**，`FullSongBarStartLoopNode` 用正式管線預設的
   `scratch/run_pass207_clean_production_verify.py` 這種完全不
   monkeypatch、只跑正式管線預設值的腳本來做最終的「這是不是真的」
   驗證，不要只信任診斷專用腳本的輸出。
+
+### Pass 208：定位並阻止下游平滑製造網格瑕疵（實作完成，仍未通過 promotion gate）
+
+Pass208 的暫時 instrumentation 已對正式 production 設定做真實資料
+重跑，逐一比較 loop 後處理與 v2 core 下游節點前後的
+`committed_bar_starts`：
+
+- `BarGridSanityPrunerNode` 將 loop 後處理清單由 100 減為 99，移除 1
+  個 Ghost 小節；`BarGridContinuityRepairNode` 將 99 補成 118，插入
+  19 個小節，但它自己的輸出沒有產生 `<0.5s` 短間距。
+- 第一次 `BarStartTempoSmoothingNode` 執行後首次出現 14 個短間距與
+  13 個大間距；第二次執行後增加到 16 個短間距與 15 個大間距。
+  `MeterAwareBeatGridNode` 與 `KickBassDownbeatVerifierNode` 沒有再
+  製造這些間距。根因是平滑累積漂移後，將受 drum anchor 保護的小節
+  snap 回原始時間，造成近乎重複小節與補償性大空隙。
+- 修法：`BarStartTempoSmoothingNode` 新增結構性 artifact guard。若一次
+  平滑相對輸入網格新增 duplicate-sized 或 skipped-bar-sized 間距，
+  整次平滑回退到輸入網格，並以 `REJECTED_GRID_ARTIFACT` 記錄，而不
+  讓平滑器把修好的網格變壞。新增 Pass208 合成回歸測試重現並攔截
+  0.227912 秒的 anchor snap 殘差。
+- promotion gate 同步納入 `bar_grid_repair_report.inserted_bar_count`，
+  回報 `bar_grid_inserted_count`、`repaired_bar_ratio` 與
+  `non_evidence_bar_ratio`，避免只看 loop fallback carry 而漏掉下游
+  插值小節。
+
+指定測試結果：`30 passed`（Pass201/202/205/206/208 與
+`test_module3_bt.py`；另含 Pass144/145 平滑回歸測試）。
+
+Pass208 修正後的乾淨 production verify（World is Mine，無任何
+monkeypatch）結果：90 ticks、84 次成功 commit、6 個 unresolved spans、
+2 個 carry；下游插入 28 個小節，最終 115 個小節，
+`repaired_bar_ratio=0.243478`、`non_evidence_bar_ratio=0.266467`。
+`barstart_v2_score` 由前版 37.15 提升至 **65.53**，但仍低於舊方法
+88.47，且 promotion gate 仍因 `UNRESOLVED_BAR_SPANS_PRESENT` 拒絕，
+因此 BarStart V2 尚未宣稱修好或升格為正式輸出。新的 click 只作為本次
+修正後的 provisional 聽感驗證，不代表品質 gate 已通過。

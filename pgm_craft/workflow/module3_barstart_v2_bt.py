@@ -2923,16 +2923,46 @@ class BarStartTempoSmoothingNode(BaseNode):
         # says it is, no matter what happened upstream.
         smoothed_bars = np.where(drum_protected, bars_arr, smoothed_bars)
 
-        smoothed_count = int(np.sum(replace_mask))
+        attempted_smoothed_count = int(np.sum(replace_mask))
+        # Snapping a protected anchor back to its measured position can expose
+        # drift accumulated by earlier smoothed intervals.  That turns one
+        # valid anchor into a near-duplicate bar followed by a compensating
+        # long gap (Pass 208 observed 0.237339s / 2.85086s pairs).  A local
+        # smoother must never make the repaired grid structurally worse, so
+        # reject the whole smoothing pass when it introduces new duplicate- or
+        # skipped-bar-sized intervals compared with its input.
+        median_interval = float(np.median(intervals[valid_mask]))
+        duplicate_limit = median_interval * 0.42
+        skipped_limit = median_interval * 1.55
+
+        def _artifact_counts(values):
+            diffs = np.diff(values)
+            return (
+                int(np.sum(diffs <= duplicate_limit)),
+                int(np.sum(diffs >= skipped_limit)),
+            )
+
+        baseline_short, baseline_large = _artifact_counts(bars_arr)
+        smoothed_short, smoothed_large = _artifact_counts(smoothed_bars)
+        introduced_artifact_count = max(0, smoothed_short - baseline_short) + max(
+            0, smoothed_large - baseline_large
+        )
+        smoothing_rejected = bool(attempted_smoothed_count and introduced_artifact_count)
+        if smoothing_rejected:
+            smoothed_bars = bars_arr.copy()
+
+        smoothed_count = 0 if smoothing_rejected else attempted_smoothed_count
         drum_protected_count = int(np.sum(drum_protected))
         smoothed = sorted(round(float(t), 6) for t in smoothed_bars)
         if smoothed_count:
             blackboard.set_val("committed_bar_starts", smoothed)
 
         blackboard.set_val("bar_tempo_smoothing_report", {
-            "status": "SMOOTHED" if smoothed_count else "PASS",
+            "status": "REJECTED_GRID_ARTIFACT" if smoothing_rejected else ("SMOOTHED" if smoothed_count else "PASS"),
             "bar_count": len(smoothed),
             "smoothed_count": smoothed_count,
+            "attempted_smoothed_count": attempted_smoothed_count,
+            "introduced_artifact_count": introduced_artifact_count,
             "drum_protected_bar_count": drum_protected_count,
             "window_bars": self.window_bars,
             "tolerance_pct": self.tolerance_pct,
@@ -3335,6 +3365,8 @@ class Module3BarStartV2SummaryNode(BaseNode):
                 carried_bar_ratio=(blackboard.get_val("full_song_loop_report", {}) or {}).get(
                     "carried_bar_ratio"
                 ),
+                bar_grid_repair_report=blackboard.get_val("bar_grid_repair_report", {}),
+                final_bar_count=len(blackboard.get_val("committed_bar_starts", []) or []),
             ),
         }
         outputs["barstart_v2_report"] = report
@@ -3612,16 +3644,22 @@ class BarGridSanityPrunerNode(BaseNode):
 FALLBACK_CARRY_RATIO_THRESHOLD = 0.5
 
 
-def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None, carried_bar_ratio=None):
+def evaluate_barstart_v2_completeness(
+    *,
+    unresolved_bar_spans=None,
+    carried_bar_ratio=None,
+    bar_grid_repair_report=None,
+    final_bar_count=None,
+):
     """Return whether v2's grid is complete enough to adopt as the main
     output.
 
     A zero unresolved-span count is necessary but not sufficient: the loop can
     reach it by carrying bars from the legacy v1 grid after repeated stalls.
-    V2 is adoptable only when it covers the song and the carried-bar ratio is
-    below the conservative research threshold. The ratio is supplied by the
-    full-song loop; a missing value remains backward-compatible for direct
-    callers of this helper, while production reports always provide it.
+    V2 is adoptable only when it covers the song and the non-evidence bar ratio
+    stays below the conservative research threshold. The ratio supplied by the
+    full-song loop is retained for compatibility, while bars inserted by the
+    downstream grid-repair node are counted separately and together.
     """
     unresolved_count = len(unresolved_bar_spans or [])
     try:
@@ -3629,11 +3667,31 @@ def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None, carried_bar_
     except (TypeError, ValueError):
         ratio = 0.0
     ratio = float(np.clip(ratio, 0.0, 1.0))
+    repair_report = dict(bar_grid_repair_report or {})
+    try:
+        inserted_count = max(0, int(repair_report.get("inserted_bar_count", 0) or 0))
+    except (TypeError, ValueError):
+        inserted_count = 0
+    if final_bar_count is None:
+        final_bar_count = repair_report.get("bar_count_after", 0)
+    try:
+        final_count = max(0, int(final_bar_count or 0))
+    except (TypeError, ValueError):
+        final_count = 0
+    repaired_ratio = (
+        float(np.clip(inserted_count / final_count, 0.0, 1.0))
+        if final_count else 0.0
+    )
+    non_evidence_ratio = float(np.clip(ratio + repaired_ratio, 0.0, 1.0))
     blockers = []
     if unresolved_count:
         blockers.append("UNRESOLVED_BAR_SPANS_PRESENT")
     if ratio > FALLBACK_CARRY_RATIO_THRESHOLD:
         blockers.append("EXCESSIVE_FALLBACK_CARRY_RATIO")
+    if repaired_ratio > FALLBACK_CARRY_RATIO_THRESHOLD:
+        blockers.append("EXCESSIVE_BAR_GRID_REPAIR_RATIO")
+    if non_evidence_ratio > FALLBACK_CARRY_RATIO_THRESHOLD:
+        blockers.append("EXCESSIVE_NON_EVIDENCE_BAR_RATIO")
     return {
         "adoptable": not blockers,
         "status": "V2_READY" if not blockers else "V2_INCOMPLETE",
@@ -3641,6 +3699,10 @@ def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None, carried_bar_
         "unresolved_bar_span_count": unresolved_count,
         "carried_bar_ratio": round(ratio, 6),
         "carried_bar_ratio_threshold": FALLBACK_CARRY_RATIO_THRESHOLD,
+        "bar_grid_inserted_count": inserted_count,
+        "repaired_bar_ratio": round(repaired_ratio, 6),
+        "non_evidence_bar_ratio": round(non_evidence_ratio, 6),
+        "final_bar_count": final_count,
     }
 
 

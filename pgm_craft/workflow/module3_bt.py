@@ -1003,6 +1003,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         "score": _score_beat_grid_quality(v2_beat_grid)["score"]
     }
     unresolved_spans = v2_blackboard.get_val("unresolved_bar_spans", []) or []
+    bar_grid_repair_report = dict(v2_blackboard.get_val("bar_grid_repair_report", {}) or {})
     committed_bar_starts = ManualCommittedBarStartsSeedNode()._normalize_times(
         v2_blackboard.get_val("committed_bar_starts")
     )
@@ -1025,6 +1026,7 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
         "original_quality": original_quality,
         "v2_quality": v2_quality,
         "unresolved_spans": unresolved_spans,
+        "bar_grid_repair_report": bar_grid_repair_report,
         "committed_bar_starts": committed_bar_starts,
         "full_song_loop_report": full_song_loop_report,
         "state_consistency": state_consistency,
@@ -1104,10 +1106,13 @@ class Module3BarStartV2MergeNode(BaseNode):
         v2_quality = comparison["v2_quality"]
         unresolved_spans = comparison["unresolved_spans"]
         full_song_loop_report = comparison["full_song_loop_report"]
+        committed_bar_starts = comparison["committed_bar_starts"]
 
         completeness = evaluate_barstart_v2_completeness(
             unresolved_bar_spans=unresolved_spans,
             carried_bar_ratio=full_song_loop_report.get("carried_bar_ratio"),
+            bar_grid_repair_report=comparison["bar_grid_repair_report"],
+            final_bar_count=len(committed_bar_starts),
         )
         # Informational only -- kept in the report for reference.
         quality_comparison = {
@@ -1117,7 +1122,6 @@ class Module3BarStartV2MergeNode(BaseNode):
         }
         promoted = bool(completeness["adoptable"])
 
-        committed_bar_starts = comparison["committed_bar_starts"]
         legacy_artifacts = self._write_legacy_artifacts(blackboard, original_beat_grid)
         comparison_artifacts = self._write_barstart_v2_artifacts(blackboard, v2_beat_grid, committed_bar_starts)
         blackboard.set_val("module3_legacy_beats", original_beat_grid.copy())
@@ -1295,6 +1299,8 @@ class BarStartV2AutoMergeNode(BaseNode):
             carried_bar_ratio=(comparison["full_song_loop_report"] or {}).get(
                 "carried_bar_ratio"
             ),
+            bar_grid_repair_report=comparison["bar_grid_repair_report"],
+            final_bar_count=len(comparison["committed_bar_starts"]),
         )
         promoted = bool(completeness["adoptable"])
         if promoted:
