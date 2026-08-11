@@ -1709,3 +1709,47 @@ monkeypatch）結果：90 ticks、84 次成功 commit、6 個 unresolved spans�
 88.47，且 promotion gate 仍因 `UNRESOLVED_BAR_SPANS_PRESENT` 拒絕，
 因此 BarStart V2 尚未宣稱修好或升格為正式輸出。新的 click 只作為本次
 修正後的 provisional 聽感驗證，不代表品質 gate 已通過。
+
+**Claude 獨立覆核（未發現問題，確認可信）**：30 測試重跑全過；程式碼
+審查確認 `BarStartTempoSmoothingNode` 的 artifact guard 邏輯跟
+`evaluate_barstart_v2_completeness` 的閘門擴充都正確；直接讀取
+`module3_beat_click_report.json`（不只信任 Codex 轉述）核對 V2 分數
+65.53、115 小節、6 個未解析區間、`promoted=False` 全部相符；並且
+親自重算 115 個小節的間距分布，確認近乎重複小節（< 0.6 秒）從一堆
+降到 **0 個**、最大間距從 7.72 秒降到 **2.46 秒**、BPM 跳動比例從
+43% 降到 **14%**——Pass 208 目標要解決的「近乎重複小節/大跳空隙」
+問題這次是真的解決了，使用者已實際聽過確認。
+
+### Pass 209：探測視窗滑到超出全曲實際長度，產生假的 unresolved span（診斷完成，任務書已轉交 Codex）
+
+使用者聽完 Pass 208 版本後回報「需要繼續優化處理」。用 Pass 206 加的
+`full_song_loop_report.diagnostic_trace` 逐 tick 核對目前卡住
+promotion gate 的 6 個 `unresolved_bar_spans`，發現：tick 85（視窗
+起點 171.7s）是合理的「已到全曲結尾附近，沒有下一個候選」；但
+tick 86-90（視窗起點 174.7s/178.7s/183.7s/189.7s/196.7s）**全部
+已經超出全曲實際長度（176.6458 秒）**，這幾個 tick 根本不可能找到
+任何候選，卻仍被計入 `unresolved_bar_spans`，永久擋住 promotion
+gate 看到 0 個未解析區間。
+
+**根因已精確定位到程式碼行**：`RollingProbeWindowNode._next_start_time`
+（`module3_barstart_v2_bt.py:344-356`）在連續探測失敗時，把下一次
+視窗起點設成「上一次視窗的 `window_end`」，完全不受 `duration_cap`
+或 `committed[-1]` 約束，連續失敗幾次後視窗就會不斷往前滑出音訊
+範圍外；而 `FullSongBarStartLoopNode` 既有的「到達全曲結尾」提前
+停止檢查（約 3822 行）只看 `committed[-1]`（這次卡在 175.183，離
+`duration_cap-0.08`＝176.5658 還差一點，不會觸發），沒有檢查「探測
+視窗本身是否已經跑出範圍」，於是每個滑到範圍外的 tick 都被誤判成
+一次真正的證據缺口。**這正是 Pass 203 任務書第 5.3 節當初記錄過、
+但誤判成「正式管線不會受影響」的既有邏輯缺口——這次用真實資料證實
+它確實會影響正式管線，只是規模遠比診斷腳本 monkeypatch 時（400 個
+無效 tick）小很多（這裡只有 4-5 個），但依然實際擋住了 promotion
+gate。**
+
+已寫成 `docs/PASS-209-BARSTART-V2-PROBE-WINDOW-PAST-DURATION-TASK.md`
+（修復型，根因已定位到精確行號，不需要再重新診斷）轉交 Codex：
+`FullSongBarStartLoopNode` 要多一個「視窗本身已滑到 `duration_cap`
+之外」的提前停止條件（跟既有的 `committed[-1]` 檢查互補、不取代），
+且這種 tick 不應該被計入 `unresolved_bar_spans`。任務書特別提醒：
+如果修好後 `unresolved_bar_span_count` 真的降到 0/1，`promotion_gate.adoptable`
+可能第一次變成 `True`——這種情況不能自動宣稱「可以正式採用」，要
+完整記錄數字交給使用者/Claude 決定，不在 Pass 209 任務書範圍內。
