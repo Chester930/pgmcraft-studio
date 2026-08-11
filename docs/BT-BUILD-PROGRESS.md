@@ -1903,10 +1903,11 @@ Promotion gate 雖然已放行，但這些數字仍須交由使用者/Claude 決
 測試覆核。
 
 注意：上述 clean production 數字是在這兩項報告/升格邊界修正前取得的基準；
-修正後的第二次完整 production verify 在 10 分鐘上限內逾時且沒有寫出新
-`reverify_report.json`，因此不能把舊 JSON 宣稱為修正後的重新驗證結果。指定
-回歸 43/43 通過；完整 `pytest -q` 同樣在 10 分鐘上限內逾時，未觀察到失敗
-traceback。正式升格仍暫不執行。
+修正後的完整 production verify 以 10 分鐘及 15 分鐘上限重試，皆逾時且沒有
+寫出新 `reverify_report.json`，因此不能把舊 JSON 宣稱為修正後的重新驗證
+結果。指定核心回歸 43/43 通過；相容性分片 Pass 141–151 為 66/66 通過、
+Pass 168–185（現有檔案）為 64/64 通過。完整 `pytest -q` 同樣在 10 分鐘
+上限內逾時，未觀察到失敗 traceback。正式升格仍暫不執行。
 
 **Claude 獨立覆核**：36 測試重跑全過；直接讀 JSON 核對
 `unresolved_bar_span_count` 從 4 降到 1（只剩 173.7-176.7s 那段尾聲
