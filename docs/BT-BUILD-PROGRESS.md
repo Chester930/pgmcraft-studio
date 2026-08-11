@@ -1853,3 +1853,29 @@ hi-hat 26、whole drums 17），但四條 stem 的 steady run 都是 0 段；
 音檔），不是較短的黃金音檔。因此約 `0.952359s` 的落差是統計端點定義，
 不是音檔長度差，也不能單靠它決定是否放寬 gate。是否為尾聲無證據例外而
 調整 `UNRESOLVED_BAR_SPANS_PRESENT`，保留給使用者/Claude 下一步決定。
+
+**Claude 獨立覆核**：36 測試重跑全過；直接讀 JSON 核對
+`unresolved_bar_span_count` 從 4 降到 1（只剩 173.7-176.7s 那段尾聲
+`no_upstream_candidates`）、V2 分數 83.14 相符；Pass 210 第 2 節的
+onset 分析（四條 stem 都零散但沒有連續穩定拍脈、`duration_cap` 跟
+黃金基準落差是統計端點定義）查證屬實。
+
+### Pass 211：尾聲政策決定——使用者要求用「單側往前參考推估小節數＋均分補齊」處理全曲結尾證據不足的情況
+
+使用者看過 Pass 210 的尾聲事實調查後，明確下達政策：**任何階段只要
+證據不足，就用「往前參考＋往後參考、決定小節數、均分補齊」處理**。
+查證發現 codebase 裡已經有對應的雙向機制
+（`InterveningBarCountEstimatorNode`+`BidirectionalBarAlignmentNode`，
+`module3_barstart_v2_bt.py:731/794`），但只在「有前後兩端可以對齊」
+時才能運作——全曲尾聲沒有「下一個錨點」，這套機制結構上用不上，這
+正是 Pass 210 卡住的根本原因。
+
+已寫成 `docs/PASS-211-BARSTART-V2-TAIL-EXTRAPOLATION-TASK.md` 轉交
+Codex：新增單側參考版本（只有往前參考，用 `duration_cap` 取代
+「下一個錨點」的角色）的小節數推估＋均分補齊，明確要求（1）均分
+而非固定步長插入（避免重蹈 Pass 208 診斷過的餘數問題）、（2）外推
+出來的小節要清楚標記 `tail_extrapolation`、併入
+`non_evidence_bar_ratio`，不能悄悄冒充真實證據、（3）只能是全曲
+loop 走完正常流程確認真的沒證據之後才觸發的最後手段、（4）如果修好
+後 `promotion_gate.adoptable` 第一次變成 `True`，不能自動宣稱可以
+正式採用，數字要完整記錄交給使用者/Claude 決定。
