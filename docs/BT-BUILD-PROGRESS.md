@@ -1753,3 +1753,29 @@ gate。**
 如果修好後 `unresolved_bar_span_count` 真的降到 0/1，`promotion_gate.adoptable`
 可能第一次變成 `True`——這種情況不能自動宣稱「可以正式採用」，要
 完整記錄數字交給使用者/Claude 決定，不在 Pass 209 任務書範圍內。
+
+**Pass209 實作與真實驗證完成**：`FullSongBarStartLoopNode` 現在會在
+tick 前檢查既有 active probe window；若視窗起點已達音訊長度，直接停止。
+若 RollingProbeWindowNode 在本次 tick 內才把視窗推到音訊範圍外，loop
+會回復該 tick 的 committed/unresolved 變更並停止，因此越界 tick 不會
+被記成 unresolved，也不會污染 committed grid。原本
+`committed[-1]` 接近 duration cap 的停止條件保持不變。
+
+新增 `tests/test_sdd_pass209.py` 兩個測試：越界視窗不新增 unresolved，
+以及 committed 已到尾端時既有停止行為不變。指定回歸套件結果：
+**32 passed**。
+
+Pass209 修正後的乾淨 production verify（無 monkeypatch）結果：
+
+- `unresolved_bar_span_count=4`，由前次 6 降低；越界視窗造成的假 span
+  已移除。剩餘分類為 2 個 `best_candidate_below_threshold`、1 個
+  `all_candidates_already_committed`、1 個 `no_upstream_candidates`，
+  不是越界視窗問題。
+- `stop_reason=reached_audio_duration`、`iterations=101`、loop commit
+  97 個；最終下游網格 116 個小節。
+- `barstart_v2_score=73.14`，舊方法 `original_score=88.47`；
+  `carried_bar_ratio=0`、`repaired_bar_ratio=0.163793`、
+  `non_evidence_bar_ratio=0.163793`。
+- `promotion_gate.adoptable=false`，唯一 blocker 仍是
+  `UNRESOLVED_BAR_SPANS_PRESENT`。因此本次沒有自動升格 BarStart V2，
+  也只把新 click 視為 provisional 聽感驗證。

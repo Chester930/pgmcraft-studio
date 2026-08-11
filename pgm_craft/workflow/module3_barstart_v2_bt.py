@@ -3773,6 +3773,8 @@ class FullSongBarStartLoopNode(BaseNode):
     Stop conditions, checked once per tick:
     - `reached_audio_duration`: the last committed bar reached the known
       audio length (`audio_duration_sec`, or derived from `y`/`sr`).
+      A probe window whose own start has reached that same cap also stops the
+      loop before spending a tick outside the audio range.
     - `stalled_no_recovery`: no bar committed for `stall_limit` consecutive
       ticks *and* `NoDrumPhaseCarryNode` had nothing in `provisional_bar_starts`
       to fall back on either -- a genuine dead end (e.g. silence).
@@ -3830,8 +3832,37 @@ class FullSongBarStartLoopNode(BaseNode):
                 stop_reason = "reached_audio_duration"
                 break
 
+            active_window = blackboard.get_val("active_bar_probe_window", {}) or {}
+            try:
+                probe_start = float(active_window.get("start_time"))
+            except (AttributeError, TypeError, ValueError):
+                probe_start = None
+            if duration_cap is not None and probe_start is not None and probe_start >= duration_cap:
+                # The rolling window can advance after repeated no-candidate
+                # results even when the last committed bar is still just short
+                # of the cap. Once the next window starts at/after the end of
+                # the audio, running that tick would create a false unresolved
+                # span for a region that cannot contain evidence.
+                stop_reason = "reached_audio_duration"
+                break
+
+            unresolved_before_tick = list(blackboard.get_val("unresolved_bar_spans", []) or [])
             iterations += 1
             self._tick.run(blackboard, parent=self.name)
+            active_window = blackboard.get_val("active_bar_probe_window", {}) or {}
+            try:
+                probe_start = float(active_window.get("start_time"))
+            except (AttributeError, TypeError, ValueError):
+                probe_start = None
+            if duration_cap is not None and probe_start is not None and probe_start >= duration_cap:
+                # RollingProbeWindowNode discovers this boundary while
+                # creating the tick itself. Discard every mutation from that
+                # out-of-range tick so it cannot masquerade as real missing
+                # evidence (or commit a candidate outside the source audio).
+                blackboard.set_val("committed_bar_starts", before)
+                blackboard.set_val("unresolved_bar_spans", unresolved_before_tick)
+                stop_reason = "reached_audio_duration"
+                break
             after = self._normalize(blackboard.get_val("committed_bar_starts"))
             decision = dict(blackboard.get_val("bar_start_decision_report", {}) or {})
             carried_this_tick = 0
