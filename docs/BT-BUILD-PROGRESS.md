@@ -1779,3 +1779,29 @@ Pass209 修正後的乾淨 production verify（無 monkeypatch）結果：
 - `promotion_gate.adoptable=false`，唯一 blocker 仍是
   `UNRESOLVED_BAR_SPANS_PRESENT`。因此本次沒有自動升格 BarStart V2，
   也只把新 click 視為 provisional 聽感驗證。
+
+**Claude 獨立覆核**：32 測試重跑全過；直接讀 JSON 核對 V2 分數
+73.14、116 小節、4 個未解析區間、`promoted=False` 全部相符；親自
+重算 116 個小節的間距分布，確認近乎重複小節跟大跳空隙**已經完全
+歸零**（0 個）。使用者聽過後要求「寫下個任務書」繼續處理。
+
+逐筆核對剩下 4 個 unresolved span（用 Pass 206 的逐 tick trace），
+發現只有 1 個是真的：tick 49（100.3s）、tick 61（117.7s）都是
+`confidence_below_threshold`，但最終 `committed_bar_starts` 裡那附近
+其實已經有正常間距（1.543 秒）的小節——代表後來被別的 tick 補上了，
+只是失敗紀錄從沒被清掉；tick 99（171.7s）是
+`all_candidates_already_committed`（唯一候選是重複項），語意上不是
+「找不到證據」，是「這裡沒有新小節要加」；只有 tick 100
+（173.7-176.7s window）是真的——六個證據來源全部回報零候選，最後一個
+committed 小節在 172.6909s，全曲實際長度 176.6458s，中間約 3.95 秒
+完全空白。
+
+**已寫成 `docs/PASS-210-BARSTART-V2-UNRESOLVED-SPAN-RECONCILIATION-TASK.md`
+轉交 Codex**：第 1 節是機械式修復（`all_candidates_already_committed`
+不該記進 `unresolved_bar_spans`；`confidence_below_threshold` 造成的
+span 如果被最終網格事後填上要能回收清除），第 2 節是「先查事實再
+決定」——不直接處理 172.69-176.65s 這段尾聲缺口，先用既有的獨立
+onset 偵測方法查清楚這段音訊到底有沒有真實節奏內容、舊方法怎麼
+處理、`duration_cap_sec`（176.6458s）跟黃金基準全曲長度（175.693469s）
+差了快 1 秒是什麼原因，查完事實回報，是否要放寬 promotion gate 的
+判斷邏輯留給使用者/Claude 決定，不讓 Codex 自己判斷政策問題。
