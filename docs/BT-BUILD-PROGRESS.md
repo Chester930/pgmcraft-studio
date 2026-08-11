@@ -1577,3 +1577,34 @@ barstart/module3/pass19x/20x 的 91 個測試全數通過。完整技術細節�
 `docs/PASS-205-BARSTART-V2-QUALITY-REGRESSION-GATE-TASK.md`（已轉交
 Codex）。**
 
+### Pass 205：品質倒退閘門辨識合理多小節跳躍（已實作，真實資料揭露下一層瓶頸）
+
+- 根因：`BarStartCandidateCommitNode.execute` 直接比較原始
+  `committed_bar_starts` 的相鄰間距變異。當中間一個或多個小節因證據
+  不足而未 commit，下一個正確候選即使落在預期小節長度的 2 倍、3 倍等
+  整數倍，仍會讓 `quality_after` 大幅下降而被錯誤標成
+  `quality_regression`，造成 commit 永久凍結。
+- 修法：保留 `_score_bar_start_list_quality` 與原本的
+  `quality_drop_tolerance`，新增候選相對最後一個 commit 的 phase-alignment
+  判斷，重用既有 `_expected_bar_duration` 與
+  `_phase_consistency_score` 的小節整數倍殘差規則。只有合理整數倍跳躍
+  才跳過這次「新增候選造成的」品質倒退誤判；真正離網格的跳躍仍會被
+  `quality_regression` 攔下。決策報告同步輸出 `phase_alignment` 供追蹤。
+- 測試：新增 `tests/test_sdd_pass205.py`，覆蓋合理兩小節跳躍可 commit
+  與 2.5 小節離網格跳躍仍拒絕兩個案例；指定的
+  `test_sdd_pass202.py`、`test_sdd_pass201.py`、`test_module3_bt.py`、
+  `test_sdd_pass205.py` 共 23 項全數通過。
+- 真實資料回驗（World is Mine，176.65s）：500 ticks 中 96 次新增 commit
+  （含 seed 共 97 個起點），`quality_regression` 不再把合理跳躍鎖死；
+  但仍有 402 個 `no_candidates`、2 個低於門檻 tick，最後一個 trace 中的
+  V2 起點在 171.736837s，`unresolved_span_count=404`，loop 以
+  `max_iterations_reached` 結束。以 `pgm_craft.golden_benchmark` 對 trace
+  實際 commit 序列（每個起點暫以 4/4 表示）計算：97 小節、171.736837s、
+  29 次 BPM 大跳、0 個不規則小節；相對黃金 121 小節、175.693469s、0
+  次大跳，分別是 -24、-3.9566s、+29、0。這個 0 不規則只代表目前
+  輸出強制以 4/4 表示，不能掩蓋仍少 24 個小節且尚未通過全曲完成閘門，
+  因此不能視為接近黃金品質或可採用。
+- 誠實結論：Pass 205 的 `quality_regression` 誤判已由單元與真實 trace
+  證實解除，但 BarStart V2 仍未能跑完整首歌。下一步不應生成未驗證的
+  新 click 或宣稱通過；Pass 204 的決策應維持等待，另開調查處理
+  171.7s 之後的 `no_candidates`／證據搜尋缺口。

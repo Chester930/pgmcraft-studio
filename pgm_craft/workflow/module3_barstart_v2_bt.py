@@ -988,10 +988,14 @@ class BarStartCandidateCommitNode(BaseNode):
             candidate_committed = self._append_unique(list(committed), best["time"])
             quality_before = _score_bar_start_list_quality(committed)
             quality_after = _score_bar_start_list_quality(candidate_committed)
+            phase_alignment = self._candidate_phase_alignment(
+                best["time"], committed, blackboard
+            )
             regresses = (
                 quality_before is not None
                 and quality_after is not None
                 and quality_after < quality_before - self.quality_drop_tolerance
+                and not phase_alignment["is_reasonable_bar_multiple"]
             )
 
             if regresses:
@@ -1005,6 +1009,7 @@ class BarStartCandidateCommitNode(BaseNode):
                     "rejected_time": best["time"],
                     "quality_before": quality_before,
                     "quality_after": quality_after,
+                    "phase_alignment": phase_alignment,
                 })
                 result = self._probe_result("uncertain", window, best)
                 report.update({
@@ -1013,6 +1018,7 @@ class BarStartCandidateCommitNode(BaseNode):
                     "best_candidate": best,
                     "quality_before": quality_before,
                     "quality_after": quality_after,
+                    "phase_alignment": phase_alignment,
                 })
                 blackboard.set_val("unresolved_bar_spans", unresolved)
                 blackboard.set_val("last_bar_probe_result", result)
@@ -1026,6 +1032,7 @@ class BarStartCandidateCommitNode(BaseNode):
                     "evidence_sources": best.get("evidence_sources", []),
                     "quality_before": quality_before,
                     "quality_after": quality_after,
+                    "phase_alignment": phase_alignment,
                 })
                 blackboard.set_val("committed_bar_starts", committed)
                 blackboard.set_val("last_bar_probe_result", result)
@@ -1087,6 +1094,49 @@ class BarStartCandidateCommitNode(BaseNode):
                 "uncertainty_reason": item.get("uncertainty_reason"),
             })
         return sorted(out, key=lambda item: (item["time"], -item["confidence"]))
+
+    def _candidate_phase_alignment(
+        self, candidate_time: float, committed: list[float], blackboard: Blackboard
+    ) -> dict:
+        """Check whether a new candidate is on a reasonable bar-length multiple.
+
+        The quality score intentionally measures the raw committed intervals and
+        must keep doing so.  A candidate can nevertheless be correct when one or
+        more intervening bars were not committed, so the final interval may be
+        two or more expected bars long.  Reuse the phase residual rule already
+        used by arbitration rather than adding a second, unrelated tolerance.
+        """
+        expected = self._expected_bar_duration(blackboard)
+        if not committed or not expected or expected <= 0:
+            return {
+                "is_reasonable_bar_multiple": False,
+                "expected_bar_duration_sec": expected,
+                "bar_multiple": None,
+                "residual_sec": None,
+                "phase_consistency_score": None,
+            }
+
+        previous = float(committed[-1])
+        delta = float(candidate_time) - previous
+        if delta <= 0:
+            return {
+                "is_reasonable_bar_multiple": False,
+                "expected_bar_duration_sec": round(float(expected), 6),
+                "bar_multiple": None,
+                "residual_sec": None,
+                "phase_consistency_score": 0.0,
+            }
+
+        score = self._phase_consistency_score(candidate_time, [previous], expected)
+        bar_multiple = max(1, int(round(delta / expected)))
+        residual = abs(delta - bar_multiple * expected)
+        return {
+            "is_reasonable_bar_multiple": score["matching_committed_bars"] > 0,
+            "expected_bar_duration_sec": round(float(expected), 6),
+            "bar_multiple": bar_multiple,
+            "residual_sec": round(float(residual), 6),
+            "phase_consistency_score": score["score"],
+        }
 
     def _best_candidate(
         self,
