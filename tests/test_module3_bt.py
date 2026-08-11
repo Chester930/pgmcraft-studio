@@ -78,13 +78,12 @@ def test_module3_tree_is_narrow_click_workflow():
     assert "PackageRoot" not in names
 
 
-def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_when_v2_incomplete(tmp_path):
-    """Pass 142: v2 no longer needs human reference/manual acceptance nor to
-    outscore v1 -- it is adopted whenever it completes cleanly. But when the
-    real v2 engine (given a silent audio fixture and no manual bar-start
-    seed) genuinely cannot resolve the whole song, it must leave
-    unresolved_bar_spans and v1's own beats must survive untouched rather
-    than shipping a grid with known gaps."""
+def test_module3_barstart_v2_merge_node_ignores_duplicate_probe_failures(tmp_path):
+    """Pass 210: an in-range duplicate probe is a normal no-op, not a gap.
+
+    The out-of-duration probe is discarded by Pass 209, so this silent fixture
+    has no genuine unresolved span and may use the complete v2 result.
+    """
     audio_path = tmp_path / "source.wav"
     sf.write(audio_path, np.zeros(22050 * 4, dtype=np.float32), 22050)
 
@@ -108,13 +107,11 @@ def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_when_v2_in
 
     assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
 
-    # v1's own grid must be completely untouched: no reference/manual
-    # acceptance was ever recorded, so promotion_gate can never be satisfied.
-    np.testing.assert_array_equal(bb.get_val("beats"), beats)
-    np.testing.assert_array_equal(bb.get_val("refined_beats"), beats)
     np.testing.assert_array_equal(bb.get_val("module3_legacy_beats"), beats)
+    assert not np.array_equal(bb.get_val("beats"), beats)
+    assert not np.array_equal(bb.get_val("refined_beats"), beats)
     assert bb.get_val("click_track") == "main_click.wav"
-    assert bb.get_val("barstart_v2_promoted_to_main") is False
+    assert bb.get_val("barstart_v2_promoted_to_main") is True
 
     v2_grid = bb.get_val("barstart_v2_grid_beats")
     assert v2_grid is not None and len(v2_grid) > 0
@@ -129,11 +126,11 @@ def test_module3_barstart_v2_merge_node_compares_but_does_not_promote_when_v2_in
     assert os.path.exists(bb.get_val("module3_legacy_mix_with_click"))
 
     report = bb.get_val("barstart_v2_report")
-    assert report["status"] == "COMPARED_NOT_PROMOTED"
-    assert report["replaces_module3_click"] is False
-    assert report["promotion_gate"]["status"] == "V2_INCOMPLETE"
-    assert "UNRESOLVED_BAR_SPANS_PRESENT" in report["promotion_gate"]["blockers"]
-    assert report["unresolved_bar_span_count"] > 0
+    assert report["status"] == "PROMOTED_TO_MODULE3_DEFAULT"
+    assert report["replaces_module3_click"] is True
+    assert report["promotion_gate"]["status"] == "V2_READY"
+    assert report["promotion_gate"]["blockers"] == []
+    assert report["unresolved_bar_span_count"] == 0
     assert report["comparison_artifacts"]["status"] == "EXPORTED"
     assert report["legacy_artifacts"]["status"] == "EXPORTED"
     assert "original_score" in report["quality_comparison"]

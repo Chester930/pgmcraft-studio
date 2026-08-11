@@ -1805,3 +1805,51 @@ onset 偵測方法查清楚這段音訊到底有沒有真實節奏內容、舊�
 處理、`duration_cap_sec`（176.6458s）跟黃金基準全曲長度（175.693469s）
 差了快 1 秒是什麼原因，查完事實回報，是否要放寬 promotion gate 的
 判斷邏輯留給使用者/Claude 決定，不讓 Codex 自己判斷政策問題。
+
+### Pass 210：回收已被最終網格覆蓋的歷史 unresolved（實作完成，尾聲政策保留待決）
+
+Pass210 已完成第 1 節的機械式修復：
+
+- `BarStartCandidateCommitNode` 現在把 `all_candidates_already_committed`
+  視為正常 no-op，不再寫入 gate-facing `unresolved_bar_spans`；但每次
+  探測失敗仍保留在 `all_probe_failures_ever`，方便事後追查。
+- `FullSongBarStartLoopNode` 在 post-process 後，以既有 v1 reference
+  grid 的 expected bar duration 與 phase residual 規則檢查最終網格；只對
+  已被正常相鄰小節覆蓋的 `confidence_below_threshold` span 做事後回收。
+  `no_candidates`/`no_upstream_candidates` 不會因為附近有網格而被誤清除，
+  尾聲缺口仍會擋 gate。
+- `full_song_loop_report.all_probe_failures_ever` 保存完整探測失敗歷史，
+  gate 只使用 reconciliation 後的 `unresolved_bar_spans`。
+
+新增/更新回歸測試後，任務書指定套件結果為 **36 passed**（含
+`test_sdd_pass210.py`、Pass209/208/206/205/202/201 與
+`test_module3_bt.py`）。
+
+重新執行 `scratch/run_pass207_clean_production_verify.py` 的真實資料結果：
+
+- gate-facing `unresolved_span_count=1`，已由 Pass209 的 4 降到 1；唯一
+  保留的是 `173.736837-176.736837s` 的
+  `no_upstream_candidates` 尾聲區間。tick 99 的 duplicate 已不再計入，
+  100.333424s 與 117.66712s 的兩個 confidence span 已被最終網格回收。
+- `barstart_v2_score=83.14`，舊方法 `original_score=88.47`；最終下游
+  網格 116 小節，其中下游插入 19 個、`repaired_bar_ratio=0.163793`、
+  `non_evidence_bar_ratio=0.163793`，`carried_bar_ratio=0`。
+- `promotion_gate.adoptable=false`、status=`V2_INCOMPLETE`，唯一 blocker
+  仍是 `UNRESOLVED_BAR_SPANS_PRESENT`。因此本 Pass 沒有宣稱 BarStart V2
+  可以取代舊方法；新產生的 V2 click/mix 仍只是 provisional 產物。
+
+尾聲事實核對（原始音訊 172.6909-176.645828s，長 3.954928s）：使用已驗證
+的 `SteadyPercussionCountAnchorNode._detect_onsets`/
+`_find_steady_runs`，四條 stem 偵測到零散 onset（kick 37、snare 13、
+hi-hat 26、whole drums 17），但四條 stem 的 steady run 都是 0 段；
+所以目前證據支持「稀疏尾奏/零散瞬態，沒有可由既有規則確認的連續規律拍脈」，
+不是完全沒有聲音，也不足以自行硬補一個小節。黃金 MeasureMap 的最後小節
+從 `175.693469s` 開始，且該位置附近有 `175.685s` kick onset（約 8ms），
+表示最後 downbeat 可能存在，但單一對應瞬態不能等同完整 steady rhythm。
+
+同一份黃金基準來源 WAV 與本次 clean verify WAV 的實際長度都完全是
+`176.645827664s`；`175.693469s` 是黃金 benchmark 統計採用的最後小節
+`start_time`（黃金最後小節的預測 `end_time=177.065102s` 甚至略超過
+音檔），不是較短的黃金音檔。因此約 `0.952359s` 的落差是統計端點定義，
+不是音檔長度差，也不能單靠它決定是否放寬 gate。是否為尾聲無證據例外而
+調整 `UNRESOLVED_BAR_SPANS_PRESENT`，保留給使用者/Claude 下一步決定。

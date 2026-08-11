@@ -1065,7 +1065,6 @@ class BarStartCandidateCommitNode(BaseNode):
                 "reason": reason,
                 "best_confidence": best.get("confidence") if best else None,
             }
-            unresolved.append(span)
             result_status = "uncertain" if best else "not_found"
             result = self._probe_result(result_status, window, best)
             report.update({
@@ -1073,12 +1072,33 @@ class BarStartCandidateCommitNode(BaseNode):
                 "reason": reason,
                 "best_candidate": best or {},
             })
+            classification = self._classify_decision(
+                report, candidate_filter_diagnostics
+            )
+            # A probe that only rediscovered an already committed candidate is
+            # a normal no-op, not an unresolved part of the song. Keep it in
+            # the diagnostic history below, but do not feed it to the gate.
+            if classification != "all_candidates_already_committed":
+                unresolved.append(span)
             blackboard.set_val("unresolved_bar_spans", unresolved)
             blackboard.set_val("last_bar_probe_result", result)
 
-        report["diagnostic_classification"] = self._classify_decision(
+        classification = report.get("diagnostic_classification") or self._classify_decision(
             report, candidate_filter_diagnostics
         )
+        report["diagnostic_classification"] = classification
+        if report.get("status") != "COMMITTED":
+            failure_history = list(blackboard.get_val("all_probe_failures_ever", []) or [])
+            failure_history.append({
+                "start_time": window.get("start_time"),
+                "end_time": window.get("end_time"),
+                "reason": report.get("reason"),
+                "best_confidence": (
+                    report.get("best_candidate", {}) or {}
+                ).get("confidence"),
+                "diagnostic_classification": classification,
+            })
+            blackboard.set_val("all_probe_failures_ever", failure_history)
         blackboard.set_val("bar_start_candidates", eligible)
         blackboard.set_val("bar_start_decision_report", report)
         return NodeStatus.SUCCESS
@@ -3917,6 +3937,16 @@ class FullSongBarStartLoopNode(BaseNode):
             BarGridSanityPrunerNode().execute(blackboard)
 
         final = self._normalize(blackboard.get_val("committed_bar_starts"))
+        unresolved_before_reconciliation = list(
+            blackboard.get_val("unresolved_bar_spans", []) or []
+        )
+        unresolved = self._reconcile_unresolved_spans(
+            blackboard, final, unresolved_before_reconciliation
+        )
+        blackboard.set_val("unresolved_bar_spans", unresolved)
+        all_probe_failures_ever = list(
+            blackboard.get_val("all_probe_failures_ever", []) or []
+        )
         carried_bar_ratio = (
             float(np.clip(carried_bar_count / len(final), 0.0, 1.0))
             if final else 0.0
@@ -3940,13 +3970,75 @@ class FullSongBarStartLoopNode(BaseNode):
             "carried_bar_count": carried_bar_count,
             "carried_bar_ratio": round(carried_bar_ratio, 6),
             "stop_reason": stop_reason,
-            "unresolved_span_count": len(blackboard.get_val("unresolved_bar_spans", []) or []),
+            "unresolved_span_count": len(unresolved),
+            "all_probe_failures_ever": all_probe_failures_ever,
             "diagnostic_classification_counts": diagnostic_counts,
             "diagnostic_trace": diagnostic_trace,
         }
         blackboard.set_val("barstart_v2_diagnostic_trace", diagnostic_trace)
         blackboard.set_val("full_song_loop_report", loop_report)
         return NodeStatus.SUCCESS
+
+    def _reconcile_unresolved_spans(
+        self,
+        blackboard: Blackboard,
+        final_committed_bar_starts: list[float],
+        unresolved_spans: list[dict] | None = None,
+    ) -> list[dict]:
+        """Drop only spans subsequently covered by a regular final-grid bar.
+
+        The probe history is intentionally left untouched in
+        ``all_probe_failures_ever``. This list is the gate-facing view: a
+        failed probe is no longer unresolved when a later final-grid interval
+        straddles the failed window's start and has the expected bar-length
+        phase. A tail span with no following bar therefore remains unresolved.
+        """
+        spans = list(
+            unresolved_spans
+            if unresolved_spans is not None
+            else blackboard.get_val("unresolved_bar_spans", []) or []
+        )
+        starts = sorted(
+            {
+                round(float(value), 6)
+                for value in (final_committed_bar_starts or [])
+                if value is not None
+            }
+        )
+        expected = BarStartCandidateCommitNode()._expected_bar_duration(blackboard)
+        if len(starts) < 2 or not expected or expected <= 0:
+            return spans
+
+        tolerance = max(0.12, float(expected) * 0.12)
+        regular_intervals = []
+        for previous, current in zip(starts, starts[1:]):
+            gap = current - previous
+            multiple = max(1, int(round(gap / expected)))
+            residual = abs(gap - multiple * expected)
+            if residual <= tolerance:
+                regular_intervals.append((previous, current))
+
+        retained = []
+        for span in spans:
+            # Pass 210's reconciliation is deliberately narrow: only a
+            # confidence miss can be superseded by a later normal commit.
+            # A no-candidate span is still evidence that the source supplied
+            # no support at that point and must remain visible to the gate.
+            if span.get("reason") != "confidence_below_threshold":
+                retained.append(span)
+                continue
+            try:
+                span_start = float(span.get("start_time"))
+            except (AttributeError, TypeError, ValueError):
+                retained.append(span)
+                continue
+            covered = any(
+                previous <= span_start <= current
+                for previous, current in regular_intervals
+            )
+            if not covered:
+                retained.append(span)
+        return retained
 
     def _tick_diagnostic(
         self,
