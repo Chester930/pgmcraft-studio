@@ -1934,3 +1934,43 @@ Codex：新增單側參考版本（只有往前參考，用 `duration_cap` 取�
 loop 走完正常流程確認真的沒證據之後才觸發的最後手段、（4）如果修好
 後 `promotion_gate.adoptable` 第一次變成 `True`，不能自動宣稱可以
 正式採用，數字要完整記錄交給使用者/Claude 決定。
+
+### Pass 211 真實資料驗證（Claude 執行，2026-08-12）
+
+Codex 完成三個 commit：`9640fd6`（`TailBarExtrapolationNode` 尾聲
+外推）、`d2db0c8`（**主動加碼的安全機制**：`_barstart_v2_promotion_decision()`
+要求額外的 `barstart_v2_promotion_approved` 旗標才會真的
+`promoted=True`，即使 gate 判定 adoptable 也一樣；有專門測試
+`test_merge_reports_adoptable_but_keeps_legacy_default_without_approval`
+驗證）、`62c8412`（Pass 142 舊測試對齊新政策）。程式碼審查+61 測試
+獨立重跑都通過。
+
+Codex 自己的真實資料驗證卡在「重試 15 分鐘沒有新 JSON」，現有殘留
+報告檔案數字明顯異常（尾聲小節時間超過全曲實際長度），判斷是失敗
+的中間跑法殘檔。**這個殘留問題已用一次全新的乾淨驗證排除**：
+
+- `unresolved_bar_span_count`：**0**（Pass 210 的 1 已經被 Pass 211
+  的尾聲外推補上）。
+- `barstart_v2_score=88.14`，`original_score=88.47`——**只差 0.33
+  分，第一次幾乎打平舊方法**。
+- `promotion_gate`：`adoptable=True`、`status=V2_READY`、
+  `blockers=[]`——**第一次通過閘門**。
+- `promotion_decision`：`gate_adoptable=True`、`manual_approval=False`、
+  `promoted=False`、`reason=MANUAL_APPROVAL_REQUIRED`——**如預期，
+  即使閘門通過也沒有自動升格，舊方法仍是正式預設輸出**。
+- `tail_extrapolation`：`triggered=True`，外推 3 個小節，均分間距
+  `step_sec=1.318309`（三段完全相等，不是固定步長留餘數）；最後一個
+  外推小節時間 `176.645828s`，**剛好等於 `duration_cap_sec`**，沒有
+  超出全曲長度。
+- `committed_bar_starts_match_loop_report=true`——先前殘留報告顯示
+  的「小節時間超過全曲長度」不是真的 bug，是那份殘檔本身壞掉，這次
+  乾淨跑法完全正常。
+- 最終 119 個小節，親自重算間距分布：近乎重複小節（<0.6s）跟大跳
+  空隙（>2.2s）都是 **0 個**，BPM 跳動比例只剩 **1.7%**（2/117）。
+- `non_evidence_bar_ratio=0.184874`（18.5% 是插值+外推，其餘 81.5%
+  是真正逐拍證據判斷出來的），遠低於 0.5 門檻。
+
+**這是這整個 Pass 197-211 系列以來，BarStart V2 第一次同時滿足
+「完整覆蓋全曲」「品質分數接近舊方法」兩個條件。是否要正式設定
+`barstart_v2_promotion_approved=True` 升格取代舊方法，留給使用者
+決定，不在這份記錄裡自行下結論。**
