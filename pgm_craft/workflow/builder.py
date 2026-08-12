@@ -131,6 +131,7 @@ class BTWorkflowEngine:
         user_meter_selection=None,
         allow_temporary_bar_delta=None,
         barstart_v2_postprocess_flags=None,
+        barstart_v2_promotion_approved=None,
     ):
         if target_stage is not None and target_stage != self.target_stage:
             self.target_stage = target_stage
@@ -154,6 +155,16 @@ class BTWorkflowEngine:
         if barstart_v2_postprocess_flags is not None:
             # Pass 171: 讓多版本比較 harness 能獨立開關 Pass 168/169/170 後處理節點
             blackboard.set_val("barstart_v2_postprocess_flags", barstart_v2_postprocess_flags)
+        if barstart_v2_promotion_approved is not None:
+            # Pass 211: promotion_gate.adoptable is an objective readiness
+            # signal only -- replacing legacy v1 additionally requires this
+            # explicit, caller-supplied approval (Module3BarStartV2MergeNode /
+            # BarStartV2AutoMergeNode's _barstart_v2_promotion_decision).
+            # Defaults to unset/False so every other caller keeps the
+            # existing safe (legacy-default) behavior unchanged.
+            blackboard.set_val(
+                "barstart_v2_promotion_approved", barstart_v2_promotion_approved
+            )
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow (Target: {self.target_stage}) for {audio_path} ===")
         status = self.tree.run(blackboard)

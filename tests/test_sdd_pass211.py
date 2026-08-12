@@ -156,3 +156,45 @@ def test_merge_reports_adoptable_but_keeps_legacy_default_without_approval(
     assert report["status"] == "COMPARED_NOT_PROMOTED"
     assert report["replaces_module3_click"] is False
     np.testing.assert_array_equal(bb.get_val("beats"), original)
+
+
+def test_workflow_engine_threads_promotion_approval_into_blackboard(monkeypatch):
+    """barstart_v2_promotion_approved must reach the blackboard unchanged so a
+    caller can explicitly opt a specific run into promotion, without flipping
+    the default for every other invocation (which stays unset/False)."""
+    from pgm_craft.workflow.builder import BTWorkflowEngine
+
+    engine = BTWorkflowEngine(target_stage="module3")
+    captured = {}
+
+    def fake_run(blackboard):
+        captured["value"] = blackboard.get_val("barstart_v2_promotion_approved")
+        return NodeStatus.SUCCESS
+
+    monkeypatch.setattr(engine.tree, "run", fake_run)
+
+    blackboard = engine.run(
+        audio_path="unused.wav",
+        target_stage="module3",
+        barstart_v2_promotion_approved=True,
+    )
+
+    assert captured["value"] is True
+    assert blackboard.get_val("barstart_v2_promotion_approved") is True
+
+
+def test_workflow_engine_leaves_promotion_approval_unset_by_default(monkeypatch):
+    from pgm_craft.workflow.builder import BTWorkflowEngine
+
+    engine = BTWorkflowEngine(target_stage="module3")
+    captured = {}
+
+    def fake_run(blackboard):
+        captured["value"] = blackboard.get_val("barstart_v2_promotion_approved", "UNSET")
+        return NodeStatus.SUCCESS
+
+    monkeypatch.setattr(engine.tree, "run", fake_run)
+
+    engine.run(audio_path="unused.wav", target_stage="module3")
+
+    assert captured["value"] == "UNSET"

@@ -1974,3 +1974,41 @@ Codex 自己的真實資料驗證卡在「重試 15 分鐘沒有新 JSON」，�
 「完整覆蓋全曲」「品質分數接近舊方法」兩個條件。是否要正式設定
 `barstart_v2_promotion_approved=True` 升格取代舊方法，留給使用者
 決定，不在這份記錄裡自行下結論。**
+
+### 使用者正式核准升格 BarStart V2（2026-08-12，Claude 執行）
+
+使用者明確回覆「正式升格 V2」。**沒有直接把 `barstart_v2_promotion_approved`
+的預設值改成 `True`**（那樣會讓所有未來歌曲不經個別驗證就自動升格，
+違背這整個系列一路堅持的「manual approval 是明確的人工判斷，不是
+一次性全域開關」設計精神）——改成在 `PGMCraftEngine.run()` →
+`BTWorkflowEngine.run()` 之間新增 `barstart_v2_promotion_approved`
+參數，讓呼叫端可以針對單次執行明確核准升格，其他呼叫維持原本安全的
+未設定（`False`）狀態不變。
+
+新增 2 個測試（`tests/test_sdd_pass211.py`）確認參數有正確傳遞、
+沒傳時維持未設定；連同既有 Pass 141/142/201/202/205/206/208/209/210/211
+與 `test_module3_bt.py`/`test_bt_workflow.py`（含完整全曲跑一次的
+`test_bt_engine_full_run`）共 82 個測試全數通過。
+
+用 `scratch/run_pass211_promoted_production_verify.py`（新增，等同
+`run_pass207_clean_production_verify.py` 但明確傳入
+`barstart_v2_promotion_approved=True`）跑一次完整管線，確認端到端
+真的生效：
+
+- `barstart_v2_report.status = "PROMOTED_TO_MODULE3_DEFAULT"`。
+- `replaces_module3_click = True`。
+- `promotion_decision = {gate_adoptable: True, manual_approval: True,
+  promoted: True, reason: "PROMOTED_BY_MANUAL_APPROVAL"}`。
+- 數字跟先前驗證過的乾淨結果一致（V2 分數 88.14 vs 舊方法 88.47，
+  `unresolved_bar_span_count=0`，119 個小節），確認可重現，不是單次
+  僥倖。
+- 主要輸出檔案（`click_track.wav`/`mix_with_click.wav`，沒有
+  `legacy_`/`barstart_v2_` 前綴的預設檔名）確認已經是升格後的 V2
+  網格產生的結果；`legacy_click_track.wav` 保留舊方法輸出供對照。
+
+**BarStart V2 現在是《World is Mine》這首歌測試流程裡的正式輸出。**
+`barstart_v2_promotion_approved` 目前只在
+`scratch/run_pass211_promoted_production_verify.py` 這個明確驗證腳本
+裡設成 `True`——如果要讓正式產品環境的其他呼叫路徑（例如真正的
+使用者上傳流程）也套用這個核准，需要另外決定要在哪一層預設打開這個
+旗標，這不在這次的範圍內，留給下一步討論。
