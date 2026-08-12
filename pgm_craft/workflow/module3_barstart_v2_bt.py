@@ -4031,6 +4031,20 @@ class FullSongBarStartLoopNode(BaseNode):
                         after = merged
                         stall_recoveries += 1
                         stall_count = 0
+                        # Pass 212: the carry jumps committed_bar_starts to a
+                        # new anchor discontinuously, but RollingProbeWindowNode
+                        # still has the pre-carry tick's failed
+                        # last_bar_probe_result on the blackboard. Left alone,
+                        # it keeps extrapolating the next window from that
+                        # stale failure's window_end instead of the new
+                        # anchor, so the search drifts further from real
+                        # content with every tick until it runs straight past
+                        # duration_cap without ever probing near the carried
+                        # position (verified: test_sdd_pass126 stalled at
+                        # 18.0s instead of reaching ~20s for exactly this
+                        # reason). Clearing it forces the next window to
+                        # re-anchor fresh at the carried committed[-1].
+                        blackboard.set_val("last_bar_probe_result", {})
                     else:
                         stop_reason = "stalled_no_recovery"
 

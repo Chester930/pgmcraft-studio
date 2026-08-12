@@ -2048,3 +2048,51 @@ Claude 用「d:\Users\666\Music\2」（黃金基準本尊）當比較對象，�
 已寫成 `docs/PASS-212-BARSTART-V2-INTRO-KICK-FILL-AND-CHORUS-TEMPO-DRIFT-TASK.md`
 （診斷型任務，兩個問題的症狀跟大致機制已定位，但確切節點還需要
 instrumentation 才能釘死，不直接猜測修法）轉交 Codex。
+
+### Pass 212 執行結果：使用者要求 Claude 直接處理，找到 Intro 根因但修法造成全曲退步、已 revert；意外抓到並修好一個獨立的既有 bug
+
+使用者回覆「你來處理吧!! 不需要交給 Codex 了」，Claude 直接執行第 1
+節的診斷（暫時 instrumentation 對 Intro 9-20s、Chorus 1 99-122s 逐
+tick 抓完整候選清單跟排除區資料）。
+
+**Intro 根因精確定位**：真正的降拍（跟黃金基準 14.005125s 幾乎重合）
+落在一個標記為「syncopation」的排除區（13.9384-14.0184s）——追查
+發現 `snap_exclusion_zones` 混雜了兩種不同來源：V2 自己的
+`DrumFillDetectionNode` 偵測到的真過門（也同步寫進
+`drum_fill_regions`），以及*舊版* v1 Stage 3 的
+`SyncopationClassificationNode`，後者純粹拿 onset 跟 v1 自己的
+click grid 比對來分類。這個真降帶被 v1 舊分類器誤判成切分音，
+`DrumEvidenceBarSearchNode` 因此扣了完整的 -0.3 懲罰，把信心壓到
+0.56（門檻 0.7），輸給 0.65 秒後一個較差的候選。
+
+**第一次修法（已 revert）**：把兩種排除區分開處理，只有
+`drum_fill_regions`（V2 自己判斷的真過門）維持 -0.3 完整懲罰，單純
+被 v1 舊分類器標記、沒有被 V2 判定為過門的區域改成 -0.05 輕懲罰。
+單元測試通過，但**真實資料重新驗證發現套用到全曲後造成廣泛退步**：
+分段比對顯示 Intro/Verse 1/Chorus 1/Outro 四段全部變差（連原本完全
+準確的 Verse 1 都從 42→36），全曲小節數從 119 掉到 103，分數從
+88.14 掉到 86.27。**結論：v1 的切分音判斷在絕大多數地方其實是對的，
+只有這一個具體案例是例外，全面放寬懲罰力道傷到了其他地方**——這是
+本系列第十次「單一案例看起來很有道理，套用到全曲卻造成退步」的
+案例，教訓跟之前完全一致：不能只憑一個驗證過的實例就把修法推廣到
+全曲，必須用真實資料驗證整體效果。**已完整 revert 回原本的 -0.3
+統一懲罰邏輯，Intro 這個問題目前仍未修復**，需要更精準的做法（例如
+只在有強力獨立佐證時才減輕懲罰，而不是全面放寬）。
+
+**意外抓到並修好一個獨立的既有 bug**：跑全套 911 個測試（第一次跑
+到這麼完整的範圍）時，發現 `test_sdd_pass126.py` 一個純合成情境
+（完全沒有任何鼓組證據，測試 stall-recovery 備援機制）失敗——追查
+發現 stall-recovery 成功把 `committed_bar_starts` 跳號補齊之後，
+`RollingProbeWindowNode` 沒有重新定錨，繼續沿用跳號前那個失敗探測
+軌跡的 `last_bar_probe_result`，導致後續視窗越搜越偏、最終在真正
+探索到新錨點附近之前就先撞到全曲結尾判定收工，少了最後一小節。
+**已修好**（stall-recovery 成功後清除 `last_bar_probe_result`，強制
+下一個視窗以新錨點重新定位），對應測試通過。這個 bug 跟 Intro/
+Chorus 1 完全無關，是全套測試才第一次跑到才發現的既有缺口，順手
+一起修了並保留（真實資料重新驗證確認 revert Intro 修法之後，
+119 小節/88.14 分的已知良好基準完全恢復，分段比對跟 revert 前
+逐一相符：Intro 16/17、Verse 1 42/42、Chorus 1 41/42、Outro
+20/20）。
+
+**Chorus 1 的局部速度漂移問題也還沒有處理**——這次的時間都花在
+Intro 根因定位跟後續的 revert/重新驗證上，Chorus 1 部分留待下一輪。
