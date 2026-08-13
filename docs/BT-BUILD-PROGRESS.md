@@ -2147,3 +2147,102 @@ Pass 202 的仲裁邏輯（信心過門檻優先於節奏吻合度）讓候選 B
 差距極端懸殊時才觸發的特例規則）才有機會不引入新的退步，不適合
 再用小規模嘗試的方式繼續猜。**下次要處理這個問題時，直接從這裡的
 97-100 秒轉場證據薄弱區當作起點**，不需要重新診斷。
+
+### 分數公式拆解：repair 懲罰有上限，19 個內插小節不是均等重要
+
+使用者聽完 V2 版本後表示「還是不夠好，甚至沒有比原本更好，至少
+要 90 分以上」（V2 目前 88.14，legacy 88.47）。透過使用者已保留
+升格核准狀態（不 revert 升格決策，繼續改善品質）的前提下，寫了
+`scratch/run_pass212_score_breakdown.py` monkeypatch 分數計算節點，
+拆出真實資料的完整分數組成：
+
+```
+V2:     base_score=96.14, tempo_stability=0.9998, downbeat_consistency=1.0
+        -> 96.14 - 8.0(repair 懲罰上限) = 88.14
+legacy: score=88.47, tempo_stability=0.8601, downbeat_consistency=0.9174
+bar_grid_repair_report: bar_count_before=100, bar_count_after=119,
+                         inserted_bar_count=19, removed=0
+downbeat_fix_report: PASS_NO_INVERSION（無旋轉懲罰）
+unresolved_bar_spans_count: 0
+```
+
+**關鍵發現**：`BarStartV2QualityScoreNode` 的 repair 懲罰公式是
+`min(8.0, repaired_count * 2.0)`，在 `repaired_count >= 4` 時就已經
+封頂在 -8 分。也就是說，把 19 個內插小節減少到任何 ≥4 的數字，
+分數完全不會變；只有真正壓到 4 以下才會開始鬆動這個懲罰。這代表
+先前花最多力氣調查的 Intro/Chorus 1（合計只佔 19 個內插小節裡的
+2 個）就算修好，分數也不會動——真正該關注的是佔大宗的 Verse 1
+（12 個內插小節，其中 7 個集中在 34.5-54.9 秒的規律性跳拍模式）。
+
+### Verse 1 34.5-54.9 秒交替跳拍模式：precise 定位到仲裁 tie-break，第 4 次修法嘗試（phase-score 容忍度分桶）也回歸、已 revert
+
+用 `scratch/run_pass212_verse1_skip_diagnosis.py` 對 27-56 秒逐 tick
+擷取完整候選清單與仲裁細節（`scratch/pass212_verse1_skip_trace.jsonl`），
+發現這段 committed 序列是 `33.007 → 35.910 → 38.832 → 41.738 →
+44.652 → 47.554 → 50.457 → 53.371 → 56.308`，每步間距約 2.90 秒
+（正常小節長 ~1.4529 秒的兩倍），代表連續 8 步都跳過了中間小節，
+事後全靠 `BarGridContinuityRepairNode` 內插補回。
+
+逐一比對每個「被跳過」位置附近的真實證據，發現這不是單一原因，
+而是四種不同機制混在一起：
+
+- **A. 真正的仲裁 tie-break 誤判（8 個窗口中的 5 個）**：中間小節
+  候選 confidence 跟勝出者相同甚至更高（多次雙方都是 1.0、完全無
+  exclusion 標記），純粹輸在 `phase_consistency_score` 些微落後
+  （差距僅 0.01~0.09）。例如 34.470023s（信心 1.0，phase=0.7196）
+  輸給 35.90966s（信心僅 0.74、還被 exclusion 標記，phase=0.7299，
+  差距僅 0.0103）；37.453787s 與 40.309841s 與 43.258776s 這三例則
+  是雙方信心完全相同（都是 1.0、都無 exclusion），純粹被
+  phase_consistency_score 些微落後淘汰（matching_committed_bars
+  較少，如 9 vs 13、12 vs 14、11 vs 14）。
+- **B. phase 分數真的差很多，判定合理（2 個窗口）**：如 46.857868s
+  信心雖 1.0 但 phase_consistency_score 只有 0.2645
+  （matching_committed_bars=2），跟勝出者的 0.7644 差距達 0.5，
+  顯示這個 kick 位置本身對不上已提交的小節網格，可能是裝飾音而非
+  真正 downbeat。
+- **C. 信心度未過門檻，直接出局（1 個窗口）**：51.908209s 的
+  phase_consistency_score（0.788255）甚至高於最終勝出者
+  （0.779815），但因為 confidence 只有 0.6（< 0.7 門檻），排序時
+  `clears_threshold=False` 直接排在門檻內的候選之後，phase 分數
+  再高也沒用。
+- **D. 仲裁之前就被上游過濾器剔除（1 個窗口）**：54.148934s 信心
+  1.0、完全無 exclusion，卻沒有出現在最終送進仲裁的候選清單裡——
+  推測被 `min_bar_gap` 過濾器剔除（跟剛提交的 53.371066s 只差
+  0.778 秒，約半個小節長）。
+
+**第 4 次修法嘗試**：在 `BarStartCandidateCommitNode._best_candidate`
+加入 `PHASE_SCORE_TIE_TOLERANCE = 0.1`，把 phase_consistency_score
+先分桶（`round(score / 0.1)`）再排序，讓桶內差距（分類 A 的情況）
+改用 confidence 決勝，桶外差距（分類 B）維持原本 phase 分數決定。
+單元測試（含新增的 `tests/test_sdd_pass212.py` 兩個案例）與全套
+910 個測試全數通過，但**真實資料端到端驗證（`barstart_v2_promotion_approved=True`）
+顯示明確回歸**：
+
+```
+barstart_v2_score: 88.14 -> 80.06（比 legacy 88.47 還差）
+bar_grid_inserted_count: 19 -> 20（不減反增）
+新出現 unresolved_bar_spans_count: 1，觸發全新的
+UNRESOLVED_BAR_SPANS_PRESENT 阻擋，promotion_gate.adoptable 變成
+false（即使有手動核准也無法升格，status=COMPARED_NOT_PROMOTED）
+```
+
+推測是把 confidence 當 phase-score 近似平手時的決勝依據，在某個
+真實視窗導致仲裁完全選不出贏家（不只是選錯，而是產生了先前不存在
+的真正缺口）。已用 `git checkout --` 完整 revert 程式碼改動，並刪除
+`tests/test_sdd_pass212.py`。全套測試與 pass202 既有測試確認回到
+乾淨基準。
+
+**分類 A（tie-break 誤判）看似可修，但這次的教訓是：修正仲裁排序
+規則本身，即使只是「近似值改用次要訊號決勝」這種看似保守的調整，
+仍可能在其他真實視窗製造出全新的缺口（分類 D 的上游過濾器交互作用
+是目前尚未探究的變因）。下次嘗試前，應該先針對「為什麼分桶後某個
+視窗會完全選不出贏家」做出獨立診斷（很可能是某視窗兩個候選桶內
+confidence 也相同，導致 `-time` tiebreak 選中一個不符合任何小節網格
+的候選），而不是直接在既有仲裁函式上加分桶邏輯。**
+
+**當前狀態**：維持在 119 小節/88.14 分的已知良好基準（升格核准狀態
+維持保留，`barstart_v2_promotion_approved=True` 仍可正常運作於
+Pass 202 原本的仲裁邏輯下）。90 分以上的目標尚未達成。分類 C（門檻
+閘）與分類 D（上游過濾器）這兩種機制，在先前所有嘗試中都未被
+觸及，可能是下一輪更值得優先探究的方向，因為它們不涉及仲裁排序
+規則本身，風險理論上較低。
