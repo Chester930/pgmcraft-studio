@@ -37,7 +37,7 @@ def test_rolling_probe_window_increases_and_shifts_after_not_found():
     assert window["start_time"] == 15.0
     assert window["end_time"] == 21.0
     assert bb.get_val("bar_probe_window_sec") == 6.0
-    assert bb.get_val("bar_probe_policy")["adjustment"] == "increase_by_1s"
+    assert bb.get_val("bar_probe_policy")["adjustment"] == "increase"
     assert len(bb.get_val("bar_probe_history")) == 1
 
 
@@ -58,4 +58,4 @@ def test_rolling_probe_window_decreases_after_fast_found():
     assert window["start_time"] == 21.0
     assert window["end_time"] == 25.0
     assert bb.get_val("bar_probe_window_sec") == 4.0
-    assert bb.get_val("bar_probe_policy")["adjustment"] == "decrease_by_1s"
+    assert bb.get_val("bar_probe_policy")["adjustment"] == "decrease"

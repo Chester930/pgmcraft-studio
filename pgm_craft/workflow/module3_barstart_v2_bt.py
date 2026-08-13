@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import importlib.util
+from collections import namedtuple
 from uuid import uuid4
 from typing import Iterable
 
@@ -251,6 +252,11 @@ class ManualCommittedBarStartsSeedNode(BaseNode):
         return sorted(set(round(t, 6) for t in out if t >= 0.0))
 
 
+_ProbeWindowBounds = namedtuple(
+    "_ProbeWindowBounds", ["default", "min", "max", "step", "tempo_scaled"]
+)
+
+
 class RollingProbeWindowNode(BaseNode):
     """Builds the next adaptive window used to search for one bar start."""
 
@@ -259,6 +265,7 @@ class RollingProbeWindowNode(BaseNode):
         "bar_probe_window_sec",
         "last_bar_probe_result",
         "bar_probe_history",
+        "v1_reference_beat_grid",
     ]
     output_keys = [
         "bar_probe_window_sec",
@@ -268,8 +275,30 @@ class RollingProbeWindowNode(BaseNode):
         "bar_probe_policy",
     ]
 
+    # Pass 214: window bounds and step used to be fixed absolute seconds
+    # (5.0/2.0/12.0/1.0), which made the search window's size relative to a
+    # bar completely dependent on the song's tempo -- fine at World is
+    # Mine's ~164 BPM (min window still >1 bar), but a slower song (e.g.
+    # 70 BPM, ~3.4s/bar) would get a minimum window *smaller than a single
+    # bar*, and a much faster song would get a max window spanning 10+
+    # bars, multiplying the close-candidate arbitration ambiguity this
+    # subsystem already struggles with. These are now multiples of the
+    # song's own expected bar duration instead. The multiples are
+    # calibrated so a song at World is Mine's verified tempo
+    # (expected_bar_duration_sec ~1.452857s) reproduces the previous
+    # absolute-second bounds byte-for-byte -- the known-good 119-bar/88.14
+    # baseline for this song is unaffected -- while other tempos now get a
+    # proportionally sized window instead of the same fixed seconds.
+    _CALIBRATION_BAR_DURATION_SEC = 1.452857
+    DEFAULT_WINDOW_BAR_MULTIPLE = 5.0 / _CALIBRATION_BAR_DURATION_SEC
+    MIN_WINDOW_BAR_MULTIPLE = 2.0 / _CALIBRATION_BAR_DURATION_SEC
+    MAX_WINDOW_BAR_MULTIPLE = 12.0 / _CALIBRATION_BAR_DURATION_SEC
+    STEP_BAR_MULTIPLE = 1.0 / _CALIBRATION_BAR_DURATION_SEC
+
     def __init__(self, default_window_sec: float = 5.0, min_window_sec: float = 2.0, max_window_sec: float = 12.0):
         super().__init__("RollingProbeWindowNode")
+        # Fallback bounds used only when the song's expected bar duration
+        # isn't available yet (e.g. before v1's reference grid exists).
         self.default_window_sec = float(default_window_sec)
         self.min_window_sec = float(min_window_sec)
         self.max_window_sec = float(max_window_sec)
@@ -280,9 +309,10 @@ class RollingProbeWindowNode(BaseNode):
             print(f"[{self.name}] need at least one committed bar start")
             return NodeStatus.FAILURE
 
-        previous_window = self._window_sec(blackboard.get_val("bar_probe_window_sec"))
+        bounds = self._tempo_scaled_bounds(blackboard)
+        previous_window = self._window_sec(blackboard.get_val("bar_probe_window_sec"), bounds)
         result = blackboard.get_val("last_bar_probe_result", {}) or {}
-        next_window = self._adjust_window(previous_window, result)
+        next_window = self._adjust_window(previous_window, result, bounds)
         start_time = self._next_start_time(committed[-1], previous_window, result)
         active = {
             "start_time": round(start_time, 6),
@@ -293,10 +323,11 @@ class RollingProbeWindowNode(BaseNode):
             "strategy": "rolling_single_bar_probe",
         }
         policy = {
-            "default_window_sec": self.default_window_sec,
-            "min_window_sec": self.min_window_sec,
-            "max_window_sec": self.max_window_sec,
-            "step_sec": 1.0,
+            "default_window_sec": round(bounds.default, 6),
+            "min_window_sec": round(bounds.min, 6),
+            "max_window_sec": round(bounds.max, 6),
+            "step_sec": round(bounds.step, 6),
+            "tempo_scaled": bounds.tempo_scaled,
             "adjustment": self._adjustment_label(previous_window, next_window),
         }
         history = list(blackboard.get_val("bar_probe_history", []) or [])
@@ -317,19 +348,41 @@ class RollingProbeWindowNode(BaseNode):
         blackboard.set_val("bar_probe_policy", policy)
         return NodeStatus.SUCCESS
 
-    def _window_sec(self, raw) -> float:
+    def _tempo_scaled_bounds(self, blackboard: Blackboard):
+        bar_duration = None
+        try:
+            bar_duration = BarStartCandidateCommitNode()._expected_bar_duration(blackboard)
+        except Exception:
+            bar_duration = None
+        if not bar_duration or bar_duration <= 0:
+            return _ProbeWindowBounds(
+                default=self.default_window_sec,
+                min=self.min_window_sec,
+                max=self.max_window_sec,
+                step=1.0,
+                tempo_scaled=False,
+            )
+        return _ProbeWindowBounds(
+            default=bar_duration * self.DEFAULT_WINDOW_BAR_MULTIPLE,
+            min=bar_duration * self.MIN_WINDOW_BAR_MULTIPLE,
+            max=bar_duration * self.MAX_WINDOW_BAR_MULTIPLE,
+            step=bar_duration * self.STEP_BAR_MULTIPLE,
+            tempo_scaled=True,
+        )
+
+    def _window_sec(self, raw, bounds) -> float:
         try:
             value = float(raw)
         except (TypeError, ValueError):
-            value = self.default_window_sec
-        return float(np.clip(value, self.min_window_sec, self.max_window_sec))
+            value = bounds.default
+        return float(np.clip(value, bounds.min, bounds.max))
 
-    def _adjust_window(self, current: float, result: dict) -> float:
+    def _adjust_window(self, current: float, result: dict, bounds) -> float:
         status = str(result.get("status", "")).lower()
         if status in {"not_found", "failed", "uncertain"}:
-            return self._clamp(current + 1.0)
+            return self._clamp(current + bounds.step, bounds)
         if status in {"found_fast", "too_fast"}:
-            return self._clamp(current - 1.0)
+            return self._clamp(current - bounds.step, bounds)
         if status == "found":
             offset = result.get("candidate_offset_sec")
             if offset is None and result.get("candidate_time") is not None and result.get("window_start") is not None:
@@ -337,9 +390,9 @@ class RollingProbeWindowNode(BaseNode):
                     offset = float(result["candidate_time"]) - float(result["window_start"])
                 except (TypeError, ValueError):
                     offset = None
-            if offset is not None and float(offset) <= max(1.0, current * 0.35):
-                return self._clamp(current - 1.0)
-        return self._clamp(current)
+            if offset is not None and float(offset) <= max(bounds.step, current * 0.35):
+                return self._clamp(current - bounds.step, bounds)
+        return self._clamp(current, bounds)
 
     def _next_start_time(self, last_committed: float, previous_window: float, result: dict) -> float:
         status = str(result.get("status", "")).lower()
@@ -357,13 +410,13 @@ class RollingProbeWindowNode(BaseNode):
 
     def _adjustment_label(self, previous: float, current: float) -> str:
         if current > previous:
-            return "increase_by_1s"
+            return "increase"
         if current < previous:
-            return "decrease_by_1s"
+            return "decrease"
         return "keep"
 
-    def _clamp(self, value: float) -> float:
-        return float(np.clip(value, self.min_window_sec, self.max_window_sec))
+    def _clamp(self, value: float, bounds) -> float:
+        return float(np.clip(value, bounds.min, bounds.max))
 
 
 class ReliableBarAnchorNode(BaseNode):
@@ -2774,24 +2827,30 @@ class BarGridContinuityRepairNode(BaseNode):
         repaired = [bars[0]]
         inserted_count = 0
         removed_count = 0
+        inserted_bar_times = []
+        removed_bar_times = []
         for t in bars[1:]:
             prev = repaired[-1]
             gap = float(t - prev)
             if gap <= median_interval * self.duplicate_gap_ratio:
                 removed_count += 1
+                removed_bar_times.append(round(float(t), 6))
                 continue
             if gap >= median_interval * self.insert_gap_ratio:
                 steps = int(round(gap / median_interval))
                 insertions = max(0, steps - 1)
                 if 0 < insertions <= self.max_insertions_per_gap:
                     for step in range(1, insertions + 1):
-                        repaired.append(prev + median_interval * step)
+                        inserted_time = prev + median_interval * step
+                        repaired.append(inserted_time)
+                        inserted_bar_times.append(round(float(inserted_time), 6))
                         inserted_count += 1
             repaired.append(t)
 
         # Pass B: damp an isolated short/long bar-duration oscillation, mirroring
         # Stage 3's TempoOscillationDampingNode but at bar granularity.
         oscillation_damped = 0
+        oscillation_damped_bars = []
         for i in range(1, len(repaired) - 1):
             left = repaired[i] - repaired[i - 1]
             right = repaired[i + 1] - repaired[i]
@@ -2802,6 +2861,10 @@ class BarGridContinuityRepairNode(BaseNode):
             proposed = (repaired[i - 1] + repaired[i + 1]) / 2.0
             if abs(proposed - repaired[i]) < 0.02:
                 continue
+            oscillation_damped_bars.append({
+                "original_time": round(float(repaired[i]), 6),
+                "adjusted_time": round(float(proposed), 6),
+            })
             repaired[i] = proposed
             oscillation_damped += 1
 
@@ -2819,6 +2882,9 @@ class BarGridContinuityRepairNode(BaseNode):
             "inserted_bar_count": inserted_count,
             "removed_bar_count": removed_count,
             "oscillation_damped_count": oscillation_damped,
+            "inserted_bar_times": sorted(inserted_bar_times),
+            "removed_bar_times": sorted(removed_bar_times),
+            "oscillation_damped_bars": oscillation_damped_bars,
         })
         if status == "REPAIRED":
             print(
@@ -3237,9 +3303,10 @@ class BarStartV2QualityScoreNode(BaseNode):
     reference -- it no longer gates whether v2 is adopted.
 
     Reuses Stage 3's `_score_beat_grid_quality` on the final beat matrix, then
-    layers v2-specific penalties on top of it: unresolved bar probe spans, a
-    structurally repaired bar grid, and a downbeat rotation triggered by the
-    low-frequency verifier.
+    layers v2-specific penalties on top of it: unresolved bar probe spans and
+    a downbeat rotation triggered by the low-frequency verifier. A
+    structurally repaired bar grid is surfaced (repaired_bar_count/
+    repaired_bar_times) but is no longer scored -- see Pass 213.
     """
 
     required_keys = ["beats"]
@@ -3266,6 +3333,15 @@ class BarStartV2QualityScoreNode(BaseNode):
             score -= min(15.0, len(unresolved) * 5.0)
             warnings.append(f"unresolved_bar_spans={len(unresolved)}")
 
+        # Pass 213: bar-grid repairs are reported (count + exact positions) but
+        # no longer deducted from the score -- the previous min(8.0,
+        # repaired_count*2.0) formula had no documented rationale for either
+        # constant, and its hard cap made the score identically insensitive
+        # to 4 repaired bars vs 40. Whether a repair-heavy grid is acceptable
+        # is a promotion-gate decision (see evaluate_barstart_v2_completeness,
+        # which already reads bar_grid_repair_report/non_evidence_bar_ratio
+        # directly), not something to fold into this single number.
+        repaired_bar_times = []
         repair = blackboard.get_val("bar_grid_repair_report", {}) or {}
         if repair.get("status") == "REPAIRED":
             repaired_count = (
@@ -3274,8 +3350,15 @@ class BarStartV2QualityScoreNode(BaseNode):
                 + int(repair.get("oscillation_damped_count", 0) or 0)
             )
             if repaired_count:
-                score -= min(8.0, repaired_count * 2.0)
                 warnings.append(f"bar_grid_repairs={repaired_count}")
+                repaired_bar_times = sorted(
+                    list(repair.get("inserted_bar_times", []) or [])
+                    + list(repair.get("removed_bar_times", []) or [])
+                    + [
+                        entry.get("original_time")
+                        for entry in (repair.get("oscillation_damped_bars", []) or [])
+                    ]
+                )
 
         downbeat_fix = blackboard.get_val("downbeat_fix_report", {}) or {}
         if downbeat_fix.get("status") == "ROTATED":
@@ -3288,6 +3371,8 @@ class BarStartV2QualityScoreNode(BaseNode):
             "tempo_stability": base["tempo_stability"],
             "downbeat_consistency": base["downbeat_consistency"],
             "warnings": warnings,
+            "repaired_bar_count": len(repaired_bar_times),
+            "repaired_bar_times": repaired_bar_times,
         }
         blackboard.set_val("barstart_v2_quality_score", result)
         return NodeStatus.SUCCESS

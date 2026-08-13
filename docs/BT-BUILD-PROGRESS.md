@@ -2246,3 +2246,103 @@ Pass 202 原本的仲裁邏輯下）。90 分以上的目標尚未達成。分�
 閘）與分類 D（上游過濾器）這兩種機制，在先前所有嘗試中都未被
 觸及，可能是下一輪更值得優先探究的方向，因為它們不涉及仲裁排序
 規則本身，風險理論上較低。
+
+## Pass 213：查明 repair 懲罰公式無設計依據並移除，改成報告列出確切內插位置
+
+使用者對這個 -8 分懲罰公式的合理性提出質疑，追查後確認：`git log -p`
+找到這段程式碼第一次出現在 commit `ff3d0ef`（Pass 118-125 一次性移植
+大型 commit），commit message 只寫「a quantified quality score」，
+**沒有任何文件、註解、任務書解釋為什麼每個 repair 扣 2.0 分、為什麼
+總上限是 8.0 分**。往下追問「為什麼是 4」，答案是「4」根本不是被
+設計出來的門檻，只是 `8.0 / 2.0` 相除的副產品——換一組同樣沒有依據
+的常數，這個轉折點會跟著變。
+
+進一步指出這個公式結構本身有問題：硬上限讓公式在
+`repaired_count >= 4` 後完全喪失鑑別力（4 個跟 19 個扣分一樣多）；
+沒有用比例正規化，只看絕對個數，對不同長度的歌曲不公平；把三種
+性質不同的修補動作（`inserted_bar_count` 證據真空被迫內插、
+`removed_bar_count` 刪重複小節、`oscillation_damped_count` 平滑
+震盪）直接加總當同一件事，語意混淆。
+
+使用者選擇：不重新設計公式（也提醒過改成合理的公式分數幾乎必然
+會下降，因為現在的寬鬆上限反而是分數能到 88.14 的原因之一），而是
+**完全移除這個扣分，改成在報告裡誠實列出每一個內插/移除/震盪抑制
+小節的確切時間點**，讓使用者自己判斷這個比例能不能接受，而不是被
+一個無依據的常數悄悄決定。
+
+**實作**（`pgm_craft/workflow/module3_barstart_v2_bt.py`）：
+- `BarGridContinuityRepairNode` 新增 `inserted_bar_times`/
+  `removed_bar_times`/`oscillation_damped_bars`（含原始時間與調整後
+  時間）三個欄位，寫入 `bar_grid_repair_report`。
+- `BarStartV2QualityScoreNode` 移除 `score -= min(8.0,
+  repaired_count*2.0)` 這一段，repair 相關資訊只留在 `warnings`
+  （如 `bar_grid_repairs=19`）跟新增的 `repaired_bar_count`/
+  `repaired_bar_times` 欄位，不再影響分數。`unresolved_bar_spans`
+  （-15 上限）跟 `downbeat_fix ROTATED`（-3）這兩個扣分維持不變，
+  因為它們代表的語意（完全沒信心 / 被低頻驗證器強制翻轉）比較
+  站得住腳，不是這次要處理的對象。
+- 確認 `evaluate_barstart_v2_completeness`（真正決定能否升格的
+  閘門）本來就直接讀 `bar_grid_repair_report`/`non_evidence_bar_ratio`，
+  完全沒用到這個分數，這次改動**不影響升格判斷，只影響報告呈現**。
+
+新增 `tests/test_sdd_pass213.py`（3 個測試，驗證位置正確列出、19 個
+repair 不再扣分、unresolved/rotation 仍正常扣分），加上既有 32 個
+相關測試全過，全套 911 測試全過。真實全曲驗證確認：`committed_bar_starts`/
+`unresolved_bar_span_count=0`/`promotion_gate` 跟基準線完全一致
+（只有報告呈現方式不同），`barstart_v2_score` 從 88.14 變成
+**96.14**（base_score，repair 扣分已移除），首次超過 legacy 的
+88.47。
+
+**意外抓到第二個缺口**：實作完後檢查真實輸出的
+`module3_beat_click_report.json`，發現 `bar_grid_repair_report`
+雖然在黑板（blackboard）跟診斷腳本裡拿得到，但 `Module3BarStartV2MergeNode`
+組裝最終 `barstart_v2_report` 時**從未把它寫進去**——這代表新增的
+`inserted_bar_times` 等欄位雖然邏輯正確，卻不會真的出現在使用者
+實際拿到手的報告檔案裡。已在 `module3_bt.py` 的
+`Module3BarStartV2MergeNode.execute()` 補上
+`"bar_grid_repair_report": comparison["bar_grid_repair_report"]`，
+重新跑真實資料驗證確認 `inserted_bar_times` 正確列出全部 19 個小節
+（5.245585s、9.584361s...92.774202s，涵蓋 Intro 5 個、Verse1 12 個、
+Chorus1 2 個），跟 Pass 212 診斷時手動找到的位置完全吻合。
+
+## Pass 214：BarStart V2 探測視窗改用歌曲自身拍長換算，不再寫死絕對秒數
+
+使用者要求確認「分段機制有沒有寫死的時間，不是依據確切來自音檔
+內容變化來切分」，因為專案要支援多種不同歌曲。逐一核對 BarStart V2
+子系統的所有節點常數後確認：多數比例常數（`min_bar_gap_ratio`、
+`insert_gap_ratio`、`duplicate_gap_ratio`、`oscillation_ratio`）跟
+`duration_cap_sec`（直接量測音檔長度）都是內容自適應的，但兩個
+關鍵例外是寫死絕對秒數：`RollingProbeWindowNode`
+（`default_window_sec=5.0`/`min_window_sec=2.0`/`max_window_sec=12.0`）
+跟 `LookaheadDrumEventScanNode`（`horizon_sec=30.0`，雖然支援
+`lookahead_horizon_sec` blackboard 覆蓋，但全專案從未有任何地方
+真的設定過這個值，是個從沒被接上的逃生艙口）。
+
+先處理 `RollingProbeWindowNode`：這首歌（~164 BPM，一小節
+≈1.4529s）沒問題，但慢歌（如 70 BPM，一小節 ≈3.4s）的最小視窗
+（2.0s）會小於一整個小節，可能連完整一小節都搜不到；快歌則相反，
+最大視窗（12s）可能塞進 8-10+ 個小節候選，放大 Pass 212 一直在追的
+仲裁模糊地帶問題。
+
+**實作**：視窗上下限跟步進改成 `expected_bar_duration_sec`
+（`BarStartCandidateCommitNode._expected_bar_duration`，這個子系統
+已經在用的既有拍長估計）的倍數，倍數校準成在 World is Mine 的
+tempo（`expected_bar_duration_sec≈1.452857`）下，跟原本寫死的
+5.0/2.0/12.0/1.0 秒完全一致（到浮點數精度），確保這首歌的已知良好
+基準不受影響。`v1_reference_beat_grid` 不存在時（拍長估計還沒建立）
+退回原本的固定秒數當 fallback，不會整個失效。`bar_probe_policy`
+新增 `tempo_scaled` 欄位標示這次是走比例縮放還是 fallback。連帶把
+`_adjustment_label` 的 `increase_by_1s`/`decrease_by_1s`
+改成不帶固定秒數字面意義的 `increase`/`decrease`（因為步進量已經
+不是固定 1 秒），更新對應的 `tests/test_sdd_pass106.py` 斷言。
+
+新增 `tests/test_sdd_pass214.py`（4 個測試：無拍長參照時 fallback
+到固定秒數、在校準 tempo 下精確重現原本的固定秒數、慢歌視窗變大於
+原本、快歌視窗變小於原本），加上既有 41 個相關測試全過，全套 915
+測試全過（Pass 213+214 合併執行）。真實全曲驗證確認 `bar_grid_inserted_count=19`、
+`final_bar_count=119`、`promotion_gate.adoptable=true` 跟基準線
+完全一致——證實校準常數確實讓這首歌的行為分毫不差，只是換了計算
+方式。**這個改動對其他速度的歌曲才會有實際效果，World is Mine
+本身驗證不出差異是預期中的**，需要另一首明顯不同速度的歌曲才能
+驗證 Pass 214 真正的效果。`LookaheadDrumEventScanNode` 的
+`horizon_sec=30.0` 尚未處理，留待下一輪。

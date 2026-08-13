@@ -1219,6 +1219,13 @@ class Module3BarStartV2MergeNode(BaseNode):
             "promotion_gate": completeness,
             "promotion_decision": promotion_decision,
             "quality_comparison": quality_comparison,
+            # Pass 213: repaired/interpolated bar positions were previously
+            # only visible as a count folded into a now-removed score
+            # deduction. bar_grid_repair_report carries the exact timestamps
+            # (inserted_bar_times/removed_bar_times/oscillation_damped_bars)
+            # so a reviewer can see precisely which bars are synthetic
+            # instead of evidence-derived.
+            "bar_grid_repair_report": comparison["bar_grid_repair_report"],
             "notes": [
                 "The promotion gate reports objective readiness; replacing "
                 "legacy v1 additionally requires explicit manual approval.",
