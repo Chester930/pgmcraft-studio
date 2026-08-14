@@ -673,18 +673,37 @@ class LookaheadDrumEventScanNode(BaseNode):
     was missing.
     """
 
-    optional_keys = ["kick_anchors", "snare_anchors", "committed_bar_starts", "lookahead_horizon_sec"]
-    output_keys = ["lookahead_drum_events"]
+    optional_keys = [
+        "kick_anchors",
+        "snare_anchors",
+        "committed_bar_starts",
+        "lookahead_horizon_sec",
+        "v1_reference_beat_grid",
+    ]
+    output_keys = ["lookahead_drum_events", "lookahead_scan_report"]
+
+    # Pass 215: horizon_sec used to be a fixed 30.0s regardless of tempo,
+    # same class of problem as Pass 214's RollingProbeWindowNode -- a
+    # slower song gets fewer bars of lookahead reach for the same wall-clock
+    # window, a faster song gets many more (and proportionally more
+    # candidate noise for LookaheadDrumAnchorSearchNode to sift through).
+    # The multiple is calibrated so a song at World is Mine's verified
+    # tempo (RollingProbeWindowNode's calibration bar duration) reproduces
+    # the previous fixed 30.0s exactly, matching Pass 214's approach.
+    HORIZON_BAR_MULTIPLE = 30.0 / RollingProbeWindowNode._CALIBRATION_BAR_DURATION_SEC
 
     def __init__(self, horizon_sec: float = 30.0, dedupe_tolerance_sec: float = 0.05):
         super().__init__("LookaheadDrumEventScanNode")
+        # Fallback horizon used only when neither an explicit
+        # lookahead_horizon_sec override nor the song's expected bar
+        # duration is available yet.
         self.horizon_sec = float(horizon_sec)
         self.dedupe_tolerance_sec = float(dedupe_tolerance_sec)
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         committed = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
         previous = committed[-1] if committed else 0.0
-        horizon = self._horizon(blackboard)
+        horizon, horizon_report = self._horizon(blackboard)
 
         events = []
         for key, base_confidence in (("kick_anchors", 0.75), ("snare_anchors", 0.6)):
@@ -694,16 +713,25 @@ class LookaheadDrumEventScanNode(BaseNode):
                 events.append({"time": round(t, 6), "confidence": base_confidence})
 
         blackboard.set_val("lookahead_drum_events", self._dedupe(events))
+        blackboard.set_val("lookahead_scan_report", horizon_report)
         return NodeStatus.SUCCESS
 
-    def _horizon(self, blackboard: Blackboard) -> float:
+    def _horizon(self, blackboard: Blackboard) -> tuple[float, dict]:
         try:
             value = float(blackboard.get_val("lookahead_horizon_sec"))
             if value > 0:
-                return value
+                return value, {"horizon_sec": round(value, 6), "source": "explicit_override"}
         except (TypeError, ValueError):
             pass
-        return self.horizon_sec
+        bar_duration = None
+        try:
+            bar_duration = BarStartCandidateCommitNode()._expected_bar_duration(blackboard)
+        except Exception:
+            bar_duration = None
+        if bar_duration and bar_duration > 0:
+            horizon = bar_duration * self.HORIZON_BAR_MULTIPLE
+            return horizon, {"horizon_sec": round(horizon, 6), "source": "tempo_scaled"}
+        return self.horizon_sec, {"horizon_sec": round(self.horizon_sec, 6), "source": "fixed_fallback"}
 
     def _normalize_anchor_times(self, raw) -> list[float]:
         if raw is None:
@@ -3408,6 +3436,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
         "no_drum_phase_report",
         "lookahead_bar_candidates",
         "lookahead_anchor_report",
+        "lookahead_scan_report",
         "intervening_bar_count_candidates",
         "selected_intervening_bar_count",
         "bidirectional_alignment_report",
@@ -3453,6 +3482,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "no_drum_phase_report": blackboard.get_val("no_drum_phase_report", {}),
             "lookahead_bar_candidates": blackboard.get_val("lookahead_bar_candidates", []),
             "lookahead_anchor_report": blackboard.get_val("lookahead_anchor_report", {}),
+            "lookahead_scan_report": blackboard.get_val("lookahead_scan_report", {}),
             "intervening_bar_count_candidates": blackboard.get_val("intervening_bar_count_candidates", []),
             "selected_intervening_bar_count": blackboard.get_val("selected_intervening_bar_count", {}),
             "bidirectional_alignment_report": blackboard.get_val("bidirectional_alignment_report", {}),
@@ -4213,6 +4243,12 @@ class FullSongBarStartLoopNode(BaseNode):
             "last_committed_time": final[-1] if final else None,
             "duration_cap_sec": duration_cap,
             "final_probe_window": blackboard.get_val("active_bar_probe_window", {}) or {},
+            # Pass 215: snapshot of the tempo-scaled window/lookahead-horizon
+            # policy from the last tick -- was computed every tick but never
+            # reached any report that survives to the final output JSON
+            # (same class of gap Pass 213 found for bar_grid_repair_report).
+            "final_probe_policy": blackboard.get_val("bar_probe_policy", {}) or {},
+            "final_lookahead_scan_report": blackboard.get_val("lookahead_scan_report", {}) or {},
             "stall_recoveries": stall_recoveries,
             "carried_bar_count": carried_bar_count,
             "carried_bar_ratio": round(carried_bar_ratio, 6),

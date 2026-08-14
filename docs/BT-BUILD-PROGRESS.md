@@ -2346,3 +2346,56 @@ tempo（`expected_bar_duration_sec≈1.452857`）下，跟原本寫死的
 本身驗證不出差異是預期中的**，需要另一首明顯不同速度的歌曲才能
 驗證 Pass 214 真正的效果。`LookaheadDrumEventScanNode` 的
 `horizon_sec=30.0` 尚未處理，留待下一輪。
+
+## Pass 215：LookaheadDrumEventScanNode 的 horizon_sec 同樣改用拍長換算，並補上兩個報告接線缺口
+
+延續 Pass 214 的多歌曲支援檢查，處理另一個確認寫死絕對秒數的節點：
+`LookaheadDrumEventScanNode`（`horizon_sec=30.0`）。跟
+`RollingProbeWindowNode` 是同一類問題——固定的 30 秒對慢歌覆蓋的
+小節數較少，對快歌則相反，會餵給 `LookaheadDrumAnchorSearchNode`
+不成比例的候選雜訊。
+
+**實作**：新增 `HORIZON_BAR_MULTIPLE = 30.0 /
+RollingProbeWindowNode._CALIBRATION_BAR_DURATION_SEC`，直接沿用
+Pass 214 已經校準好的同一個拍長常數（避免重複定義一組不同來源的
+校準值），確保兩個節點在同一首歌下的縮放行為互相一致。`_horizon()`
+的優先序：`lookahead_horizon_sec` 明確覆蓋（維持原行為，雖然全專案
+從未真的設定過）> 依 `expected_bar_duration_sec` 換算 > 無拍長參照
+時退回固定 30.0 秒。新增 `lookahead_scan_report` 輸出（`horizon_sec`/
+`source`：`explicit_override`/`tempo_scaled`/`fixed_fallback`）。
+
+**主動補上兩個報告接線缺口**（沒有等使用者發現，直接在這次一併
+處理）：檢查真實報告後發現 `bar_probe_policy`（Pass 214 新增的
+`tempo_scaled` 欄位所在）**從來沒有被寫進 `full_song_loop_report`
+或任何會存活到最終輸出 JSON 的地方**——`final_probe_window` 只是
+`active_bar_probe_window` 的快照，不包含 `bar_probe_policy`。這是
+跟 Pass 213 完全同一類的缺口（欄位存在於 blackboard，卻沒有真的
+落地），只是 Pass 214 當時沒有專門去檢查這個欄位，所以沒被抓到。
+已在 `FullSongBarStartLoopNode.execute()` 組裝 `loop_report` 時，
+仿照既有的 `final_probe_window` 模式，新增
+`final_probe_policy`（`bar_probe_policy` 快照）跟
+`final_lookahead_scan_report`（這次新增的 `lookahead_scan_report`
+快照）兩個欄位，兩者都會經由既有的 `full_song_loop_report` 傳遞
+路徑（`_synchronize_barstart_v2_loop_report` 只做 `dict()` 淺拷貝
+加值，不會篩掉新欄位）一路傳到 `Module3BarStartV2MergeNode` 組裝
+的最終報告。
+
+新增 `tests/test_sdd_pass215.py`（5 個測試：無拍長參照時 fallback、
+校準 tempo 下精確重現原本 30 秒、慢歌變大、快歌變小、明確覆蓋值
+仍然優先於拍長換算），加上既有 67 個相關測試（含
+`test_sdd_pass129.py` 全部 lookahead 測試）全過，全套 920 測試全過。
+真實全曲驗證確認 `bar_grid_inserted_count=19`/`final_bar_count=119`/
+`promotion_gate.adoptable=true`/`barstart_v2_score=96.14` 跟基準線
+完全一致，同時**直接讀真實輸出的
+`module3_beat_click_report.json`** 確認 `final_probe_policy.tempo_scaled=true`
+（精確重現 5.0/2.0/12.0/1.0 秒，浮點誤差在小數點後 6 位）跟
+`final_lookahead_scan_report.source="tempo_scaled"`（精確重現 30.0
+秒）都真的出現在檔案裡——這次沒有重蹈 Pass 214 的覆轍。
+
+**教訓再次確認**：任何新增診斷欄位的修法，驗證步驟一定要包含
+「直接讀最終寫入磁碟的 JSON 檔案，搜尋這個新欄位的鍵名」，不能
+只信任全套測試通過或 blackboard 裡看得到——這是本系列第十三次
+同類案例，這次特別之處是**同一個修法本身也順便回頭抓到了前一次
+（Pass 214）沒被驗證到的同一種缺口**，證實這個檢查步驟需要每次
+新增報告欄位都重做一次，不能因為「上次修好了」就假設這次也一定
+會接對。
