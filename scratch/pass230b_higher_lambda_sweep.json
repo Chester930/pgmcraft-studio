@@ -1,0 +1,209 @@
+{
+  "pass": "PASS-230b",
+  "sweep": [
+    {
+      "transition_lambda": 200,
+      "total_downbeats": 119,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.0282,
+          "max_abs_residual": 0.1051,
+          "within_50ms_ratio": 0.8824
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0188,
+          "max_abs_residual": 0.04,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.019,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.232,
+          "max_abs_residual": 1.4435,
+          "within_50ms_ratio": 0.45
+        }
+      ]
+    },
+    {
+      "transition_lambda": 300,
+      "total_downbeats": 119,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.0293,
+          "max_abs_residual": 0.0951,
+          "within_50ms_ratio": 0.8824
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0183,
+          "max_abs_residual": 0.04,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0188,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.2244,
+          "max_abs_residual": 1.0435,
+          "within_50ms_ratio": 0.45
+        }
+      ]
+    },
+    {
+      "transition_lambda": 500,
+      "total_downbeats": 119,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.0246,
+          "max_abs_residual": 0.0415,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0183,
+          "max_abs_residual": 0.04,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0188,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.2247,
+          "max_abs_residual": 1.0435,
+          "within_50ms_ratio": 0.45
+        }
+      ]
+    },
+    {
+      "transition_lambda": 800,
+      "total_downbeats": 119,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.2264,
+          "max_abs_residual": 0.4006,
+          "within_50ms_ratio": 0.2941
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0183,
+          "max_abs_residual": 0.04,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0183,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.2458,
+          "max_abs_residual": 1.6035,
+          "within_50ms_ratio": 0.45
+        }
+      ]
+    },
+    {
+      "transition_lambda": 1500,
+      "total_downbeats": 40,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 1.2231,
+          "max_abs_residual": 3.2985,
+          "within_50ms_ratio": 0.0588
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.9724,
+          "max_abs_residual": 1.4843,
+          "within_50ms_ratio": 0.3333
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 1.0537,
+          "max_abs_residual": 1.847,
+          "within_50ms_ratio": 0.0714
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 1.1226,
+          "max_abs_residual": 2.0935,
+          "within_50ms_ratio": 0.0
+        }
+      ]
+    },
+    {
+      "transition_lambda": 3000,
+      "total_downbeats": 40,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 1.0259,
+          "max_abs_residual": 1.8382,
+          "within_50ms_ratio": 0.1176
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.976,
+          "max_abs_residual": 1.5012,
+          "within_50ms_ratio": 0.3333
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.9789,
+          "max_abs_residual": 1.5045,
+          "within_50ms_ratio": 0.3333
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 1.195,
+          "max_abs_residual": 3.0435,
+          "within_50ms_ratio": 0.05
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,243 @@
+{
+  "pass": "PASS-230",
+  "sweep": [
+    {
+      "transition_lambda": 1,
+      "total_downbeats": 93,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.6296,
+          "max_abs_residual": 1.4482,
+          "within_50ms_ratio": 0.4118
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.1197,
+          "max_abs_residual": 1.4507,
+          "within_50ms_ratio": 0.9048
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.339,
+          "max_abs_residual": 1.4693,
+          "within_50ms_ratio": 0.6905
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.787,
+          "max_abs_residual": 2.6535,
+          "within_50ms_ratio": 0.1
+        }
+      ]
+    },
+    {
+      "transition_lambda": 5,
+      "total_downbeats": 97,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.5863,
+          "max_abs_residual": 1.4482,
+          "within_50ms_ratio": 0.3529
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0514,
+          "max_abs_residual": 1.0688,
+          "within_50ms_ratio": 0.9524
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.3218,
+          "max_abs_residual": 1.4693,
+          "within_50ms_ratio": 0.7857
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.7185,
+          "max_abs_residual": 2.6535,
+          "within_50ms_ratio": 0.1
+        }
+      ]
+    },
+    {
+      "transition_lambda": 10,
+      "total_downbeats": 96,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.6045,
+          "max_abs_residual": 1.4482,
+          "within_50ms_ratio": 0.2941
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0517,
+          "max_abs_residual": 1.0688,
+          "within_50ms_ratio": 0.9524
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.3218,
+          "max_abs_residual": 1.4693,
+          "within_50ms_ratio": 0.7857
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.787,
+          "max_abs_residual": 2.6535,
+          "within_50ms_ratio": 0.1
+        }
+      ]
+    },
+    {
+      "transition_lambda": 30,
+      "total_downbeats": 109,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.4434,
+          "max_abs_residual": 1.4482,
+          "within_50ms_ratio": 0.5882
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0192,
+          "max_abs_residual": 0.0412,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0183,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.6521,
+          "max_abs_residual": 3.3635,
+          "within_50ms_ratio": 0.4
+        }
+      ]
+    },
+    {
+      "transition_lambda": 50,
+      "total_downbeats": 110,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.4449,
+          "max_abs_residual": 1.4482,
+          "within_50ms_ratio": 0.5882
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0192,
+          "max_abs_residual": 0.0412,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0183,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.5136,
+          "max_abs_residual": 2.6535,
+          "within_50ms_ratio": 0.4
+        }
+      ]
+    },
+    {
+      "transition_lambda": 100,
+      "total_downbeats": 110,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.4449,
+          "max_abs_residual": 1.4482,
+          "within_50ms_ratio": 0.5882
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.019,
+          "max_abs_residual": 0.04,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0183,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.5121,
+          "max_abs_residual": 2.5435,
+          "within_50ms_ratio": 0.4
+        }
+      ]
+    },
+    {
+      "transition_lambda": 200,
+      "total_downbeats": 119,
+      "segments": [
+        {
+          "segment": "Intro",
+          "golden_count": 17,
+          "mean_abs_residual": 0.0282,
+          "max_abs_residual": 0.1051,
+          "within_50ms_ratio": 0.8824
+        },
+        {
+          "segment": "Verse 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.0188,
+          "max_abs_residual": 0.04,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Chorus 1",
+          "golden_count": 42,
+          "mean_abs_residual": 0.019,
+          "max_abs_residual": 0.0428,
+          "within_50ms_ratio": 1.0
+        },
+        {
+          "segment": "Outro",
+          "golden_count": 20,
+          "mean_abs_residual": 0.232,
+          "max_abs_residual": 1.4435,
+          "within_50ms_ratio": 0.45
+        }
+      ]
+    }
+  ]
+}
