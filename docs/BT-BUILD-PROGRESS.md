@@ -23,6 +23,14 @@
 
 ---
 
+## Pass 233 — madmom existing-candidate-only 實測仍退步（2026-08-18）
+
+依使用者確認，實作更保守的第二版：madmom 仍全曲只跑一次，但每個 probe window 只在已有候選附近提供固定 `+0.08` 支援，禁止新增候選。單元與既有回歸測試共 22 passed；完整 production verify 雖耗時超過 15 分鐘，最終報告仍完成，`barstart_v2_score=63.19`，比 Pass 228 的 `80.66` 更差，故再次撤回，不保留程式修改。
+
+撤回後重新產生乾淨 baseline production output，確認 `original_score=66.5`、`barstart_v2_score=80.66`。目前可供使用者試聽的檔案位於 `outputs/pass228_grounded_score_production_verify/【Hatsune_Miku】_World_is_Mine_ryo（supercell）【初音ミク】/click/`；這些是 baseline，不含 madmom 新候選整合。
+
+---
+
 ## 一、整體 BT 架構（決策已定與實作現況）
 
 全自動流程拆成**階段式 BT**，每個 Stage 是獨立的 `SequenceNode`，可單獨測試、單獨串接。
