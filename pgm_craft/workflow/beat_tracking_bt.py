@@ -167,6 +167,95 @@ def _score_beat_grid_quality(beats, kick_anchors=None, sections=None, alignment_
     }
 
 
+def _kick_downbeat_accent_score(beats, kick_stem_path) -> dict:
+    """Pass 228: independent, golden-free check of whether beat==1 positions
+    are actually the loudest kick hit in their own measure -- the standard
+    EDM/pop downbeat signature. Reuses the methodology validated in
+    scratch/run_pass227_golden_downbeat_accent_verification.py (Verse1
+    76.2%, Chorus1 59.5%, Outro 30.0% on World is Mine's own golden
+    reference -- confirming this signal has real discriminating power for
+    this song). Uses kick-stem RMS, not generic onset_strength, because
+    onset_strength's broadband spectral flux gets swamped by snare/hihat
+    brightness and underweights kick's low-end punch (see docs/PASS-228-*.md
+    section 0 for the failed onset_strength attempt).
+
+    Returns {"win_ratio": float|None, "measures_checked": int, "warnings": [...]}.
+    win_ratio is None when there's no kick stem or too few complete measures
+    to judge -- callers must treat that as "no opinion", not a low score.
+    """
+    arr = _coerce_beat_matrix(beats)
+    if len(arr) < 2 or not kick_stem_path or not os.path.exists(kick_stem_path):
+        return {"win_ratio": None, "measures_checked": 0, "warnings": ["no_kick_stem_or_insufficient_beats"]}
+
+    import librosa
+    y, sr = librosa.load(kick_stem_path, sr=22050, mono=True)
+    hop = 256
+    rms = librosa.feature.rms(y=y, frame_length=1024, hop_length=hop)[0]
+    times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop)
+
+    def accent_at(t, window_sec=0.06):
+        lo, hi = t - window_sec, t + window_sec
+        mask = (times >= lo) & (times <= hi)
+        if not np.any(mask):
+            if len(rms) == 0:
+                return 0.0
+            idx = int(np.argmin(np.abs(times - t)))
+            return float(rms[idx])
+        return float(np.max(rms[mask]))
+
+    labels = np.rint(arr[:, 1]).astype(int)
+    boundaries = np.where(labels == 1)[0]
+    if len(boundaries) < 2:
+        return {"win_ratio": None, "measures_checked": 0, "warnings": ["missing_downbeat_cycle"]}
+
+    wins = 0
+    total = 0
+    for i in range(len(boundaries) - 1):
+        group = arr[boundaries[i]:boundaries[i + 1]]
+        if len(group) < 2:
+            continue
+        accents = [accent_at(float(t)) for t in group[:, 0]]
+        total += 1
+        if accents[0] == max(accents):
+            wins += 1
+
+    if total == 0:
+        return {"win_ratio": None, "measures_checked": 0, "warnings": ["no_complete_measures"]}
+
+    return {"win_ratio": round(wins / total, 4), "measures_checked": total, "warnings": []}
+
+
+def _score_beat_grid_grounded(beats, kick_anchors=None, sections=None,
+                               alignment_score=None, kick_stem_path=None) -> dict:
+    """Pass 228: headline-report-only score. Layers a real, golden-free
+    kick-downbeat-accent check (see _kick_downbeat_accent_score) on top of
+    _score_beat_grid_quality's existing tempo_stability/downbeat_consistency
+    terms, WITHOUT modifying _score_beat_grid_quality itself.
+
+    _score_beat_grid_quality is also used as an internal accept/reject
+    decision gate by several Stage3 nodes (GapReinforcementNode,
+    KickAnchorConsensusSnapNode, DrumsKickBeatFallbackNode) -- changing its
+    formula would change their behavior, not just report numbers. Only the
+    two headline comparisons (module3_bt.py's original_quality/v2_quality,
+    BarStartV2QualityScoreNode) should call this function instead. See
+    docs/PASS-228-BEAT-GRID-QUALITY-SCORE-REAL-GROUNDING-TASK.md.
+    """
+    base = _score_beat_grid_quality(beats, kick_anchors=kick_anchors,
+                                     sections=sections, alignment_score=alignment_score)
+    accent = _kick_downbeat_accent_score(beats, kick_stem_path) if kick_stem_path else None
+
+    if not accent or accent.get("win_ratio") is None:
+        return {**base, "base_score": base["score"], "kick_downbeat_accent": accent}
+
+    grounded_score = 0.75 * base["score"] + 25.0 * accent["win_ratio"]
+    return {
+        **base,
+        "score": round(float(np.clip(grounded_score, 0.0, 100.0)), 2),
+        "base_score": base["score"],
+        "kick_downbeat_accent": accent,
+    }
+
+
 def _relabel_beat_numbers(beats, first_label: int = 1, beats_per_bar: int = 4, protected_ranges=None):
     """
     Pass 191：順向時間軸重標號，確保受保護區段 (protected_ranges) 與非保護區段

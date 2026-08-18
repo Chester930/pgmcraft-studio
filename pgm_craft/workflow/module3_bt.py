@@ -21,7 +21,7 @@ from pgm_craft.workflow.audio_quality_bt import build_audio_quality_tree
 from pgm_craft.workflow.beat_tracking_bt import (
     AnchorTransientSnapNode,
     KickBassDownbeatVerifierNode,
-    _score_beat_grid_quality,
+    _score_beat_grid_grounded,
     build_beat_refinement_nodes,
     build_beat_tracking_analysis_nodes,
     build_beat_tracking_preparation_nodes,
@@ -1060,13 +1060,28 @@ def _run_barstart_v2_comparison(blackboard: Blackboard):
     if core_status != NodeStatus.SUCCESS or len(v2_beat_grid) == 0:
         return {"success": False, "full_song_loop_report": full_song_loop_report}
 
-    # Same scoring function, same (empty) optional args on both sides --
-    # v2 additionally carries its own penalties (unresolved spans, grid
-    # repairs, downbeat rotation) that v1 is never charged for, so this is
-    # a deliberately conservative comparison biased against over-promoting v2.
-    original_quality = _score_beat_grid_quality(original_beat_grid)
+    # Pass 228: headline comparison uses _score_beat_grid_grounded, not the
+    # bare _score_beat_grid_quality -- the latter's only real-audio-grounded
+    # component (combined_alignment) collapses to a near-constant when
+    # called with no kick_anchors/sections (as this comparison always did
+    # before), leaving nothing but self-referential internal-consistency
+    # checks that can't tell a musically-wrong-but-regular grid from a
+    # correct one. See docs/PASS-228-BEAT-GRID-QUALITY-SCORE-REAL-GROUNDING-TASK.md.
+    # Same (real) kick_anchors/kick stem on both sides -- v2 additionally
+    # carries its own penalties (unresolved spans, grid repairs, downbeat
+    # rotation) that v1 is never charged for, so this remains a deliberately
+    # conservative comparison biased against over-promoting v2.
+    v1_kick_anchors = blackboard.get_val("kick_anchors")
+    v1_kick_stem = (blackboard.get_val("stems", {}) or {}).get("kick")
+    original_quality = _score_beat_grid_grounded(
+        original_beat_grid, kick_anchors=v1_kick_anchors, kick_stem_path=v1_kick_stem
+    )
+    v2_kick_anchors = v2_blackboard.get_val("kick_anchors")
+    v2_kick_stem = (v2_blackboard.get_val("stems", {}) or {}).get("kick")
     v2_quality = v2_blackboard.get_val("barstart_v2_quality_score") or {
-        "score": _score_beat_grid_quality(v2_beat_grid)["score"]
+        "score": _score_beat_grid_grounded(
+            v2_beat_grid, kick_anchors=v2_kick_anchors, kick_stem_path=v2_kick_stem
+        )["score"]
     }
     unresolved_spans = v2_blackboard.get_val("unresolved_bar_spans", []) or []
     bar_grid_repair_report = dict(v2_blackboard.get_val("bar_grid_repair_report", {}) or {})

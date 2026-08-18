@@ -3036,3 +3036,59 @@ Outro就標記得不夠準確**。Chorus1的「漂移」問題結論不變（gol
 留待未來獨立Pass）、不改`_score_beat_grid_quality`本體。待使用者/
 下一輪session核准後才實作，完成後會產生一組不可跟過去任何Pass的
 舊分數直接比較的新基準。
+
+## Pass 228 完成：已實作、測試、真實資料驗證——V2 領先舊方法的差距比原本以為的大很多
+
+使用者核准後依SDD任務書實作。新增
+`_kick_downbeat_accent_score(beats, kick_stem_path)`（重用Pass227驗證
+過的kick RMS重音判斷法，包成正式函式）跟
+`_score_beat_grid_grounded(beats, kick_anchors, sections, alignment_score, kick_stem_path)`
+（`beat_tracking_bt.py`，緊接在`_score_beat_grid_quality`之後），只
+改兩個呼叫端（`module3_bt.py:1063-1080`的headline比較、
+`BarStartV2QualityScoreNode.execute()`），`_score_beat_grid_quality()`
+本體完全沒動，Stage3內部4個決策閘門不受影響。
+
+**離線驗證（實作階段的sanity check）**：
+1. 新函式對golden自己的beat矩陣分段跑一次，重現Pass227的獨立驗證
+   結果方向一致（Verse1 78.05% vs Pass227的76.2%、Chorus1 60.98% vs
+   59.5%、Outro 31.58% vs 30.0%——小差異來自分組方法細節不同，方向
+   跟量級都吻合）。
+2. **核心驗收標準**：合成一個「時間戳完全相同、只把拍號標籤旋轉一格」
+   的Verse1變體（規律不變、相位錯誤），確認**舊公式給出完全相同的
+   分數**（77.82 vs 77.82，差0.00——證實舊公式真的偵測不到這種
+   錯誤），**新公式給出明顯更低的分數**（77.88 vs 59.58，差18.3
+   分）。
+
+**測試**：新增`tests/test_sdd_pass228.py`（5個測試：相位旋轉判別、
+`kick_stem_path=None`/檔案不存在的優雅退回、拍數不足時回傳
+`win_ratio=None`（不是報錯或給低分）、真實World is Mine kick分軌
+重現Pass227方向）。目標回歸套件（`test_sdd_pass228.py`+
+`test_module3_bt.py`+`test_sdd_pass202.py`）22測試全過；**全套
+925測試全過**（27分27秒，含7個subtests）。
+
+**真實資料驗證**（`scratch/run_pass228_grounded_score_production_verify.py`，
+重用快取分軌，828秒完成）：
+
+| | 舊公式（Pass219-227引用） | 新公式（Pass228接地後） |
+|---|---|---|
+| `original_score`（舊方法） | 88.47 | **66.5** |
+| `barstart_v2_score`（V2） | 88.14 | **80.66** |
+| `v2_scores_higher` | false（V2些微落後） | **true（V2明顯領先，差14.16分）** |
+
+**這是一個重要且正面的轉變**：舊公式下V2其實些微落後舊方法
+（88.14<88.47），這個「近乎打平」的印象貫穿了整個Pass211-227系列的
+討論。換成接地真實kick重音訊號的新公式後，**V2明顯領先舊方法**——
+舊方法的「規律性」（tempo_stability/downbeat_consistency）剛好比較
+好看，但它真正的降拍相位正確性其實不如V2，舊公式量不出這個差距，
+新公式量得出來。
+
+**確認Stage3內部行為完全沒被動到**：`final_bar_count=119`、
+`bar_grid_inserted_count=19`、`non_evidence_bar_ratio=0.184874`、
+`promotion_gate.adoptable=true`——這些數字跟Pass211-221系列已知的
+V2內部管線輸出完全一致，證實只有回報的分數改變，`_score_beat_grid_quality`
+本體跟Stage3內部4個決策閘門確實沒被動到，符合任務書設計。
+
+**重要提醒（給下一輪session）**：**Pass228之後，`barstart_v2_score`/
+`original_score`的新基準是80.66/66.5，不再是過去引用的88.14/88.47**
+——任何之後的Pass如果要拿分數當比較依據，要用這組新數字，不能沿用
+Pass197-227的舊數字。

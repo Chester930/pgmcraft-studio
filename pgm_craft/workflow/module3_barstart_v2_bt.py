@@ -22,7 +22,7 @@ from pgm_craft.workflow.beat_tracking_bt import (
     AnchorTransientSnapNode,
     KickBassDownbeatVerifierNode,
     _extract_peak_anchors,
-    _score_beat_grid_quality,
+    _score_beat_grid_grounded,
 )
 from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
 
@@ -3344,6 +3344,8 @@ class BarStartV2QualityScoreNode(BaseNode):
         "downbeat_fix_report",
         "bar_grid_repair_report",
         "unresolved_bar_spans",
+        "kick_anchors",
+        "stems",
     ]
     output_keys = ["barstart_v2_quality_score"]
 
@@ -3352,7 +3354,16 @@ class BarStartV2QualityScoreNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        base = _score_beat_grid_quality(beats)
+        # Pass 228: grounded in real kick_anchors + kick-stem downbeat-accent
+        # check instead of the bare _score_beat_grid_quality (whose only
+        # real-audio-grounded term collapses to a near-constant when called
+        # with no kick_anchors/sections, as this always did before). See
+        # docs/PASS-228-BEAT-GRID-QUALITY-SCORE-REAL-GROUNDING-TASK.md.
+        base = _score_beat_grid_grounded(
+            beats,
+            kick_anchors=blackboard.get_val("kick_anchors"),
+            kick_stem_path=(blackboard.get_val("stems", {}) or {}).get("kick"),
+        )
         score = float(base["score"])
         warnings = list(base.get("warnings", []))
 
@@ -3396,8 +3407,10 @@ class BarStartV2QualityScoreNode(BaseNode):
         result = {
             "score": round(float(np.clip(score, 0.0, 100.0)), 2),
             "base_score": base["score"],
+            "ungrounded_score": base.get("base_score", base["score"]),
             "tempo_stability": base["tempo_stability"],
             "downbeat_consistency": base["downbeat_consistency"],
+            "kick_downbeat_accent": base.get("kick_downbeat_accent"),
             "warnings": warnings,
             "repaired_bar_count": len(repaired_bar_times),
             "repaired_bar_times": repaired_bar_times,
