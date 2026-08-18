@@ -3371,3 +3371,27 @@ madmom融合後變差」從「不知道」變成「知道確切機制」。是�
 投入設計一個能讓madmom繞過自我參照仲裁的新機制，還是先接受目前
 current baseline（80.66/66.5），把心力轉向使用者商用願景的下一
 階段，留給使用者決定。
+
+## Pass 235：讓madmom繞過phase_consistency_score的完整SDD任務書已寫完，轉交Codex
+
+使用者要求「寫完交給Codex處理」。完整任務書：
+`docs/PASS-235-MADMOM-PHASE-CONSISTENCY-BYPASS-TASK.md`（規劃階段，
+尚未實作）。
+
+**設計核心**：在`_best_candidate()`的排序鍵（`clears_threshold`跟
+`phase_consistency_score`之間）新增一個維度——「候選是否有madmom
+獨立模型佐證（`evidence_sources`含`madmom_dbn`/`madmom_dbn_support`）」，
+有佐證的候選優先權高於自我參照分數的比較；沒有madmom候選的tick
+（全曲大部分區域），排序行為完全不變，退回原本邏輯。刻意不修改
+`phase_consistency_score`/`_expected_bar_duration`本體（Pass219-226
+已證明13次變體都是死路），只是讓madmom候選繞過它，範圍收斂。
+
+**驗證流程明確要求先離線驗證再花真實pipeline時間**（這次改動比
+Pass232風險更高——直接改仲裁排序邏輯，理論上任何有madmom候選的
+tick都可能受影響，不只Chorus1）：先擴充Pass234的埋點腳本擷取全曲
+trace（不只Chorus1），用比照Pass223（已驗證100%吻合真實production）
+的離線模擬器重跑，確認Chorus1改善、Verse1/Intro/Outro沒有意外
+變差，才進入真實pipeline驗證。真實驗證要求`barstart_v2_score`真正
+超過現行基準80.66（不能只是「沒退步」），Verse1絕對不能變差，
+退步要如實記錄revert——跟Pass232/233一樣嚴格，不能為了呈現「這次
+成功了」挑對自己有利的數字。
