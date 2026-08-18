@@ -104,15 +104,170 @@ winner = max(
 
 ## 2. 重新加回 Pass232 的兩個節點
 
-`MadmomDBNEvidenceExtractNode`+`MadmomDBNCandidateAdapterNode`跟
-接線位置完全比照
-`docs/PASS-232-MADMOM-DBN-EVIDENCE-TIER-INTEGRATION-TASK.md`第2、4節
-——**設計本身沒有問題**（Pass234已經證實madmom提出的候選幾乎每次
-都準），問題出在仲裁排序邏輯，不在證據生成邏輯。Codex可以直接參考
-該任務書的程式碼片段，或者如果Pass232當初的實作還留有可參考的
-git history（`git log --all --oneline -- pgm_craft/workflow/module3_barstart_v2_bt.py`
-找Codex那次的commit，即使後來revert了，內容可能還在reflog或某個
-分支），直接復用。
+**更正（重要）**：Pass232/233 當初的節點實作**從未被 commit 過**
+——Codex 依這個專案一貫的「實作→驗證→退步就`git checkout --`還原、
+只留文件記錄」慣例正確處理，代表 `git log`/reflog 裡完全沒有那份
+程式碼可以復原，**不要花時間去找，找不到是正常的，不是操作失誤**。
+下面直接提供已經在 Pass234 診斷時重新實作過、而且已經在真實pipeline
+上跑成功、產出過正確trace資料的完整程式碼（`scratch/run_pass234_madmom_chorus1_diagnosis.py`
+那次的版本），可以直接照抄，不需要重新設計。
+
+**設計本身沒有問題**（Pass234已經證實madmom提出的候選幾乎每次都
+準），問題出在仲裁排序邏輯（第1節），不在下面這兩個證據生成節點。
+
+### 2.1 `MadmomDBNEvidenceExtractNode`
+
+加在 `pgm_craft/workflow/module3_barstart_v2_bt.py`（例如緊接在
+`BeatThisCandidateAdapterNode`類別定義之後）：
+
+```python
+class MadmomDBNEvidenceExtractNode(BaseNode):
+    """全曲跑一次 madmom RNNDownBeatProcessor + DBNDownBeatTrackingProcessor，
+    把結果快取到 blackboard，供 MadmomDBNCandidateAdapterNode 每個探測
+    視窗查詢用。madmom 需要整首歌脈絡才能做全域最佳化的tempo-lock
+    解碼——這正是它比逐窗口證據來源更準的原因，不能拆成逐視窗重跑。
+    """
+
+    optional_keys = ["audio_path"]
+    output_keys = ["madmom_downbeats", "madmom_beats", "madmom_evidence_report"]
+
+    TRANSITION_LAMBDA = 500  # Pass230 掃描出的甜蜜點
+
+    def __init__(self):
+        super().__init__("MadmomDBNEvidenceExtractNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        audio_path = blackboard.get_val("audio_path")
+        if not audio_path or not os.path.exists(audio_path):
+            blackboard.set_val("madmom_evidence_report", {"status": "SKIPPED_NO_AUDIO_PATH"})
+            return NodeStatus.SUCCESS
+        try:
+            from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
+        except ImportError as exc:
+            blackboard.set_val("madmom_evidence_report", {"status": "SKIPPED_IMPORT_ERROR", "error": str(exc)})
+            return NodeStatus.SUCCESS
+        try:
+            act = RNNDownBeatProcessor()(audio_path)
+            dbn = DBNDownBeatTrackingProcessor(beats_per_bar=[4], fps=100, transition_lambda=self.TRANSITION_LAMBDA)
+            result = dbn(act)
+        except Exception as exc:
+            blackboard.set_val("madmom_evidence_report", {"status": "SKIPPED_RUNTIME_ERROR", "error": str(exc)})
+            return NodeStatus.SUCCESS
+        beats = sorted(set(round(float(t), 6) for t, _ in result))
+        downbeats = sorted(set(round(float(t), 6) for t, pos in result if int(round(pos)) == 1))
+        blackboard.set_val("madmom_downbeats", downbeats)
+        blackboard.set_val("madmom_beats", beats)
+        blackboard.set_val("madmom_evidence_report", {
+            "status": "EXTRACTED", "transition_lambda": self.TRANSITION_LAMBDA,
+            "downbeat_count": len(downbeats), "beat_count": len(beats),
+        })
+        return NodeStatus.SUCCESS
+```
+
+### 2.2 `MadmomDBNCandidateAdapterNode`
+
+緊接在上面那個類別之後：
+
+```python
+class MadmomDBNCandidateAdapterNode(BaseNode):
+    """把 MadmomDBNEvidenceExtractNode 全曲跑好、快取在blackboard的
+    降拍清單，轉成當前探測視窗的 bar_start_candidates；跟既有候選
+    很接近就提升既有候選信心並標記佐證，完全沒被覆蓋的位置才新增
+    一個獨立候選（每個視窗最多一個）。跟 BeatThisCandidateAdapterNode
+    同一種模式。
+    """
+
+    optional_keys = ["active_bar_probe_window", "bar_start_candidates", "madmom_downbeats", "committed_bar_starts"]
+    output_keys = ["bar_start_candidates", "madmom_candidate_report"]
+
+    BASE_CONFIDENCE = 0.78
+    BOOST_AMOUNT = 0.16
+    COINCIDENCE_TOLERANCE_SEC = 0.08
+
+    def __init__(self):
+        super().__init__("MadmomDBNCandidateAdapterNode")
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        window = dict(blackboard.get_val("active_bar_probe_window", {}) or {})
+        candidates = list(blackboard.get_val("bar_start_candidates", []) or [])
+        madmom_downbeats = blackboard.get_val("madmom_downbeats") or []
+
+        in_window = [t for t in madmom_downbeats if self._inside_window(t, window)]
+        if not in_window:
+            blackboard.set_val("madmom_candidate_report", {"status": "SKIPPED_NO_CANDIDATES_IN_WINDOW"})
+            return NodeStatus.SUCCESS
+
+        boosted = 0
+        for t in in_window:
+            nearest = self._nearest_existing(candidates, t)
+            if nearest is None:
+                continue
+            conf = float(nearest.get("confidence", 0.0))
+            nearest["confidence"] = round(float(np.clip(conf + self.BOOST_AMOUNT, 0.0, 1.0)), 6)
+            evidence = list(nearest.get("evidence_sources", []) or [])
+            if "madmom_dbn_support" not in evidence:
+                evidence.append("madmom_dbn_support")
+            nearest["evidence_sources"] = evidence
+            boosted += 1
+
+        added = []
+        for t in in_window:
+            if self._has_candidate_near(candidates, t):
+                continue
+            added.append({
+                "time": round(t, 6),
+                "confidence": round(float(np.clip(self.BASE_CONFIDENCE, 0.0, 1.0)), 6),
+                "evidence_sources": ["madmom_dbn"],
+                "source_node": self.name,
+            })
+            break
+
+        candidates.extend(added)
+        blackboard.set_val("bar_start_candidates", candidates)
+        blackboard.set_val("madmom_candidate_report", {
+            "status": "CANDIDATES_BUILT" if added or boosted else "NO_OP",
+            "boosted_count": boosted, "added_count": len(added),
+            "in_window_count": len(in_window),
+        })
+        return NodeStatus.SUCCESS
+
+    def _nearest_existing(self, candidates, time_sec: float):
+        best, best_dist = None, None
+        for c in candidates:
+            if not isinstance(c, dict):
+                continue
+            try:
+                t = float(c.get("time"))
+            except (TypeError, ValueError):
+                continue
+            dist = abs(t - time_sec)
+            if dist <= self.COINCIDENCE_TOLERANCE_SEC and (best_dist is None or dist < best_dist):
+                best, best_dist = c, dist
+        return best
+
+    def _has_candidate_near(self, candidates, time_sec: float) -> bool:
+        return self._nearest_existing(candidates, time_sec) is not None
+
+    def _inside_window(self, time_sec: float, window: dict) -> bool:
+        if not window:
+            return False
+        start = float(window.get("start_time", 0.0))
+        end = float(window.get("end_time", start))
+        return start <= float(time_sec) <= end
+```
+
+### 2.3 接線位置（已確認精確，Pass234 用同樣接法真的跑成功過）
+
+1. `MadmomDBNEvidenceExtractNode()`：加進`module3_bt.py`的
+   `v2_core = SequenceNode("BarStartV2CoreChain", [...])`，放在
+   `VocalMelodyEvidenceExtractNode()`之後、`FullSongBarStartLoopNode()`
+   之前，並且從`module3_barstart_v2_bt.py`的import清單裡加上
+   `MadmomDBNEvidenceExtractNode`。
+2. `MadmomDBNCandidateAdapterNode()`：加進
+   `build_module3_barstart_v2_probe_tick_tree()`
+   （`module3_barstart_v2_bt.py:3903-3934`），緊接在
+   `BeatThisCandidateAdapterNode()`之後、`ReliableBarAnchorNode()`
+   之前。
 
 ---
 
@@ -179,9 +334,8 @@ Codex熟悉的等效腳本）重跑完整管線，比對：
 
 ## 4. 測試要求
 
-新增`tests/test_sdd_pass235.py`（如果Pass232當初的
-`tests/test_sdd_pass232.py`還能從git history/reflog找回來，可以
-在它的基礎上擴充，不用重寫）：
+新增`tests/test_sdd_pass235.py`（`tests/test_sdd_pass232.py`同樣
+從未被commit過，不存在，不用花時間找，直接寫新的）：
 
 1. 合成案例：構造一組衝突候選，其中一個有`madmom_dbn`（或
    `madmom_dbn_support`）在`evidence_sources`裡但`phase_consistency_score`
