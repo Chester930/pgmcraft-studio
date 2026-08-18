@@ -33,10 +33,7 @@ AUDIO_PATH = os.path.join(
 )
 OUTPUT_ROOT = os.path.join(ROOT, "outputs", "pass234_madmom_chorus1_diagnosis")
 STEMS_SOURCE = os.path.join(ROOT, "outputs", "pass203_evidence_fusion_diagnosis", AUDIO_NAME, "stems")
-TRACE_PATH = os.path.join(ROOT, "scratch", "pass234_chorus1_trace.jsonl")
-
-CHORUS1_START, CHORUS1_END = 86.907256, 147.977778
-
+TRACE_PATH = os.path.join(ROOT, "scratch", "pass235_full_song_madmom_trace.jsonl")
 
 def reuse_stems_cache():
     dst = os.path.join(OUTPUT_ROOT, AUDIO_NAME, "stems")
@@ -71,20 +68,20 @@ def _install_probes(trace):
     def wrapped_commit(self, blackboard):
         window = dict(blackboard.get_val("active_bar_probe_window", {}) or {})
         w_start = window.get("start_time")
-        in_chorus1 = w_start is not None and CHORUS1_START - 5 <= float(w_start) <= CHORUS1_END + 5
+        committed_before = list(blackboard.get_val("committed_bar_starts", []) or [])
         candidates_before = list(blackboard.get_val("bar_start_candidates", []) or [])
         madmom_report = dict(blackboard.get_val("madmom_candidate_report", {}) or {})
         status = original_commit(self, blackboard)
-        if in_chorus1:
-            decision = dict(blackboard.get_val("bar_start_decision_report", {}) or {})
-            committed_after = list(blackboard.get_val("committed_bar_starts", []) or [])
-            trace.append(_json_safe({
-                "window": window,
-                "candidates_before_commit": candidates_before,
-                "madmom_candidate_report": madmom_report,
-                "decision": decision,
-                "committed_after_last": committed_after[-1] if committed_after else None,
-            }))
+        decision = dict(blackboard.get_val("bar_start_decision_report", {}) or {})
+        committed_after = list(blackboard.get_val("committed_bar_starts", []) or [])
+        trace.append(_json_safe({
+            "window": window,
+            "committed_before": committed_before,
+            "candidates_before_commit": candidates_before,
+            "madmom_candidate_report": madmom_report,
+            "decision": decision,
+            "committed_after_last": committed_after[-1] if committed_after else None,
+        }))
         return status
 
     BarStartCandidateCommitNode.execute = wrapped_commit
@@ -125,7 +122,7 @@ def main():
         for item in trace:
             handle.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-    print(f"[PASS-234] elapsed={elapsed:.1f}s chorus1_ticks={len(trace)} trace={TRACE_PATH}")
+    print(f"[PASS-235] elapsed={elapsed:.1f}s full_song_ticks={len(trace)} trace={TRACE_PATH}")
     return 0
 
 

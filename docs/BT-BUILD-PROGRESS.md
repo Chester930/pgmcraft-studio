@@ -31,6 +31,35 @@
 
 ---
 
+## Pass 235 — 全曲離線安全門未通過，撤回仲裁 bypass（2026-08-18）
+
+依任務書先暫時接回 `MadmomDBNEvidenceExtractNode` 與
+`MadmomDBNCandidateAdapterNode`，把 Pass234 埋點擴充成全曲 89 ticks，
+產出 `scratch/pass235_full_song_madmom_trace.jsonl`。接著以 Pass223
+同型的離線 replay 重算舊排序與新排序；baseline 與 trace 的實際 raw
+loop **89/89 逐筆吻合**，因此後續差異不是 simulator 偏差。
+
+任務書指定的無條件 bypass 結果：
+
+- Intro：50ms 內 `3/14 → 3/15`，沒有實質改善。
+- Verse1：`23/31 → 1/29`，明顯退步。
+- Chorus1：`19/28 → 2/27`，反而退步，未達改善目標。
+- Outro：`6/16 → 2/15`，退步。
+
+另外掃描 phase-gap `0.05–0.40` 的收斂版本，最好的 `0.35` 仍只有
+Chorus1 `17/28`、Verse1 `22/31`，沒有任何版本超越 Chorus1 baseline；
+`0.40` 雖保留 Chorus1 baseline，仍沒有改善。因此沒有進入真實
+production verify，也沒有聲稱取得 `barstart_v2_score > 80.66`。
+
+依 Pass232/233 的誠實驗收鐵律，已撤回本次暫存的 production 節點接線、
+測試與未通過的排序修改；正式 baseline 維持
+`original_score=66.5`、`barstart_v2_score=80.66`。本 Pass 的結論是：
+「直接把 madmom support 放到 phase score 前」即使局部機制方向正確，
+在全曲歷史傳播下仍會造成連鎖漂移，不能以目前形式合併；若要重開，
+需要另立任務設計不會污染後續 committed history 的仲裁策略。
+
+---
+
 ## 一、整體 BT 架構（決策已定與實作現況）
 
 全自動流程拆成**階段式 BT**，每個 Stage 是獨立的 `SequenceNode`，可單獨測試、單獨串接。
@@ -3372,12 +3401,14 @@ madmom融合後變差」從「不知道」變成「知道確切機制」。是�
 current baseline（80.66/66.5），把心力轉向使用者商用願景的下一
 階段，留給使用者決定。
 
-## Pass 235：讓madmom繞過phase_consistency_score的完整SDD任務書已寫完，轉交Codex
+## Pass 235：完整執行後離線驗證未通過，未合併
 
-使用者要求「寫完交給Codex處理」。完整任務書：
-`docs/PASS-235-MADMOM-PHASE-CONSISTENCY-BYPASS-TASK.md`（規劃階段，
-尚未實作）。
+Pass235 任務書已完成並依規定執行；全曲 trace 與離線 replay 結果、
+撤回決策詳見本文件前方的「Pass 235 — 全曲離線安全門未通過」條目。
+由於 Chorus1 沒有改善且 Verse1/Outro 明顯退步，未進行真實 pipeline
+驗證，正式 baseline 維持 `80.66/66.5`。
 
+<!-- 原 Pass235 任務書設計留作歷史記錄；實際結果見前方條目。
 **設計核心**：在`_best_candidate()`的排序鍵（`clears_threshold`跟
 `phase_consistency_score`之間）新增一個維度——「候選是否有madmom
 獨立模型佐證（`evidence_sources`含`madmom_dbn`/`madmom_dbn_support`）」，
@@ -3394,4 +3425,4 @@ trace（不只Chorus1），用比照Pass223（已驗證100%吻合真實productio
 變差，才進入真實pipeline驗證。真實驗證要求`barstart_v2_score`真正
 超過現行基準80.66（不能只是「沒退步」），Verse1絕對不能變差，
 退步要如實記錄revert——跟Pass232/233一樣嚴格，不能為了呈現「這次
-成功了」挑對自己有利的數字。
+成功了」挑對自己有利的數字。 -->
