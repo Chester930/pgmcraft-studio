@@ -1,0 +1,48 @@
+{
+  "pass": "PASS-229",
+  "model": "madmom RNNDownBeatProcessor + DBNDownBeatTrackingProcessor (beats_per_bar=[4])",
+  "matching_method": "nearest_neighbor_per_segment (NOT independently-filtered index-alignment -- see module docstring)",
+  "overall": {
+    "madmom_total_beats": 440,
+    "madmom_total_downbeats": 110,
+    "golden_total_downbeats": 121
+  },
+  "segments": [
+    {
+      "segment": "Intro",
+      "golden_count": 17,
+      "matched": 17,
+      "mean_abs_residual": 0.4449,
+      "max_abs_residual": 1.4482,
+      "within_50ms_count": 10,
+      "within_50ms_ratio": 0.5882
+    },
+    {
+      "segment": "Verse 1",
+      "golden_count": 42,
+      "matched": 42,
+      "mean_abs_residual": 0.019,
+      "max_abs_residual": 0.04,
+      "within_50ms_count": 42,
+      "within_50ms_ratio": 1.0
+    },
+    {
+      "segment": "Chorus 1",
+      "golden_count": 42,
+      "matched": 42,
+      "mean_abs_residual": 0.0183,
+      "max_abs_residual": 0.0428,
+      "within_50ms_count": 42,
+      "within_50ms_ratio": 1.0
+    },
+    {
+      "segment": "Outro",
+      "golden_count": 20,
+      "matched": 20,
+      "mean_abs_residual": 0.5121,
+      "max_abs_residual": 2.5435,
+      "within_50ms_count": 8,
+      "within_50ms_ratio": 0.4
+    }
+  ]
+}
