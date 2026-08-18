@@ -3295,3 +3295,79 @@ beat_this當初預期的0.82低一點）。**明確排除**「偵測困難區段
 `barstart_v2_score=80.66`），確認Chorus1殘差是否真的因madmom證據
 加入而改善（golden在Chorus1可信，這段改善才是真正有意義的訊號），
 如果整體變差要如實記錄並revert，不能為了呈現效果勉強接受退步。
+
+## Codex 執行結果：兩版整合都真實退步，已誠實撤回（2026-08-18，Codex記錄）
+
+Codex 依任務書完整實作第一版（新增候選+就近boost），環境檢查通過、
+24 測試全過、真實production verify跑完（88/88 probe tick都有madmom
+貢獻、累計新增40個候選）。**結果：`barstart_v2_score`從Pass228基準
+80.66掉到65.77，退步14.89分**；Chorus1 42個golden小節只有3個落在
+50毫秒內（Pass229 madmom單獨測試時是42/42完美命中）。照任務書要求
+撤回。Codex自行嘗試更保守的第二版（只boost既有候選、完全不新增），
+結果更差（`barstart_v2_score=63.19`），同樣撤回，重新產生乾淨
+baseline（`original_score=66.5`、`barstart_v2_score=80.66`）確認。
+兩次都是誠實的失敗處理，沒有為了呈現效果接受退步——完全符合任務書
+要求。
+
+## Pass 234：查出Chorus1退步的確切機制——madmom選對了，但輸在自我參照的phase_consistency_score
+
+使用者要求深入診斷「madmom單獨測試完美、融合後反而變差」這個矛盾。
+重新實作Pass232任務書的設計（診斷用，跑完後已用`git checkout --`
+還原，沒有留下程式碼變更），加上埋點追蹤Chorus1全部34個tick的完整
+候選清單+仲裁決策（`scratch/run_pass234_madmom_chorus1_diagnosis.py`
+→`scratch/pass234_chorus1_trace.jsonl`）。
+
+**先排除一個機制**：許多鼓組證據候選本身已經靠自己的加成標籤
+（`outside_fill_exclusion`/`bass_coincidence_support`/`phrase_anchor_support`
+等疊加）飽和到信心上限1.0，madmom的+0.16 boost對這些候選完全是
+無效動作（confidence clip在1.0，boost打不進去）——`madmom_dbn_support`
+標籤確實被加上，但對仲裁結果毫無影響。
+
+**真正的機制，用golden逐案例驗證確認**：全部34個tick裡有11個tick
+madmom自己新增了一個獨立候選（`MadmomDBNCandidateAdapterNode`
+新增的候選，不是boost既有候選）。逐一比對這11個候選跟golden、以及
+它們是否真的贏得仲裁：
+
+| tick | madmom候選誤差(vs golden) | 結果 | 贏家誤差(vs golden) |
+|------|------------------------------|------|------------------------|
+| 6 | 12ms | 贏 | 12ms |
+| 8 | 30ms | 贏 | 30ms |
+| 13 | 23ms | **輸** | 221ms |
+| 16 | 40ms | **輸** | 448ms |
+| 17 | 17ms | **輸** | 353ms |
+| 18 | 10ms | **輸** | 379ms |
+| 21 | 40ms | **輸** | 326ms |
+| 28 | 4ms | **輸** | 370ms |
+| 30 | 16ms | **輸** | 410ms |
+| 32 | 34ms | **輸** | 381ms |
+| 33 | 18ms | **輸** | 481ms |
+
+**madmom出現的11次裡，9次（82%）輸掉仲裁——而且每一次madmom自己的
+候選跟golden的誤差都在4-40毫秒（近乎完美），贏家的誤差卻是
+221-481毫秒（明顯錯誤，通常代表跳過了一個真實小節）**。這不是
+單一案例，是一致、穩固的統計模式。
+
+**具體機制（以tick16為例，完整展開過）**：madmom候選117.45秒
+（golden最近降拍117.409796秒，差40毫秒）輸給v1_grid候選118.46秒
+（golden最近降拍118.907755秒，差448毫秒，而且完全跳過golden在
+116.0秒的另一個真實降拍）。兩者信心都過門檻（0.78 vs 0.72），
+決勝關鍵是`phase_consistency_score`：v1_grid的0.843明顯高於
+madmom的0.506——因為v1_grid的候選跟「已經委任的歷史」更一致，
+madmom的候選則是在修正歷史的漂移。
+
+**根因**：這正是整個Pass212-226系列一直在查、13次嘗試都沒修好的
+同一個病灶——`phase_consistency_score`純粹跟已委任歷史比對，歷史
+本身如果已經有漂移，這個分數會系統性獎勵「延續漂移」、懲罰「修正
+漂移」。madmom之所以準，正是因為它會修正漂移；但也正因為如此，
+它在這個自我參照的分數裡系統性吃虧。**單純把madmom包裝成一個新
+候選、丟進同一套仲裁機制，先天上就贏不了**——不是信心值該給多少
+的問題（已排除），是madmom需要一個不受這個自我參照分數支配的
+特殊仲裁路徑（例如：madmom候選信心夠高時直接繞過phase_consistency_score
+比較、或用madmom的候選重新校準expected_bar_duration的錨點），這是
+比Pass232原始任務書設計更大的改動，需要另開新任務書才能嚴謹處理。
+
+**下一步（待使用者決定）**：這個發現本身很有價值——它把「為什麼
+madmom融合後變差」從「不知道」變成「知道確切機制」。是否要繼續
+投入設計一個能讓madmom繞過自我參照仲裁的新機制，還是先接受目前
+current baseline（80.66/66.5），把心力轉向使用者商用願景的下一
+階段，留給使用者決定。
