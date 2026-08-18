@@ -1,9 +1,25 @@
 # BT 建構進度同步紀錄
 
-**最後更新：** 2026-08-10
+**最後更新：** 2026-08-18
 
 本文件是 PGMCraft Studio 全自動音訊工作流 BT 的**實作進度活文件**。
 每次討論與實作完成後同步更新，避免重複討論或重建相同決策。
+
+---
+
+## Pass 232 — madmom DBN BarStart v2 證據層實測後撤回（2026-08-18）
+
+依 [`PASS-232-MADMOM-DBN-EVIDENCE-TIER-INTEGRATION-TASK.md`](PASS-232-MADMOM-DBN-EVIDENCE-TIER-INTEGRATION-TASK.md) 做了一次完整實作與真實資料驗證：新增的設計是由 `MadmomDBNEvidenceExtractNode` 全曲執行一次 `RNNDownBeatProcessor` + `DBNDownBeatTrackingProcessor`，再由 `MadmomDBNCandidateAdapterNode` 在每個 probe window 查詢快取降拍、沿用既有 Beat This! adapter 的「附近候選 boost、無覆蓋才最多新增一個」邏輯，固定 confidence `0.78`。
+
+- madmom 環境檢查通過：`RNNDownBeatProcessor()` 可正常初始化。
+- 指定單元/回歸測試通過：24 passed（Pass 232、Pass 202、`test_module3_bt.py`）。
+- World is Mine 完整 production verify 執行成功；madmom adapter 在 88/88 個 probe ticks 回報 `CANDIDATES_BUILT`，累計新增 40 個候選。
+- Pass 228 接地基準：`original_score=66.5`、`barstart_v2_score=80.66`。
+- 接入 madmom 後：`original_score=66.5`、`barstart_v2_score=65.77`，整體退步 `14.89` 分，因此依任務書要求撤回節點接線與測試，不保留這次整合。
+- Golden nearest-neighbor 殘差（撤回前實測 v2 grid）：Intro `0.0943s`、Verse1 `0.2967s`、Chorus1 `0.2817s`、Outro `0.5310s`；Chorus1 42 個 golden 小節中只有 3 個在 50ms 內，沒有達成改善目標。
+- 產出的 `full_song_loop_report` 只保留各來源的 status/count 摘要，沒有序列化候選的 `evidence_sources`；因此報告中 literal `madmom_dbn_support` 出現次數為 0，不能把它誤報成已完成可追溯的 evidence-source 記錄。候選 adapter 路徑本身確實被執行，但結果已退步，故不進一步修飾仲裁邏輯。
+
+結論：madmom DBN 的獨立全曲追蹤結果本身曾在 Pass 229-231 顯示良好，但以固定 `0.78` 接入目前 BarStart v2 仲裁後造成整體退步；本 Pass 不升格、不接入 legacy Stage 3，也不新增動態信心規則。未來若重開，應另立任務處理候選衝突與可追溯性，不能把本次退步版本當作已實作功能。
 
 ---
 
