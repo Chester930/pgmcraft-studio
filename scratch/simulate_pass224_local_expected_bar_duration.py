@@ -159,7 +159,11 @@ def simulate(trace, v1_downbeats, half_window_sec=None, reanchor_interval=None, 
             scored.append((clears, combined, conf, -t, t))
 
         best = max(scored, key=lambda item: (item[0], item[1], item[2], item[3]))
-        committed.append(best[4])
+        # Matches the Pass 223 fix: production only commits when
+        # best["confidence"] >= threshold (module3_barstart_v2_bt.py:1088);
+        # otherwise it leaves committed_bar_starts untouched this tick.
+        if best[0]:
+            committed.append(best[4])
 
     return sorted(set(round(t, 6) for t in committed))
 

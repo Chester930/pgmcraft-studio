@@ -2844,3 +2844,40 @@ Chorus1 的改善很可能有一部分只是這個高敏感機制剛好在那個
 (2) 落地使用者自己的架構願景——獨立訊號（例如分軌後的真實打擊樂
 onset）做事後交叉驗證/否決，而不是繼續在同一份證據的自我比對裡
 调整權重。
+
+## Pass 224 續：更正——`quality_regression` 從未觸發過；順手把模擬器修到 100% 精確吻合
+
+依使用者指示深入查 `quality_regression` 否決層，**發現並更正 Pass223
+一個錯誤診斷**：直接統計 Pass222 trace 全部 101 個 tick 的
+`decision.reason` 分布，結果 `quality_regression` **一次都沒出現過**
+（`{None: 96, 'no_candidates': 3, 'confidence_below_threshold': 2}`，
+加總剛好101）。回頭查當初判定 tick 60 是 `quality_regression` 否決的
+依據——實際上 tick 60 的完整決策紀錄是
+`status=UNRESOLVED, reason=confidence_below_threshold`，跟
+`quality_regression` 完全無關：`_best_candidate()` 內部選出的
+`winner_time`（118.816508，用於仲裁評分報告）信心只有 0.37，連
+`execute()` 最外層的 `best["confidence"] >= threshold`（0.7）都過不了，
+根本沒有機會走到 `quality_regression` 那段判斷。**結論：`quality_regression`
+否決層對這首歌的真實資料完全沒有介入過，不是這個問題的成因，調它
+不會改變目前行為，這條線本身是死路。**
+
+**過程中順手抓到模擬器第三個真的bug**：模擬器原本不管有沒有候選人
+過門檻，永遠把 `max()` 選出的贏家硬提交進 `committed`——但正式
+`execute()` 在 `_best_candidate()` 回傳後還有一層獨立的
+`best["confidence"] >= threshold` 檢查（`module3_barstart_v2_bt.py:1088`），
+沒人過門檻時當次完全不提交，`committed_bar_starts` 維持原樣。這正是
+tick 60 分岔的真正原因。修好後（`scratch/simulate_pass223_periodic_reanchor.py`、
+`scratch/simulate_pass224_local_expected_bar_duration.py` 都已更新）
+**模擬器對真實生產原始迴圈輸出達到全部98筆逐筆精確吻合（100%，不再
+只有60/98）**——這是這個離線篩選工具至今最強的驗證結果。
+
+**用完全修好的模擬器重跑 Pass223/224 兩組實驗，結論方向都不變**：
+週期性局部重新錨定（6個間隔）仍然全部比基準線差；`expected_bar_duration`
+局部化仍然是「±25-30秒窗口讓Chorus1明顯變好（這次甚至更好，mean_abs
+降到2.08-2.10）、但Verse1在全部窗口大小下都變差」的同一個結構性
+取捨。**確認先前的結論不是舊模擬器bug造成的假象，是真實、穩固的
+發現**。
+
+**下一步**：`quality_regression` 這條路已排除，回到 Pass223/224
+結尾建議的另一條路——落地獨立訊號（分軌後真實打擊樂 onset）事後
+交叉驗證/否決的機制，這是至今唯一還沒真正嘗試過的結構性不同方向。

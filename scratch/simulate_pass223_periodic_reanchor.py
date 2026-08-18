@@ -125,7 +125,20 @@ def simulate(trace, reanchor_interval=None, weight_absolute=0.5):
 
         # max() with the same tie-break priority as production code.
         best = max(scored, key=lambda item: (item[0], item[1], item[2], item[3]))
-        committed.append(best[4])
+        # Production's execute() only commits when `best["confidence"] >=
+        # threshold` (module3_barstart_v2_bt.py:1088) -- this is a SEPARATE,
+        # simpler gate than the internal clears_threshold tie-break used
+        # inside _best_candidate's own ranking. If nothing in this tick's
+        # conflict set clears the threshold, production leaves
+        # committed_bar_starts untouched (status=confidence_below_threshold);
+        # earlier versions of this simulator always committed max()'s winner
+        # regardless, which fabricated commits production never made and
+        # was the real cause of divergence past tick 60 (previously
+        # misdiagnosed as the quality_regression veto gate -- verified via
+        # the trace that quality_regression never fires anywhere in this
+        # song's 101 ticks; tick 60's real reason is confidence_below_threshold).
+        if best[0]:
+            committed.append(best[4])
 
     return sorted(set(round(t, 6) for t in committed))
 
