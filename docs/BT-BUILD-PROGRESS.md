@@ -3231,3 +3231,43 @@ Outro就標記得不夠精確，無法再進一步細分歸因。
 `outputs/pass231_madmom_generalization_click_tracks/`，4個wav檔
 （兩首歌×兩個λ值）。**等待使用者聽過後回報結果，才能對λ=500的
 泛化性下結論。**
+
+**使用者回報（Pass231結論）**：4個檔案都達到「可接受、勉強商用」
+品質，穩定——λ=500泛化性驗證通過，不是對World is Mine過擬合的
+結果。觀察到系統性偏移：λ=500傾向提前一點點（搶拍），λ=100傾向
+延後一點點（貼著真實起音走，因為樂器起音本身有attack延遲）。使用者
+決定：不完全取代BarStart V2（World is Mine這種有真實變速的高難度
+曲子，madmom在Intro/Outro證據稀疏+速度變化段落仍有殘餘誤差），
+改成把madmom當作BarStart V2既有「多證據來源逐小節仲裁」架構裡的
+新證據層——完整設計見Pass232任務書。
+
+## Pass 232：madmom DBN接進BarStart V2當新證據層——完整SDD任務書已寫完，轉交Codex執行
+
+規劃階段，尚未實作，使用者明確要求「寫完任務書就好，交給Codex完成」。
+完整任務書：`docs/PASS-232-MADMOM-DBN-EVIDENCE-TIER-INTEGRATION-TASK.md`。
+
+**設計摘要**：新增`MadmomDBNEvidenceExtractNode`（全曲跑一次madmom，
+不能拆成逐視窗重跑——這正是DBN比逐窗口證據來源更準的原因）+
+`MadmomDBNCandidateAdapterNode`（每個探測視窗把madmom降拍轉成候選，
+直接仿照現成模板`BeatThisCandidateAdapterNode`——Pass200/220
+beat_this嘗試留下的、設計完整但目前沒有上游節點餵資料的轉接器）。
+精確接線位置已確認：`MadmomDBNEvidenceExtractNode`放進
+`module3_bt.py`的`v2_core`序列（種子節點後、迴圈前）；
+`MadmomDBNCandidateAdapterNode`放進
+`build_module3_barstart_v2_probe_tick_tree()`
+（`module3_barstart_v2_bt.py:3903-3934`），緊接在已經接好的
+`BeatThisCandidateAdapterNode()`之後。
+
+**信心值設計**：`BASE_CONFIDENCE=0.78`（比v1_grid的0.72高、比
+beat_this當初預期的0.82低一點）。**明確排除**「偵測困難區段自動
+調低madmom信心」這種動態機制——這正是Pass219-226整整13次失敗嘗試
+的同一種模式（在仲裁邏輯裡加規則、規則本身變成新偏差來源），先用
+固定信心值+既有仲裁機制驗證效果，不在同一個任務書裡疊加兩個新機制。
+
+**任務書也明確排除**：動態信心機制、接進Stage3舊版legacy pipeline、
+嘗試修Outro殘餘誤差（golden基準本身在那裡就不夠可信，見Pass227）、
+在其他曲目做量化驗證（Pass231已用聽感驗證泛化性）。**真實資料驗證
+要求**：跑完後比對Pass228接地後的新基準（`original_score=66.5`、
+`barstart_v2_score=80.66`），確認Chorus1殘差是否真的因madmom證據
+加入而改善（golden在Chorus1可信，這段改善才是真正有意義的訊號），
+如果整體變差要如實記錄並revert，不能為了呈現效果勉強接受退步。
