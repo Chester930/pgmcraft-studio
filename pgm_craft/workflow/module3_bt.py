@@ -29,6 +29,7 @@ from pgm_craft.workflow.beat_tracking_bt import (
 from pgm_craft.workflow.export_bt import BackingWithClickSynthesizerNode
 from pgm_craft.workflow.input_acquisition_bt import build_input_acquisition_tree
 from pgm_craft.workflow.music_analysis_bt import build_music_analysis_tree
+from pgm_craft.workflow.madmom_hybrid import MadmomPrimarySegmentSpliceNode
 from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
 from pgm_craft.workflow.stem_separation_bt import build_stem_separation_tree, build_beat_stem_tree
 
@@ -765,6 +766,7 @@ class Module3OutputSummaryNode(BaseNode):
         "estimated_key",
         "chord_progression",
         "barstart_v2_report",
+        "madmom_hybrid_report",
         "barstart_v2_grid_beats",
         "barstart_v2_promoted_to_main",
         "barstart_v2_click_track",
@@ -843,6 +845,9 @@ class Module3OutputSummaryNode(BaseNode):
             "module3_report_json": report_path,
         })
         barstart_v2_report = blackboard.get_val("barstart_v2_report")
+        madmom_hybrid_report = blackboard.get_val("madmom_hybrid_report")
+        if madmom_hybrid_report:
+            outputs["madmom_hybrid_report"] = madmom_hybrid_report
         if barstart_v2_report:
             outputs["barstart_v2_report"] = barstart_v2_report
             outputs["barstart_v2_status"] = barstart_v2_report.get("status")
@@ -865,6 +870,7 @@ class Module3OutputSummaryNode(BaseNode):
             "subdivision_grid": blackboard.get_val("subdivision_grid", []),
             "syncopation_events": blackboard.get_val("syncopation_events", []),
             "chord_progression": blackboard.get_val("chord_progression", []),
+            "madmom_hybrid_report": madmom_hybrid_report or {},
             "outputs": outputs,
         }
         if barstart_v2_report:
@@ -1498,5 +1504,6 @@ def build_module3_pipeline_tree(stem_mode: str = "full") -> SequenceNode:
         SyncopationClassificationNode(),
         TwoWayAnchorBacktraceNode(),
         Module3BarStartV2MergeNode(),
+        MadmomPrimarySegmentSpliceNode(),
         build_module3_export_tree(),
     ])
