@@ -300,7 +300,6 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
 
     optional_keys = [
         "audio_path",
-        "target_analysis_path",
         "denoised_wav_path",
         "madmom_hybrid_audio_path",
         "trim_offset_sec",
@@ -335,12 +334,17 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
             )
             return NodeStatus.SUCCESS
 
-        # Manual override remains highest priority; normal analysis follows
-        # the project-wide target_analysis_path convention, with denoised and
-        # legacy audio_path fallbacks for older callers.
+        # Manual override remains highest priority. target_analysis_path is
+        # deliberately NOT used here: by the time this node runs (after stem
+        # separation), stem-specific nodes have repointed it at an isolated
+        # stem (e.g. the drums stem) for their own onset/timing work. madmom's
+        # RNNDownBeatProcessor was calibrated (Pass229-233) against the full
+        # mix, so this node needs denoised_wav_path -- set once by
+        # WriteNormalizedWAVNode and never reassigned afterward -- with
+        # audio_path only as a last-resort fallback for older callers that
+        # never ran the 3-tier quality pipeline.
         audio_path = (
             blackboard.get_val("madmom_hybrid_audio_path")
-            or blackboard.get_val("target_analysis_path")
             or blackboard.get_val("denoised_wav_path")
             or blackboard.get_val("audio_path")
         )

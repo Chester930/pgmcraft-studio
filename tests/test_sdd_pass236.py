@@ -171,7 +171,11 @@ def test_node_uses_v2_fallback_only_inside_detected_span(monkeypatch):
     assert "evidence_sources" in report
 
 
-def test_node_prefers_target_analysis_path_over_normalized_audio_path(monkeypatch):
+def test_node_prefers_denoised_wav_path_over_target_analysis_path_and_audio_path(monkeypatch):
+    # target_analysis_path is stem-specific by the time this node runs (e.g.
+    # repointed at an isolated drums stem by SeparateDrumsNode), which
+    # regressed Intro accuracy in Pass238's real production verify -- madmom
+    # needs the stable full-mix denoised_wav_path, never the stem.
     import pgm_craft.workflow.madmom_hybrid as hybrid
 
     seen = []
@@ -185,8 +189,8 @@ def test_node_prefers_target_analysis_path_over_normalized_audio_path(monkeypatc
     blackboard = Blackboard(
         {
             "audio_path": "normalized-b-version.wav",
-            "target_analysis_path": "analysis-c-version.wav",
-            "denoised_wav_path": "denoised-fallback.wav",
+            "target_analysis_path": "stems/drums/drums.wav",
+            "denoised_wav_path": "denoised-full-mix.wav",
             "madmom_hybrid_approved": True,
             "beats": grid.copy(),
             "refined_beats": grid.copy(),
@@ -197,8 +201,36 @@ def test_node_prefers_target_analysis_path_over_normalized_audio_path(monkeypatc
     status = MadmomPrimarySegmentSpliceNode().execute(blackboard)
 
     assert status == NodeStatus.SUCCESS
-    assert seen == ["analysis-c-version.wav"]
-    assert blackboard["madmom_hybrid_report"]["audio_path"] == "analysis-c-version.wav"
+    assert seen == ["denoised-full-mix.wav"]
+    assert blackboard["madmom_hybrid_report"]["audio_path"] == "denoised-full-mix.wav"
+
+
+def test_node_falls_back_to_audio_path_when_denoised_wav_path_missing(monkeypatch):
+    import pgm_craft.workflow.madmom_hybrid as hybrid
+
+    seen = []
+
+    def fake_run(audio_path, **_kwargs):
+        seen.append(audio_path)
+        return np.asarray([[0.0, 1.0], [1.0, 1.0], [2.0, 1.0]], dtype=float)
+
+    monkeypatch.setattr(hybrid, "_run_madmom_dbn", fake_run)
+    grid = np.asarray([[0.0, 1.0], [1.0, 1.0], [2.0, 1.0]], dtype=float)
+    blackboard = Blackboard(
+        {
+            "audio_path": "legacy-caller-only-audio-path.wav",
+            "target_analysis_path": "stems/drums/drums.wav",
+            "madmom_hybrid_approved": True,
+            "beats": grid.copy(),
+            "refined_beats": grid.copy(),
+            "barstart_v2_grid_beats": grid.copy(),
+        }
+    )
+
+    status = MadmomPrimarySegmentSpliceNode().execute(blackboard)
+
+    assert status == NodeStatus.SUCCESS
+    assert seen == ["legacy-caller-only-audio-path.wav"]
 
 
 def test_node_adds_trim_offset_to_madmom_grid_before_writing_beats(monkeypatch):

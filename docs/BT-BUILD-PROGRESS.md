@@ -7,6 +7,62 @@
 
 ---
 
+## Pass 239 — 修好 Pass238 發現的音檔來源問題，真實 pipeline 驗證通過（2026-08-19）
+
+使用者確認由 Claude 直接處理 Pass238 發現的問題。**修法**：
+`MadmomPrimarySegmentSpliceNode`的音檔來源優先序改成
+`madmom_hybrid_audio_path`（手動覆寫）→`denoised_wav_path`（
+`WriteNormalizedWAVNode`只設定一次、之後不會被任何節點改寫的全曲
+混音C版）→`audio_path`（最後備援），**拿掉`target_analysis_path`**
+——這個欄位在pipeline跑到鼓組分軌之後會被`SeparateDrumsNode`
+（`stem_separation_bt.py:874`）改指向鼓組獨奏音軌，對madmom這種
+拿全曲混音校準的模型不適用，其他分析節點需要的是它晚期的鼓組
+語意，madmom需要的是它早期的全曲混音語意，兩者需求衝突，不能共用
+同一個欄位。同步更新`tests/test_sdd_pass236.py`：把原本斷言
+`target_analysis_path`優先的測試改成斷言`denoised_wav_path`優先（
+`target_analysis_path`被設成鼓組獨奏路徑當作干擾項），新增
+`audio_path`最後備援的測試，共27測試全過。
+
+**真實pipeline驗證**（`scratch/run_pass237_madmom_hybrid_production_verify.py`，
+順手修好Pass238發現的兩個腳本bug：改讀`module3_beat_click_report.json`
+落盤檔案而非不存在的`blackboard.get_val`、`GOLDEN_PATH`改成優先讀
+外部真正golden、退回本地114小節legacy複本才當備援），用正確的
+121小節golden逐段核對：
+
+| 段落 | Hybrid（修復後真實pipeline） | V2 fallback（同一次跑） |
+|---|---|---|
+| Intro (18) | **18/18**, 平均23.4ms | 5/18, 平均229.2ms |
+| Verse1 (43) | **43/43**, 平均18.8ms | 15/43, 平均69.6ms |
+| Chorus1 (43) | **43/43**, 平均18.6ms | 6/43, 平均216.0ms |
+| Outro (20) | 4/20, 平均334.8ms | 1/20, 平均384.0ms |
+
+`madmom_hybrid_report.status="APPLIED"`，弱區段精準命中
+`153.82–159.91s`（跟離線校準預期完全一致），5個madmom小節換成5個
+V2 fallback小節，`evidence_sources`標記透明。
+
+**驗收對照任務書第5.2節的安全底線**：
+- Intro/Verse1/Chorus1維持madmom近乎完美表現——**通過**（跟
+  Pass229-233驗證的17/17、42/42、42/42同一量級，這次121小節golden
+  下甚至18/18全中）。
+- Outro換成V2輸出後應該跟純V2的Outro表現相近——**通過**（4/20優於
+  純V2的1/20，平均誤差334.8ms也優於純V2的384.0ms）。
+- 誠實記錄一個次要觀察：Outro這個具體換掉的6秒窗口，跟Pass233純
+  madmom（未拼接）在同一首歌整段Outro測到的9/20相比是退步的——但
+  任務書對Outro的驗收標準本來就是「跟純V2相近」不是「跟純madmom
+  相近」（因為這段本來就是madmom自己判定為弱、才會被V2取代），
+  所以這不算沒通過驗收，只是留給未來想進一步優化`window_bars`/
+  `min_span_bars`縮小替換窗口時的參考數字。
+- `madmom_hybrid_approved`預設仍是opt-in、未核准，不影響現有預設
+  輸出。
+
+**結論**：Pass236-239 madmom-primary segment-swap設計，從構想到三次
+獨立code review+真實資料驗證，現在完整達成任務書訂下的所有安全
+底線。`madmom_hybrid_approved=True`已經是可以安全啟用的opt-in功能；
+是否要把它設成任何呼叫端的正式預設行為，仍需使用者另外核准
+（沿用Pass236任務書第7節既有限制，本Pass不擅自決定）。
+
+---
+
 ## Pass 238 — 獨立完成 Pass237 卡住的真實 pipeline 驗證，發現音檔來源新問題（2026-08-19）
 
 Codex 在 Pass237 文件裡誠實記錄「production verify 長時間卡在 Module 3、
