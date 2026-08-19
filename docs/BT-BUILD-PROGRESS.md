@@ -1,9 +1,40 @@
 # BT 建構進度同步紀錄
 
-**最後更新：** 2026-08-18
+**最後更新：** 2026-08-19
 
 本文件是 PGMCraft Studio 全自動音訊工作流 BT 的**實作進度活文件**。
 每次討論與實作完成後同步更新，避免重複討論或重建相同決策。
+
+---
+
+## Pass 237 — Code review Codex 的 Pass236 WIP，抓到3個已驗證瑕疵，完整任務書已寫完，轉交Codex（2026-08-19）
+
+Codex 已依 Pass236 任務書寫出 WIP 實作（`madmom_hybrid.py`/`builder.py`/
+`module3_bt.py`/`test_sdd_pass236.py`，尚未commit）。Review時實際跑了
+程式碼驗證（不只讀規格），發現：
+
+1. **最嚴重、已驗證會發生**：任務書要求的離線校準腳本
+   （`scratch/run_pass236_offline_calibration.py`）寫好了但從沒真正
+   跑完存檔。實際執行後發現，能通過「精準只標到Outro」驗收標準的
+   `cv_threshold`只有`{0.03,0.04,0.05}`，但`madmom_hybrid.py`寫死的
+   預設值是`0.06`——直接用預設值呼叫`_detect_weak_spans`回傳空陣列。
+   代表如果照目前預設值啟用，Outro會維持`NO_WEAK_SPANS`（沒有換成
+   V2 fallback），Pass236想解決的問題完全沒被解決，且是靜默失效，
+   23條既有測試沒有一條抓到。
+2. 音檔來源用`audio_path`（pipeline跑到這個節點時已被
+   `WriteNormalizedWAVNode`改寫成正規化B版），沒有遵循專案裡其他
+   分析類節點都用`target_analysis_path`（denoised C版）的既有慣例，
+   而且Pass229-233驗證出的近乎完美數字用的是原始A版，正規化版從未
+   實測過。
+3. 完全沒有處理`trim_offset_sec`——`SilenceTrimNode`裁切開場靜音時
+   會記錄這個補正值，這個新節點沒讀取也沒加回去，對有開場靜音的
+   曲目會造成全曲性的靜默時間偏移（這首測試曲`leading_silence_sec=0.0`
+   剛好沒觸發，是設計缺口不是曲子運氣好）。
+
+完整任務書：
+[`docs/PASS-237-MADMOM-HYBRID-CODE-REVIEW-FIXES-TASK.md`](PASS-237-MADMOM-HYBRID-CODE-REVIEW-FIXES-TASK.md)
+（規劃階段，尚未實作）。範圍只在修這三個瑕疵，Pass236定案的架構
+（opt-in旗標、後製拼接、madmom自己的小節間距CV當弱區段依據）不變。
 
 ---
 
