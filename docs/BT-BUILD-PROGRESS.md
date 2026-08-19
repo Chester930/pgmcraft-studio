@@ -7,6 +7,87 @@
 
 ---
 
+## Pass 238 — 獨立完成 Pass237 卡住的真實 pipeline 驗證，發現音檔來源新問題（2026-08-19）
+
+Codex 在 Pass237 文件裡誠實記錄「production verify 長時間卡在 Module 3、
+沒有產生最終報告」。Claude 重新背景執行同一支驗證腳本
+（`scratch/run_pass237_madmom_hybrid_production_verify.py`），**這次
+pipeline 本身完整跑完**（`=== Behavior Tree Execution Finished
+Successfully! ===`），但**驗證腳本自己有 bug**：`PGMCraftEngine.run()`
+回傳的是彙總 dict，不是原始 `Blackboard`，腳本卻呼叫
+`blackboard.get_val(...)`，`AttributeError` 導致腳本在寫出比較報告前
+崩潰（`scratch/run_pass237_madmom_hybrid_production_verify.py:92`）。
+
+**Claude 直接讀取 pipeline 落盤的
+`reports/module3_beat_click_report.json`，繞開壞掉的腳本自行核對**：
+
+- `madmom_hybrid_report.status="APPLIED"`，正確只標記 1 個弱區段
+  `155.25–158.26s`（落在 Outro 範圍內），移除 3 個 madmom 小節、插入
+  2 個 V2 fallback 小節，`evidence_sources` 標記透明——**弱區段偵測
+  在真實資料上確實生效，Pass237 修復的核心問題（cv_threshold 選錯
+  導致 NO_WEAK_SPANS）已解決**。
+- **另外發現一個嚴重的黃金基準誤用陷阱**：`measure_map.json`（頂層
+  `measure_map` 欄位）跟 golden 高度懷疑相符，但實際上它是**舊版
+  legacy `MeasureMapNode` 的輸出**，跟 BarStart V2／madmom hybrid
+  完全無關（`ClickSynthesisNode`/hybrid splice 都在它之後才跑）；
+  這次跟 Pass228 的同一份檔案逐值比對，**完全 byte-identical**——
+  因為決定論模式下 legacy 計算沒被任何後續 Pass 動過。**真正的黃金
+  基準必須讀外部檔案 `d:\Users\666\Music\2\...\reports\measure_map.json`
+  （121 個小節），不是 `outputs/pass228.../measure_map.json`（只有
+  114 個，是 legacy 輸出，不是 golden）**——Codex 這支驗證腳本原本
+  就是直接指向後者，如果沒崩潰、真的跑完，會產生一份誤用錯誤基準的
+  假驗證結果。
+- 用 pipeline 記錄的真實 `audio_path`
+  （`stems/drums/drums.wav`，鼓組分離後的獨奏音軌）重跑
+  `_run_madmom_dbn` + 用 report 裡的 `barstart_v2_report.committed_bar_starts`
+  （119個V2小節）當 fallback，重建出真正送進 click track 匯出的最終
+  114 個小節網格，逐段對照**正確的外部 golden**：
+
+  | 段落 | Hybrid（這次真實pipeline） | V2-only（同一次跑的 fallback） | Pass233 純madmom（歷史，用全曲原始音檔） |
+  |---|---|---|---|
+  | Intro (18) | 10/18, 平均129ms | 5/18, 平均229ms | 17/17, 近乎完美 |
+  | Verse1 (43) | 43/43, 平均23ms | 15/43, 平均70ms | 42/42, 近乎完美 |
+  | Chorus1 (43) | 41/43, 平均25ms | 6/43, 平均216ms | 42/42, 近乎完美 |
+  | Outro (20) | 8/20, 平均1067ms | 1/20, 平均384ms | 9/20（歷史基準） |
+
+  **好消息**：hybrid 在四個段落全部大幅贏過目前的 V2 正式基準——
+  這證明 Pass236 的整體設計方向確實有效，不是紙上談兵。
+  **壞消息（真正的問題所在）**：跟 Pass229-233 驗證過的「純madmom
+  近乎完美」數字相比，Intro 明顯退步（17/17 → 10/18，平均誤差從
+  近0到129毫秒）——**根因precise定位**：Pass237 把音檔來源改成
+  `target_analysis_path`（遵循專案慣例，方向正確），但這個變數在
+  pipeline 跑到鼓組分軌之後，**已經被改指到鼓組分離後的獨奏音軌**
+  （`stem_separation_bt.py:874`：`target_analysis_path` 被
+  `SeparateDrumsNode`重新指向 `stems['drums']`），不是 Pass229-233
+  驗證用、也是 Pass237 離線校準所依據的「全曲原始/正規化混音」。
+  madmom 的 `RNNDownBeatProcessor` 是拿全曲混音訓練校準的，餵它獨奏
+  鼓軌會改變它的行為特徵——離線校準選出的 `(3, 0.04, 2)` 是針對
+  「全曲混音」的誤差分佈調的，套用在「鼓組獨奏」的不同誤差分佈上，
+  弱區段偵測的準確度打了折扣（只抓到一小段 155-158s，Intro 的問題
+  完全沒被抓到，Outro 大部分區域也還是不準）。
+
+**結論**：Pass237 修的三個瑕疵本身都是對的、也都用真實資料驗證通過
+（弱區段真的抓到 Outro、音檔來源真的改用專案慣例欄位、
+`trim_offset_sec` 真的補正），但改用 `target_analysis_path` 這個決定
+本身有一個 Pass237 任務書沒有預見的副作用——這個欄位在 pipeline 後段
+語意已經變成「鼓組獨奏」，不再是「全曲混音」。**還不能視為完全達標
+——任務書第5.2節「Intro/Verse1/Chorus1維持近乎完美」的安全底線，
+Intro這項目前沒有通過**。
+
+（Codex 提交的 `scratch/run_pass237_madmom_hybrid_production_verify.py`
+腳本本身也需要修：`blackboard.get_val`那行要改成讀
+`PGMCraftEngine.run()`真正回傳的 dict 對應欄位，而且它讀的
+`GOLDEN_PATH`直接指向`outputs/pass228.../measure_map.json`，前述
+已證實那不是真正的golden，需要改成優先讀外部
+`d:\Users\666\Music\2\...`路徑，這點跟`run_pass236_offline_calibration.py`
+既有的正確寫法一致，照抄即可。）
+
+**下一步待使用者決定**：要另外開 Pass 239 任務書轉交 Codex（明確指定
+用哪個欄位當「全曲混音」音檔來源、要求重新離線校準+真實驗證），還是
+由 Claude 直接處理。
+
+---
+
 ## Pass 237 — 修復 Pass236 madmom hybrid code review 的三個瑕疵（2026-08-19）
 
 Codex 已依 Pass236 任務書寫出 WIP 實作（`madmom_hybrid.py`/`builder.py`/
