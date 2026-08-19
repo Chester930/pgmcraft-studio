@@ -7,11 +7,11 @@
 
 ---
 
-## Pass 237 — 修復 Pass236 madmom hybrid code review 的三個瑕疵（2026-08-19）
+## Pass 237 — Code review Codex 的 Pass236 WIP，抓到3個已驗證瑕疵，完整任務書已寫完，轉交Codex（2026-08-19）
 
 Codex 已依 Pass236 任務書寫出 WIP 實作（`madmom_hybrid.py`/`builder.py`/
 `module3_bt.py`/`test_sdd_pass236.py`，尚未commit）。Review時實際跑了
-程式碼驗證（不只讀規格），發現並修復：
+程式碼驗證（不只讀規格），發現：
 
 1. **最嚴重、已驗證會發生**：任務書要求的離線校準腳本
    （`scratch/run_pass236_offline_calibration.py`）寫好了但從沒真正
@@ -31,43 +31,10 @@ Codex 已依 Pass236 任務書寫出 WIP 實作（`madmom_hybrid.py`/`builder.py
    曲目會造成全曲性的靜默時間偏移（這首測試曲`leading_silence_sec=0.0`
    剛好沒觸發，是設計缺口不是曲子運氣好）。
 
-原始任務書：
+完整任務書：
 [`docs/PASS-237-MADMOM-HYBRID-CODE-REVIEW-FIXES-TASK.md`](PASS-237-MADMOM-HYBRID-CODE-REVIEW-FIXES-TASK.md)
-（已完成本條目的實作）。範圍只在修這三個瑕疵，Pass236定案的架構
+（規劃階段，尚未實作）。範圍只在修這三個瑕疵，Pass236定案的架構
 （opt-in旗標、後製拼接、madmom自己的小節間距CV當弱區段依據）不變。
-
-### Pass237 實作與離線驗證結果
-
-1. **弱區段校準已真正執行並存檔**：重新執行
-   `scratch/run_pass236_offline_calibration.py`，掃描 84 組候選，
-   `exact_outro_only` 通過帶為 `cv_threshold=0.03/0.04/0.05`。正式選定
-   `(window_bars=3, cv_threshold=0.04, min_span_bars=2)`：`0.04` 位於
-   通過帶中間，且同一設定的鄰近 threshold 也通過，避免貼在邊界。
-   完整候選、119 個真實 madmom downbeats、段落邊界與選定理由已保存於
-   `scratch/pass236_offline_calibration.json`。
-2. **真實 Outro 回歸測試**：`test_sdd_pass236.py` 以該 artifact 的真實
-   downbeats 套用預設值，驗證只命中 Outro（`153.82–159.91s`），不命中
-   Intro/Verse1/Chorus1；Pass236 測試共 **9 passed**。
-3. **音檔來源**：節點現在以
-   `madmom_hybrid_audio_path → target_analysis_path → denoised_wav_path → audio_path`
-   解析來源，保留舊呼叫端 fallback；新增測試確認 normalized B 版不會蓋過
-   `target_analysis_path`。
-4. **時間補正**：節點在弱區段偵測與拼接前將 madmom grid 的時間欄位加回
-   `trim_offset_sec`，並將補正值寫進 report；新增非零 offset 回歸測試。
-5. **入口接線**：`PGMCraftEngine.run()` 也暴露並轉傳
-   `madmom_hybrid_approved`，維持 opt-in，不改變預設行為。
-
-### Pass237 真實 pipeline 驗證狀態
-
-已啟動 `madmom_hybrid_approved=True` 的 World is Mine production verify，
-並重用既有 stems cache；但本次執行在目前環境長時間停留於 Module 3、未產生
-最終 report，已停止以避免把未完成結果當成驗收數字。因此本條目不宣稱
-`madmom_hybrid_report.status=APPLIED`，也不填寫未完成的 hybrid 三方分數。
-可核對的既有安全基準仍是 Pass233 direct madmom：Intro `0.0246s / 17/17`、
-Verse1 `0.0183s / 42/42`、Chorus1 `0.0188s / 42/42`；Pass228 V2 基準分數
-為 `80.66`。production verify 腳本保留於
-`scratch/run_pass237_madmom_hybrid_production_verify.py`，待環境可完成完整
-流程時再補上 hybrid 實測數字。
 
 ---
 
