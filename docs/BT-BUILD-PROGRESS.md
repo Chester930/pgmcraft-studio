@@ -7,6 +7,33 @@
 
 ---
 
+## Pass 246 — 討論Pass245問題點的修法，決定重用既有`MicroTimingTransientSnapNode`套用到madmom hybrid輸出，完整SDD任務書已寫完，轉交Codex（2026-08-20）
+
+先跟使用者討論修法方向（不直接動手）：使用者指出「雖然漸慢，但
+還是有鼓的提示拍點」，這句話直接點出正確方向——不需要發明新的
+追蹤演算法，這個系統裡已經有 `MicroTimingTransientSnapNode`
+（`beat_tracking_bt.py:2763`）在做「對每一拍在±35ms視窗內搜尋
+鼓組波形真實聲學瞬態peak、磁吸過去，視窗內無訊號就維持原樣」這件
+事，而且已經避開既有的過門/切分音排除區——只是目前只套用在legacy
+v1網格上，madmom hybrid從沒用過它。
+
+**設計核心（跟使用者確認過方向）**：不修改`MicroTimingTransientSnapNode`
+本體，只在`MadmomPrimarySegmentSpliceNode`收尾（弱區段拼接+尾聲
+外推都處理完）之後，多呼叫一次這個既有節點，套用到madmom hybrid
+的最終輸出上；新增`madmom_hybrid_micro_timing_snap_enabled`旗標
+（預設跟隨`madmom_hybrid_approved`），維持opt-in不變成預設行為；
+明確排除加貝斯分軌當第二搜尋來源（先只用鼓組，範圍收斂，之後如果
+貝斯主導段落還是沒改善再另開任務）、不修改共用節點本體、不碰
+Pass241/243已定案的深層問題。
+
+完整任務書：`docs/PASS-246-MADMOM-HYBRID-MICRO-TIMING-SNAP-TASK.md`
+（規劃階段，尚未實作）。要求離線驗證先確認磁吸行為正確（附近有
+真實鼓點的拍點被拉過去、真空段落不亂跳），再真實pipeline驗證，
+特別要求**逐拍（不只降拍）跟golden比對beat 2/3/4的間距**，並確認
+Intro/Verse1/Chorus1/Outro既有降拍準確度不能因為這次改動退步。
+
+---
+
 ## Pass 245 — 使用者專業聽感回報兩個新問題點：前奏中後段與Chorus1內一段間奏，量化查證後發現是全新維度的問題——不是選錯小節，是小節內部拍子被madmom拉得太規律（2026-08-20）
 
 使用者實際用DAW等級的耳朵聽過Pass244版本的`backing_with_click.wav`
