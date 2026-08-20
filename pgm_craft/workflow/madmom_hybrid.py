@@ -22,6 +22,18 @@ DEFAULT_TOLERANCE_SEC = 0.5
 DEFAULT_DUPLICATE_TOLERANCE_SEC = 0.03
 DEFAULT_TRANSITION_LAMBDA = 500
 
+# Pass 241 found that BarStartCandidateCommitNode's committed_bar_starts
+# (the fallback source here) is itself sometimes a mechanically rigid
+# n*expected_bar_duration sequence rather than real acoustic tracking --
+# reproduced identically (to <1ms) across independent pipeline runs, and
+# affecting ~23% of this song's V2 grid overall. Real onset-derived bar
+# intervals, even in a genuinely steady passage, always carry some natural
+# jitter; a 5-interval sliding window over this song's actual V2 output
+# shows a clean bimodal split -- essentially machine-epsilon range (<1e-5s)
+# for the synthetic-looking stretches vs >=0.17s for everything else -- so
+# this threshold sits with wide margin on both sides, not tuned to one case.
+DEFAULT_FALLBACK_MIN_INTERVAL_RANGE_SEC = 0.01
+
 
 def _as_time_list(values: Any) -> list[float]:
     """Extract sorted finite event times from scalar, row, or dict data."""
@@ -164,19 +176,39 @@ def _boundary_intervals(times: Sequence[float], start: float, end: float) -> dic
     }
 
 
+def _interval_range(values: Sequence[float]) -> float | None:
+    """Max-min spread of consecutive intervals; None if fewer than 2 intervals."""
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) < 3:
+        return None
+    intervals = [ordered[i + 1] - ordered[i] for i in range(len(ordered) - 1)]
+    return max(intervals) - min(intervals)
+
+
 def _splice_weak_spans_with_fallback(
     madmom_downbeats: Sequence[Any],
     fallback_downbeats: Sequence[Any],
     weak_spans: Sequence[tuple[float, float]],
     tolerance_sec: float = DEFAULT_TOLERANCE_SEC,
     duplicate_tolerance_sec: float = DEFAULT_DUPLICATE_TOLERANCE_SEC,
+    min_fallback_interval_range_sec: float = DEFAULT_FALLBACK_MIN_INTERVAL_RANGE_SEC,
 ) -> tuple[list[float], dict[str, Any]]:
-    """Replace only weak-span downbeats and return a transparent splice report."""
+    """Replace only weak-span downbeats and return a transparent splice report.
+
+    Pass241: before trusting the fallback source for a span, check whether its
+    own bar intervals there are suspiciously rigid (near-zero spread) rather
+    than real acoustic tracking. A fallback that's itself just a mechanical
+    n*expected_bar_duration sequence is not a real second opinion -- splicing
+    it in swaps one wrong answer for a different, differently-wrong one. When
+    that happens, the span is left on the (still imperfect, but at least
+    acoustically-derived) primary source instead.
+    """
     madmom = _as_time_list(madmom_downbeats)
     fallback = _as_time_list(fallback_downbeats)
     spans_report: list[dict[str, Any]] = []
     removed: set[float] = set()
     inserted: list[float] = []
+    any_rejected_rigid = False
 
     for raw_start, raw_end in weak_spans:
         start, end = sorted((float(raw_start), float(raw_end)))
@@ -194,7 +226,21 @@ def _splice_weak_spans_with_fallback(
             "fallback_inserted_downbeats": [],
             "inserted_downbeats": [],
             "evidence_sources": [],
+            "fallback_interval_range_sec": None,
+            "fallback_rejected_reason": None,
         }
+        interval_range = _interval_range(in_fallback)
+        entry["fallback_interval_range_sec"] = (
+            round(interval_range, 6) if interval_range is not None else None
+        )
+        if (
+            in_fallback
+            and interval_range is not None
+            and interval_range < min_fallback_interval_range_sec
+        ):
+            entry["fallback_rejected_reason"] = "rigid_interval_pattern"
+            any_rejected_rigid = True
+            in_fallback = []
         if in_fallback:
             removed.update(removed_in_span)
             inserted.extend(in_fallback)
@@ -222,6 +268,8 @@ def _splice_weak_spans_with_fallback(
         status = "NO_WEAK_SPANS"
     elif inserted:
         status = "APPLIED"
+    elif any_rejected_rigid:
+        status = "FALLBACK_REJECTED_RIGID"
     else:
         status = "FALLBACK_UNAVAILABLE"
     report = {
@@ -230,6 +278,7 @@ def _splice_weak_spans_with_fallback(
         "replaced_spans": spans_report,
         "tolerance_sec": float(tolerance_sec),
         "duplicate_tolerance_sec": float(duplicate_tolerance_sec),
+        "min_fallback_interval_range_sec": float(min_fallback_interval_range_sec),
     }
     return deduped, report
 
@@ -256,6 +305,7 @@ def _splice_grid(
     weak_spans: Sequence[tuple[float, float]],
     tolerance_sec: float,
     duplicate_tolerance_sec: float,
+    min_fallback_interval_range_sec: float = DEFAULT_FALLBACK_MIN_INTERVAL_RANGE_SEC,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Apply scalar span decisions to complete beat rows, preserving bar grids."""
     madmom = _as_grid(madmom_grid)
@@ -268,20 +318,31 @@ def _splice_grid(
         weak_spans,
         tolerance_sec=tolerance_sec,
         duplicate_tolerance_sec=duplicate_tolerance_sec,
+        min_fallback_interval_range_sec=min_fallback_interval_range_sec,
     )
 
     if report["status"] != "APPLIED":
         return madmom.copy(), report
 
+    # Only spans that actually got a fallback insertion should have their
+    # madmom rows dropped/replaced -- a span rejected for a rigid fallback
+    # pattern (fallback_rejected_reason set) must keep its original madmom
+    # rows untouched, even though other spans in the same call succeeded.
+    applied_spans = [
+        (entry["start_time"], entry["end_time"])
+        for entry in report["replaced_spans"]
+        if entry["fallback_inserted_count"]
+    ]
+
     rows: list[tuple[float, float]] = []
     for row in madmom:
         time = float(row[0])
-        if any(start <= time <= end for start, end in weak_spans):
+        if any(start <= time <= end for start, end in applied_spans):
             continue
         rows.append((time, float(row[1])))
     for row in fallback:
         time = float(row[0])
-        if any(start - tolerance_sec <= time <= end + tolerance_sec for start, end in weak_spans):
+        if any(start - tolerance_sec <= time <= end + tolerance_sec for start, end in applied_spans):
             rows.append((time, float(row[1])))
     rows.sort(key=lambda item: item[0])
     merged: list[tuple[float, float]] = []
@@ -313,6 +374,7 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
         "madmom_hybrid_min_span_bars",
         "madmom_hybrid_tolerance_sec",
         "madmom_hybrid_transition_lambda",
+        "madmom_hybrid_min_fallback_interval_range_sec",
     ]
     output_keys = ["madmom_hybrid_report", "madmom_hybrid_downbeats"]
 
@@ -410,6 +472,12 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
                 DEFAULT_DUPLICATE_TOLERANCE_SEC,
             )
         )
+        min_fallback_interval_range_sec = float(
+            blackboard.get_val(
+                "madmom_hybrid_min_fallback_interval_range_sec",
+                DEFAULT_FALLBACK_MIN_INTERVAL_RANGE_SEC,
+            )
+        )
         weak_spans = _detect_weak_spans(
             downbeats,
             window_bars=window_bars,
@@ -422,6 +490,7 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
             weak_spans,
             tolerance_sec=tolerance_sec,
             duplicate_tolerance_sec=duplicate_tolerance_sec,
+            min_fallback_interval_range_sec=min_fallback_interval_range_sec,
         )
         blackboard.set_val("beats", final_grid)
         blackboard.set_val("refined_beats", final_grid)

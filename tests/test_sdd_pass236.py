@@ -70,8 +70,11 @@ def test_calibrated_defaults_detect_only_outro_in_committed_real_calibration():
 
 
 def test_splice_replaces_only_the_requested_weak_span():
+    # Fallback intervals carry realistic jitter (not perfectly uniform) so
+    # this exercises the normal APPLIED path without tripping Pass241's
+    # rigid-fallback rejection, which is covered separately below.
     madmom = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-    fallback = [0.0, 1.1, 2.1, 3.1, 4.1, 5.1, 6.1]
+    fallback = [0.0, 1.1, 2.13, 3.02, 4.09, 5.1, 6.1]
 
     merged, report = _splice_weak_spans_with_fallback(
         madmom,
@@ -80,14 +83,58 @@ def test_splice_replaces_only_the_requested_weak_span():
         tolerance_sec=0.15,
     )
 
-    assert merged == [0.0, 1.0, 2.1, 3.1, 4.1, 5.0, 6.0]
+    assert merged == [0.0, 1.0, 2.13, 3.02, 4.09, 5.0, 6.0]
     assert report["status"] == "APPLIED"
     assert report["replaced_spans"][0]["madmom_removed_count"] == 3
     assert report["replaced_spans"][0]["fallback_inserted_count"] == 3
+    assert report["replaced_spans"][0]["fallback_rejected_reason"] is None
     assert all(
         entry["evidence_sources"] == ["v2_fallback_splice"]
         for entry in report["replaced_spans"][0]["inserted_downbeats"]
     )
+
+
+def test_splice_rejects_rigid_fallback_interval_pattern():
+    # Pass241: reproduces the real finding -- V2's own fallback grid can be
+    # a mechanically rigid n*expected_bar_duration sequence in exactly the
+    # span it's asked to fill in for. Splicing that in swaps one wrong
+    # answer for a different, differently-wrong one, so it must be rejected
+    # and the original (still primary-source) madmom bars kept instead.
+    madmom = [0.0, 1.3, 2.6, 4.1, 5.5, 7.0, 8.4]
+    fallback = [0.0, 1.543, 3.086, 4.629, 6.172, 7.715, 9.258]
+
+    merged, report = _splice_weak_spans_with_fallback(
+        madmom,
+        fallback,
+        [(2.0, 6.0)],
+        tolerance_sec=0.5,
+    )
+
+    assert merged == madmom
+    assert report["status"] == "FALLBACK_REJECTED_RIGID"
+    span = report["replaced_spans"][0]
+    assert span["fallback_rejected_reason"] == "rigid_interval_pattern"
+    assert span["fallback_inserted_count"] == 0
+    assert span["fallback_interval_range_sec"] < 0.001
+
+
+def test_splice_applies_fallback_when_interval_range_clears_threshold():
+    # A single in-window fallback point has no interval to compute a range
+    # from -- must not be rejected purely for having too little data.
+    madmom = [0.0, 1.0, 2.0, 3.0]
+    fallback = [0.0, 1.5]
+
+    merged, report = _splice_weak_spans_with_fallback(
+        madmom,
+        fallback,
+        [(1.0, 2.0)],
+        tolerance_sec=0.6,
+    )
+
+    assert 1.5 in merged
+    assert report["status"] == "APPLIED"
+    assert report["replaced_spans"][0]["fallback_rejected_reason"] is None
+    assert report["replaced_spans"][0]["fallback_interval_range_sec"] is None
 
 
 def test_splice_gracefully_keeps_madmom_when_fallback_is_empty():
