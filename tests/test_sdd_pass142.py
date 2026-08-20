@@ -114,6 +114,7 @@ class TestBothMergeNodesIgnoreQualityScore:
         # Fully seeding the whole (short) song guarantees zero unresolved
         # spans regardless of how good/bad v2's resulting grid scores.
         bb.set_val("manual_bar_starts", [0.0, 1.0, 2.0])
+        bb.set_val("barstart_v2_promotion_approved", True)
 
         assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
         report = bb.get_val("barstart_v2_report")
@@ -138,6 +139,7 @@ class TestBothMergeNodesIgnoreQualityScore:
         bb.set_val("project_dir", str(tmp_path))
         bb.set_val("audio_duration_sec", 2.0)
         bb.set_val("manual_bar_starts", [0.0, 1.0, 2.0])
+        bb.set_val("barstart_v2_promotion_approved", True)
 
         assert BarStartV2AutoMergeNode().execute(bb) == NodeStatus.SUCCESS
         report = bb.get_val("barstart_v2_auto_report")
@@ -148,9 +150,8 @@ class TestBothMergeNodesIgnoreQualityScore:
         assert report["promoted"] is True
 
     def test_module3_node_falls_back_to_v1_when_v2_has_unresolved_spans(self, tmp_path):
-        """No manual seed + silent audio -> the real v2 evidence ladder
-        cannot resolve the whole song -> must fall back to v1 regardless of
-        how the two quality scores compare."""
+        """Pass 211 may close a silent tail by extrapolation, but does not
+        promote it without explicit manual approval."""
         audio_path = tmp_path / "source.wav"
         _write_silence(audio_path)
 
@@ -169,7 +170,7 @@ class TestBothMergeNodesIgnoreQualityScore:
         assert Module3BarStartV2MergeNode().execute(bb) == NodeStatus.SUCCESS
         report = bb.get_val("barstart_v2_report")
 
-        assert report["unresolved_bar_span_count"] > 0
-        assert report["promotion_gate"]["adoptable"] is False
+        assert report["unresolved_bar_span_count"] == 0
+        assert report["promotion_gate"]["adoptable"] is True
         assert report["status"] == "COMPARED_NOT_PROMOTED"
         np.testing.assert_array_equal(bb.get_val("beats"), beats)

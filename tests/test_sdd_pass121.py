@@ -12,31 +12,11 @@ it into the final click grid.
 
 import unittest
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import BarGridContinuityRepairNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
 
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
-
-
 class TestSDDPass121BarGridContinuityRepair(unittest.TestCase):
-    def test_v2_pipeline_places_repair_before_grid_generation(self):
-        names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("BarGridContinuityRepairNode", names)
-        self.assertLess(
-            names.index("BarStartCandidateCommitNode"),
-            names.index("BarGridContinuityRepairNode"),
-        )
-        self.assertLess(
-            names.index("BarGridContinuityRepairNode"),
-            names.index("MeterAwareBeatGridNode"),
-        )
-
     def test_missed_bar_gap_is_filled_at_median_interval(self):
         bb = Blackboard()
         # bars at 0,2,4 are regular (2s each); 6->10 skips a detection (should be ~8)

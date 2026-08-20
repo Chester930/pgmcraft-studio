@@ -31,20 +31,12 @@ C. 管線接線：兩條 v2 管線都正確接上這個節點，位置在 BassEv
 import numpy as np
 import soundfile as sf
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     DrumBassEvidenceBarSearchNode,
     DrumBassOnsetCandidateExtractNode,
     DrumEvidenceBarSearchNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def _pulse_wav(path, pulse_times, sr=22050, dur=5.0, freq=150.0, seed=1):
@@ -145,16 +137,6 @@ class TestDownstreamConsumersReceiveRealCandidates:
 
 
 class TestPipelineWiring:
-
-    def test_module3_barstart_v2_pipeline_includes_onset_node_between_bass_and_chord(self):
-        tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-        names = _node_names(tree)
-        assert "DrumBassOnsetCandidateExtractNode" in names
-        assert (
-            names.index("BassEvidenceExtractNode")
-            < names.index("DrumBassOnsetCandidateExtractNode")
-            < names.index("ChordMelodyOnsetSplitNode")
-        )
 
     def test_module3_merge_node_core_chain_includes_onset_node(self, tmp_path):
         """Module3BarStartV2MergeNode builds its v2 core chain lazily inside

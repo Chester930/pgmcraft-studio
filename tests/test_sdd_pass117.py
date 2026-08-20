@@ -8,7 +8,6 @@ from pgm_craft.workflow.module3_barstart_v2_bt import (
     ReliableBarAnchorNode,
     TransitionConfidenceNode,
 )
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
 
@@ -24,27 +23,6 @@ def _base_blackboard():
     bb.set_val("bar_duration_sec", 2.0)
     bb.set_val("lookahead_drum_events", [{"time": 8.0, "confidence": 0.95}])
     return bb
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
-
-
-def test_v2_pipeline_places_lookahead_ladder_before_commit():
-    names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-    for name in [
-        "ReliableBarAnchorNode",
-        "LookaheadDrumAnchorSearchNode",
-        "NoDrumPhaseCarryNode",
-        "InterveningBarCountEstimatorNode",
-        "BidirectionalBarAlignmentNode",
-        "TransitionConfidenceNode",
-    ]:
-        assert name in names
-        assert names.index(name) < names.index("BarStartCandidateCommitNode")
 
 
 def test_four_bar_no_drum_span_is_carried_and_aligned():

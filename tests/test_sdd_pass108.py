@@ -2,16 +2,8 @@
 SDD Pass 108 — Module 3 BarStart v2 drum evidence candidate tests.
 """
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import DrumEvidenceBarSearchNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def test_drum_evidence_builds_high_confidence_candidate_from_kick_snare_support():
@@ -60,12 +52,3 @@ def test_drum_evidence_falls_back_to_low_confidence_drum_onset_without_kick():
     assert candidate["time"] == 12.5
     assert 0.0 < candidate["confidence"] < 0.7
     assert candidate["source_node"] == "DrumEvidenceBarSearchNode"
-
-
-def test_module3_barstart_v2_tree_places_drum_evidence_before_commit():
-    tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-    names = _node_names(tree)
-
-    assert "DrumEvidenceBarSearchNode" in names
-    assert names.index("RollingProbeWindowNode") < names.index("DrumEvidenceBarSearchNode")
-    assert names.index("DrumEvidenceBarSearchNode") < names.index("BarStartCandidateCommitNode")

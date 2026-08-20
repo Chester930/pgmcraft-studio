@@ -21,6 +21,7 @@ import os
 import random
 
 _ALREADY_ENABLED = False
+_LAST_SEED = 42
 
 
 def enable_deterministic_mode(seed: int = 42) -> dict:
@@ -37,7 +38,8 @@ def enable_deterministic_mode(seed: int = 42) -> dict:
     methods, so calling this at `PGMCraftEngine.__init__` (before any BT node
     has run) is early enough.
     """
-    global _ALREADY_ENABLED
+    global _ALREADY_ENABLED, _LAST_SEED
+    _LAST_SEED = seed
 
     report = {"seed": seed, "torch_available": False, "cuda_available": False, "applied": []}
 
@@ -86,3 +88,97 @@ def enable_deterministic_mode(seed: int = 42) -> dict:
 
 def is_deterministic_mode_enabled() -> bool:
     return _ALREADY_ENABLED
+
+
+def reseed_for_inference(seed: int = None) -> None:
+    """Pass 174: reseed every RNG source immediately before a single inference
+    call that internally draws its own randomness -- e.g. Demucs
+    `apply_model()`'s `shifts>0` test-time augmentation, which picks a random
+    time offset via the *global* RNG on every call.
+
+    `enable_deterministic_mode()` only seeds once, at pipeline startup: two
+    `apply_model()` calls later in the same run each consume a different
+    slice of the RNG stream and therefore draw different shift offsets, so
+    the separated audio (and everything downstream: BeatNet, measure_map,
+    click) is not reproducible run-to-run even with deterministic mode on
+    (confirmed empirically in Pass 173: max_abs_diff 0.234 between two
+    back-to-back separations of the same input).
+
+    Calling this right before such an inference call resets the RNG stream
+    to the same starting point every time, so the "random" draw inside that
+    call is the same value on every run -- keeping the quality benefit of
+    the augmentation while making its output reproducible. Safe to call even
+    if `enable_deterministic_mode()` was never called (falls back to the
+    module default seed).
+    """
+    seed = seed if seed is not None else _LAST_SEED
+
+    random.seed(seed)
+    try:
+        import numpy as np
+        np.random.seed(seed)
+    except ImportError:
+        pass
+    try:
+        import torch
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except ImportError:
+        pass
+
+
+def compare_beat_outputs(output1, output2, tolerance_sec: float = 1e-6) -> dict:
+    """Pass 172: compare two beat-tracking outputs (e.g. two BeatNet runs on the
+    same audio) and report whether they are reproducible.
+
+    Used by scratch/pass172_beatnet_determinism_check.py to verify
+    enable_deterministic_mode() actually makes Stage 3 beat tracking
+    reproducible run-to-run, rather than assuming it does.
+    """
+    import numpy as np
+
+    count1, count2 = len(output1), len(output2)
+    count_match = count1 == count2
+
+    max_delta = None
+    if count_match and count1 > 0:
+        arr1 = np.asarray(output1, dtype=float)
+        arr2 = np.asarray(output2, dtype=float)
+        max_delta = float(np.max(np.abs(arr1[:, 0] - arr2[:, 0])))
+
+    if count_match and max_delta is not None and max_delta < tolerance_sec:
+        verdict = "DETERMINISTIC"
+    elif count_match:
+        verdict = "MOSTLY_DETERMINISTIC"
+    else:
+        verdict = "NON_DETERMINISTIC"
+
+    return {
+        "count1": count1,
+        "count2": count2,
+        "count_match": count_match,
+        "max_delta_sec": max_delta,
+        "verdict": verdict,
+    }
+
+
+def compare_audio_arrays(arr1, arr2) -> dict:
+    """Pass 173: compare two raw audio arrays (e.g. two Demucs separation runs
+    on the same input) for bit-exact reproducibility.
+
+    Used by scratch/pass173_demucs_determinism_check.py, which found that
+    Demucs's default `shifts=1` random-shift test-time augmentation makes
+    htdemucs_ft non-reproducible run-to-run (max_abs_diff ~0.234) even under
+    enable_deterministic_mode(), while `shifts=0` is bit-exact.
+    """
+    import numpy as np
+
+    arr1 = np.asarray(arr1)
+    arr2 = np.asarray(arr2)
+    if arr1.shape != arr2.shape:
+        return {"bit_exact": False, "max_abs_diff": None, "shape_mismatch": True}
+
+    bit_exact = bool(np.array_equal(arr1, arr2))
+    max_abs_diff = float(np.max(np.abs(arr1 - arr2))) if arr1.size else 0.0
+    return {"bit_exact": bit_exact, "max_abs_diff": max_abs_diff, "shape_mismatch": False}

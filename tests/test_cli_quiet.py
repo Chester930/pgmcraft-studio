@@ -7,7 +7,7 @@ class DummyEngine:
     def __init__(self, *args, **kwargs):
         pass
 
-    def run(self, audio_path, output_dir="outputs"):
+    def run(self, audio_path, output_dir="outputs", **kwargs):
         print("engine noise")
         return {
             "audio_file": audio_path,

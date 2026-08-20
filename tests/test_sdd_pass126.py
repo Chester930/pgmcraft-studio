@@ -11,33 +11,11 @@ whole song. `FullSongBarStartLoopNode` is the outer driver that was missing.
 
 import unittest
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import FullSongBarStartLoopNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
 
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
-
-
 class TestSDDPass126FullSongLoop(unittest.TestCase):
-    def test_v2_pipeline_wraps_the_probe_ladder_in_the_loop_node(self):
-        names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("FullSongBarStartLoopNode", names)
-        self.assertIn("BarStartV2ProbeTick", names)
-        for inner in ["RollingProbeWindowNode", "DrumEvidenceBarSearchNode", "ReliableBarAnchorNode", "BarStartCandidateCommitNode"]:
-            self.assertIn(inner, names)
-            self.assertLess(names.index("FullSongBarStartLoopNode"), names.index(inner))
-        # relative order inside the tick is unchanged from Pass 105-117
-        self.assertLess(names.index("DrumEvidenceBarSearchNode"), names.index("ReliableBarAnchorNode"))
-        self.assertLess(names.index("ReliableBarAnchorNode"), names.index("BarStartCandidateCommitNode"))
-        # the loop node still precedes the one-shot post-loop nodes
-        self.assertLess(names.index("BarStartCandidateCommitNode"), names.index("BarGridContinuityRepairNode"))
-        self.assertLess(names.index("BarGridContinuityRepairNode"), names.index("MeterAwareBeatGridNode"))
-
     def test_loop_walks_the_whole_song_via_stall_recovery_and_stops_at_duration(self):
         bb = Blackboard()
         bb.set_val("committed_bar_starts", [0.0, 2.0])

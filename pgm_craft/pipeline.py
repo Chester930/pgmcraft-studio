@@ -52,6 +52,10 @@ class PGMCraftEngine:
         manual_bar_starts=None,
         user_meter_selection=None,
         allow_temporary_bar_delta=None,
+        barstart_v2_postprocess_flags=None,
+        barstart_v2_promotion_approved=None,
+        madmom_hybrid_approved=None,
+        madmom_hybrid_micro_timing_snap_enabled=None,
     ):
         os.makedirs(output_dir, exist_ok=True)
         if enable_stem is not None:
@@ -70,6 +74,10 @@ class PGMCraftEngine:
             manual_bar_starts=manual_bar_starts,
             user_meter_selection=user_meter_selection,
             allow_temporary_bar_delta=allow_temporary_bar_delta,
+            barstart_v2_postprocess_flags=barstart_v2_postprocess_flags,
+            barstart_v2_promotion_approved=barstart_v2_promotion_approved,
+            madmom_hybrid_approved=madmom_hybrid_approved,
+            madmom_hybrid_micro_timing_snap_enabled=madmom_hybrid_micro_timing_snap_enabled,
         )
 
         original_beats_raw = blackboard.get_val("beats")

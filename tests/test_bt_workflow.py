@@ -333,7 +333,14 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertGreater(len(blackboard.get_val("downbeat_refine_warnings")), 0)
 
     def test_measure_map_uses_downbeats_and_variable_lengths(self):
-        """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節並保留變動拍數"""
+        """測試 MeasureMapNode：有 downbeat 時依 downbeat 切小節並保留變動拍數。
+
+        Pass 195：`_ensure_44_phase_continuity`（Pass 193 引入、Pass 194/195
+        修正）現在只局部修復「相鄰既有 downbeat 間距不是 4 的整數倍」的
+        區段本身——這裡的 3 拍 + 4 拍 + 1 拍序列，每一段內部（1-2-3 / 1-2-3-4
+        / 1）本來就已經自我一致，局部修復重算出來的標號跟原本完全相同，
+        等於沒有實際改動。不會再像 Pass 193/194 那樣整曲機械式拉平成連貫
+        4/4、抹掉上游本來就刻意給的變動拍數。"""
         node = MeasureMapNode()
         blackboard = Blackboard()
         blackboard.set_val("beat_validation", {"status": "PASS", "warnings": []})
@@ -359,8 +366,16 @@ class TestBTWorkflowEngine(unittest.TestCase):
         self.assertTrue(measure_map[2]["is_incomplete"])
         self.assertEqual(measure_map[0]["source"], "downbeat")
 
-    def test_measure_map_falls_back_without_downbeats(self):
-        """測試 MeasureMapNode：缺少 downbeat 時以 4 拍 fallback 並標記警告"""
+    def test_measure_map_manufactures_downbeat_without_any(self):
+        """測試 MeasureMapNode：完全沒有 downbeat 標籤時的行為。
+
+        Pass 193/194：`_ensure_44_phase_continuity` 在沒有保護區段、也
+        完全找不到任何 `beat==1` 時，會強制把陣列第一個拍點視為 beat 1
+        再往後連貫延伸，所以這裡即使輸入完全沒有 downbeat 標籤，最終依然
+        會產生 downbeat 並走 `_build_from_downbeats` 路徑（PASS、
+        source="downbeat"），不再是舊版的 4 拍 fallback（WARN、
+        source="fallback_4beat"）。`beat_validation` 原本帶入的警告訊息
+        仍會原樣保留在 `measure_map_warnings` 裡。"""
         node = MeasureMapNode()
         blackboard = Blackboard()
         blackboard.set_val("beat_validation", {"status": "WARN", "warnings": ["沒有偵測到 downbeat 標籤。"]})
@@ -376,9 +391,9 @@ class TestBTWorkflowEngine(unittest.TestCase):
         measure_map = blackboard.get_val("measure_map")
 
         self.assertEqual(status, NodeStatus.SUCCESS)
-        self.assertEqual(blackboard.get_val("measure_map_status"), "WARN")
+        self.assertEqual(blackboard.get_val("measure_map_status"), "PASS")
         self.assertEqual([measure["beat_count"] for measure in measure_map], [4, 1])
-        self.assertEqual(measure_map[0]["source"], "fallback_4beat")
+        self.assertEqual(measure_map[0]["source"], "downbeat")
         self.assertTrue(measure_map[1]["is_incomplete"])
         self.assertGreater(len(blackboard.get_val("measure_map_warnings")), 0)
 

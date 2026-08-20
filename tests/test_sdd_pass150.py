@@ -174,16 +174,47 @@ class TestPipelineWiring:
         assert names.index("KickSnarePulseNode") < names.index(kick_snap[0])
         assert names.index("KickSnarePulseNode") < names.index(snare_snap[0])
 
-    def test_bass_snap_wired_into_v2_diagnostic_pipeline(self):
-        tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-        names = _node_names(tree)
-        bass_snap = [n for n in names if n.startswith("AnchorTransientSnapNode") and "bass_anchors" in n]
-        assert bass_snap
-        assert (
-            names.index("BassEvidenceExtractNode")
-            < names.index(bass_snap[0])
-            < names.index("ChordMelodyOnsetSplitNode")
-        )
+    def test_bass_snap_wired_into_v2_diagnostic_pipeline(self, monkeypatch):
+        """BarStartV2CoreChain (built lazily inside _run_barstart_v2_comparison(),
+        see Pass 166 -- it is no longer part of the static tree returned by
+        build_module3_barstart_v2_pipeline_tree()) must still run the bass
+        AnchorTransientSnapNode after BassEvidenceExtractNode and before
+        ChordMelodyOnsetSplitNode. Spy on execute() call order instead of
+        introspecting a tree the function doesn't expose."""
+        from pgm_craft.workflow.module3_bt import _run_barstart_v2_comparison
+        from pgm_craft.workflow import module3_barstart_v2_bt as v2mod
+        from pgm_craft.workflow.beat_tracking_bt import AnchorTransientSnapNode
+
+        call_order = []
+
+        def make_simple_spy(name, original):
+            def spy(self, blackboard):
+                call_order.append(name)
+                return original(self, blackboard)
+            return spy
+
+        for cls_name in ("BassEvidenceExtractNode", "ChordMelodyOnsetSplitNode"):
+            cls = getattr(v2mod, cls_name)
+            monkeypatch.setattr(cls, "execute", make_simple_spy(cls_name, cls.execute))
+
+        original_snap_execute = AnchorTransientSnapNode.execute
+
+        def spy_snap_execute(self, blackboard):
+            if self.anchor_key == "bass_anchors":
+                call_order.append("AnchorTransientSnapNode[bass_anchors]")
+            return original_snap_execute(self, blackboard)
+
+        monkeypatch.setattr(AnchorTransientSnapNode, "execute", spy_snap_execute)
+
+        bb = Blackboard()
+        interval = 60.0 / 165.0 * 4
+        bb.set_val("beats", np.array([[i * interval / 4, (i % 4) + 1] for i in range(80)], dtype=float))
+
+        _run_barstart_v2_comparison(bb)
+
+        assert "AnchorTransientSnapNode[bass_anchors]" in call_order
+        bass_pos = call_order.index("AnchorTransientSnapNode[bass_anchors]")
+        assert call_order.index("BassEvidenceExtractNode") < bass_pos < call_order.index("ChordMelodyOnsetSplitNode")
 
     def test_module3_merge_node_core_chain_runs_with_bass_snap(self, tmp_path):
         """Module3BarStartV2MergeNode builds its v2 core chain lazily inside

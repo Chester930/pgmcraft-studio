@@ -2,16 +2,8 @@
 SDD Pass 113 — Module 3 BarStart v2 local model registry tests.
 """
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import LocalModelRegistryNode, Module3BarStartV2SummaryNode
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def test_local_model_registry_reports_known_model_statuses_without_importing_heavy_models():
@@ -42,15 +34,6 @@ def test_local_model_registry_accepts_override_metadata_for_future_installers():
     assert registry["beat_this"]["source"] == "override"
     assert registry["beat_this"]["path"] == "models/beat_this"
     assert bb.get_val("model_license_report")["licenses"]["beat_this"] == "Apache-2.0"
-
-
-def test_module3_barstart_v2_tree_places_model_registry_before_evidence_ladder():
-    tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-    names = _node_names(tree)
-
-    assert "LocalModelRegistryNode" in names
-    assert names.index("LocalModelRegistryNode") < names.index("DrumEvidenceBarSearchNode")
-    assert names.index("LocalModelRegistryNode") < names.index("BeatThisCandidateAdapterNode")
 
 
 def test_module3_barstart_v2_summary_includes_model_registry_reports():

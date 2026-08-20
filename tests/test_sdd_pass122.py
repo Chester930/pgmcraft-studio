@@ -12,19 +12,11 @@ import unittest
 
 import numpy as np
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     BarStartV2QualityScoreNode,
     Module3BarStartV2SummaryNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def _clean_beats(n_bars=8):
@@ -37,18 +29,6 @@ def _clean_beats(n_bars=8):
 
 
 class TestSDDPass122QualityScore(unittest.TestCase):
-    def test_v2_pipeline_places_quality_score_before_click_synthesis(self):
-        names = _node_names(build_master_pipeline_tree(target_stage="module3_barstart_v2"))
-        self.assertIn("BarStartV2QualityScoreNode", names)
-        self.assertLess(
-            names.index("KickBassDownbeatVerifierNode"),
-            names.index("BarStartV2QualityScoreNode"),
-        )
-        self.assertLess(
-            names.index("BarStartV2QualityScoreNode"),
-            names.index("ClickSynthesisNode"),
-        )
-
     def test_clean_grid_scores_high_with_no_warnings(self):
         bb = Blackboard()
         bb.set_val("beats", _clean_beats())

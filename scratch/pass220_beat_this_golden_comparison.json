@@ -1,0 +1,377 @@
+{
+  "pass": "PASS-220",
+  "model": "CPJKU beat_this (final0, dbn=False)",
+  "overall": {
+    "beat_this_total_beats": 366,
+    "beat_this_total_downbeats": 103,
+    "golden_total_downbeats": 121
+  },
+  "segments": [
+    {
+      "segment": "Intro",
+      "beat_this_count": 13,
+      "golden_count": 17,
+      "index_aligned_residuals_sample": [
+        {
+          "idx": 0,
+          "beat_this": 0.78,
+          "golden": 0.762,
+          "residual": 0.018
+        },
+        {
+          "idx": 1,
+          "beat_this": 3.68,
+          "golden": 2.156,
+          "residual": 1.524
+        },
+        {
+          "idx": 2,
+          "beat_this": 6.62,
+          "golden": 3.693,
+          "residual": 2.927
+        },
+        {
+          "idx": 3,
+          "beat_this": 9.52,
+          "golden": 5.132,
+          "residual": 4.388
+        },
+        {
+          "idx": 4,
+          "beat_this": 12.42,
+          "golden": 6.613,
+          "residual": 5.807
+        },
+        {
+          "idx": 5,
+          "beat_this": 14.06,
+          "golden": 8.027,
+          "residual": 6.033
+        },
+        {
+          "idx": 6,
+          "beat_this": 15.02,
+          "golden": 9.513,
+          "residual": 5.507
+        },
+        {
+          "idx": 7,
+          "beat_this": 15.72,
+          "golden": 10.929,
+          "residual": 4.791
+        },
+        {
+          "idx": 8,
+          "beat_this": 17.14,
+          "golden": 12.4,
+          "residual": 4.74
+        },
+        {
+          "idx": 9,
+          "beat_this": 18.54,
+          "golden": 14.005,
+          "residual": 4.535
+        },
+        {
+          "idx": 10,
+          "beat_this": 20.0,
+          "golden": 15.531,
+          "residual": 4.469
+        },
+        {
+          "idx": 11,
+          "beat_this": 22.9,
+          "golden": 17.018,
+          "residual": 5.882
+        },
+        {
+          "idx": 12,
+          "beat_this": 25.8,
+          "golden": 18.568,
+          "residual": 7.232
+        },
+        {
+          "idx": 12,
+          "beat_this": 25.8,
+          "golden": 18.568,
+          "residual": 7.232
+        }
+      ],
+      "max_abs_residual": 7.232,
+      "mean_abs_residual": 4.45
+    },
+    {
+      "segment": "Verse 1",
+      "beat_this_count": 41,
+      "golden_count": 42,
+      "index_aligned_residuals_sample": [
+        {
+          "idx": 0,
+          "beat_this": 28.7,
+          "golden": 25.813,
+          "residual": 2.887
+        },
+        {
+          "idx": 4,
+          "beat_this": 34.56,
+          "golden": 31.643,
+          "residual": 2.917
+        },
+        {
+          "idx": 8,
+          "beat_this": 40.36,
+          "golden": 37.465,
+          "residual": 2.895
+        },
+        {
+          "idx": 12,
+          "beat_this": 46.18,
+          "golden": 43.24,
+          "residual": 2.94
+        },
+        {
+          "idx": 16,
+          "beat_this": 52.0,
+          "golden": 49.073,
+          "residual": 2.927
+        },
+        {
+          "idx": 20,
+          "beat_this": 57.82,
+          "golden": 54.885,
+          "residual": 2.935
+        },
+        {
+          "idx": 24,
+          "beat_this": 63.64,
+          "golden": 60.733,
+          "residual": 2.907
+        },
+        {
+          "idx": 28,
+          "beat_this": 69.46,
+          "golden": 66.512,
+          "residual": 2.948
+        },
+        {
+          "idx": 32,
+          "beat_this": 75.28,
+          "golden": 72.356,
+          "residual": 2.924
+        },
+        {
+          "idx": 36,
+          "beat_this": 81.1,
+          "golden": 78.14,
+          "residual": 2.96
+        },
+        {
+          "idx": 40,
+          "beat_this": 86.9,
+          "golden": 84.005,
+          "residual": 2.895
+        },
+        {
+          "idx": 40,
+          "beat_this": 86.9,
+          "golden": 84.005,
+          "residual": 2.895
+        }
+      ],
+      "max_abs_residual": 2.96,
+      "mean_abs_residual": 2.909
+    },
+    {
+      "segment": "Chorus 1",
+      "beat_this_count": 34,
+      "golden_count": 42,
+      "index_aligned_residuals_sample": [
+        {
+          "idx": 0,
+          "beat_this": 88.36,
+          "golden": 86.907,
+          "residual": 1.453
+        },
+        {
+          "idx": 3,
+          "beat_this": 92.72,
+          "golden": 91.26,
+          "residual": 1.46
+        },
+        {
+          "idx": 6,
+          "beat_this": 101.44,
+          "golden": 95.62,
+          "residual": 5.82
+        },
+        {
+          "idx": 9,
+          "beat_this": 110.18,
+          "golden": 100.023,
+          "residual": 10.157
+        },
+        {
+          "idx": 12,
+          "beat_this": 114.54,
+          "golden": 104.368,
+          "residual": 10.172
+        },
+        {
+          "idx": 15,
+          "beat_this": 120.36,
+          "golden": 108.742,
+          "residual": 11.618
+        },
+        {
+          "idx": 18,
+          "beat_this": 124.72,
+          "golden": 113.1,
+          "residual": 11.62
+        },
+        {
+          "idx": 21,
+          "beat_this": 129.1,
+          "golden": 117.41,
+          "residual": 11.69
+        },
+        {
+          "idx": 24,
+          "beat_this": 133.46,
+          "golden": 121.8,
+          "residual": 11.66
+        },
+        {
+          "idx": 27,
+          "beat_this": 137.82,
+          "golden": 126.191,
+          "residual": 11.629
+        },
+        {
+          "idx": 30,
+          "beat_this": 142.18,
+          "golden": 130.552,
+          "residual": 11.628
+        },
+        {
+          "idx": 33,
+          "beat_this": 146.54,
+          "golden": 134.935,
+          "residual": 11.605
+        },
+        {
+          "idx": 33,
+          "beat_this": 146.54,
+          "golden": 134.935,
+          "residual": 11.605
+        }
+      ],
+      "max_abs_residual": 11.703,
+      "mean_abs_residual": 9.373
+    },
+    {
+      "segment": "Outro",
+      "beat_this_count": 15,
+      "golden_count": 20,
+      "index_aligned_residuals_sample": [
+        {
+          "idx": 0,
+          "beat_this": 148.0,
+          "golden": 147.978,
+          "residual": 0.022
+        },
+        {
+          "idx": 1,
+          "beat_this": 149.44,
+          "golden": 149.456,
+          "residual": -0.016
+        },
+        {
+          "idx": 2,
+          "beat_this": 150.92,
+          "golden": 150.929,
+          "residual": -0.009
+        },
+        {
+          "idx": 3,
+          "beat_this": 152.38,
+          "golden": 152.404,
+          "residual": -0.024
+        },
+        {
+          "idx": 4,
+          "beat_this": 153.82,
+          "golden": 153.838,
+          "residual": -0.018
+        },
+        {
+          "idx": 5,
+          "beat_this": 155.28,
+          "golden": 155.279,
+          "residual": 0.001
+        },
+        {
+          "idx": 6,
+          "beat_this": 156.72,
+          "golden": 156.741,
+          "residual": -0.021
+        },
+        {
+          "idx": 7,
+          "beat_this": 158.28,
+          "golden": 158.273,
+          "residual": 0.007
+        },
+        {
+          "idx": 8,
+          "beat_this": 159.64,
+          "golden": 159.872,
+          "residual": -0.232
+        },
+        {
+          "idx": 9,
+          "beat_this": 161.12,
+          "golden": 161.497,
+          "residual": -0.377
+        },
+        {
+          "idx": 10,
+          "beat_this": 162.58,
+          "golden": 163.121,
+          "residual": -0.541
+        },
+        {
+          "idx": 11,
+          "beat_this": 163.94,
+          "golden": 164.591,
+          "residual": -0.651
+        },
+        {
+          "idx": 12,
+          "beat_this": 166.54,
+          "golden": 165.985,
+          "residual": 0.555
+        },
+        {
+          "idx": 13,
+          "beat_this": 167.64,
+          "golden": 167.485,
+          "residual": 0.155
+        },
+        {
+          "idx": 14,
+          "beat_this": 169.3,
+          "golden": 168.881,
+          "residual": 0.419
+        },
+        {
+          "idx": 14,
+          "beat_this": 169.3,
+          "golden": 168.881,
+          "residual": 0.419
+        }
+      ],
+      "max_abs_residual": 0.651,
+      "mean_abs_residual": 0.203
+    }
+  ]
+}

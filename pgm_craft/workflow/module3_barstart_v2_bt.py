@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import importlib.util
+from collections import namedtuple
+from uuid import uuid4
 from typing import Iterable
 
 import numpy as np
@@ -20,7 +22,7 @@ from pgm_craft.workflow.beat_tracking_bt import (
     AnchorTransientSnapNode,
     KickBassDownbeatVerifierNode,
     _extract_peak_anchors,
-    _score_beat_grid_quality,
+    _score_beat_grid_grounded,
 )
 from pgm_craft.workflow.nodes import BaseNode, Blackboard, NodeStatus, SequenceNode
 
@@ -250,6 +252,11 @@ class ManualCommittedBarStartsSeedNode(BaseNode):
         return sorted(set(round(t, 6) for t in out if t >= 0.0))
 
 
+_ProbeWindowBounds = namedtuple(
+    "_ProbeWindowBounds", ["default", "min", "max", "step", "tempo_scaled"]
+)
+
+
 class RollingProbeWindowNode(BaseNode):
     """Builds the next adaptive window used to search for one bar start."""
 
@@ -258,6 +265,7 @@ class RollingProbeWindowNode(BaseNode):
         "bar_probe_window_sec",
         "last_bar_probe_result",
         "bar_probe_history",
+        "v1_reference_beat_grid",
     ]
     output_keys = [
         "bar_probe_window_sec",
@@ -267,8 +275,30 @@ class RollingProbeWindowNode(BaseNode):
         "bar_probe_policy",
     ]
 
+    # Pass 214: window bounds and step used to be fixed absolute seconds
+    # (5.0/2.0/12.0/1.0), which made the search window's size relative to a
+    # bar completely dependent on the song's tempo -- fine at World is
+    # Mine's ~164 BPM (min window still >1 bar), but a slower song (e.g.
+    # 70 BPM, ~3.4s/bar) would get a minimum window *smaller than a single
+    # bar*, and a much faster song would get a max window spanning 10+
+    # bars, multiplying the close-candidate arbitration ambiguity this
+    # subsystem already struggles with. These are now multiples of the
+    # song's own expected bar duration instead. The multiples are
+    # calibrated so a song at World is Mine's verified tempo
+    # (expected_bar_duration_sec ~1.452857s) reproduces the previous
+    # absolute-second bounds byte-for-byte -- the known-good 119-bar/88.14
+    # baseline for this song is unaffected -- while other tempos now get a
+    # proportionally sized window instead of the same fixed seconds.
+    _CALIBRATION_BAR_DURATION_SEC = 1.452857
+    DEFAULT_WINDOW_BAR_MULTIPLE = 5.0 / _CALIBRATION_BAR_DURATION_SEC
+    MIN_WINDOW_BAR_MULTIPLE = 2.0 / _CALIBRATION_BAR_DURATION_SEC
+    MAX_WINDOW_BAR_MULTIPLE = 12.0 / _CALIBRATION_BAR_DURATION_SEC
+    STEP_BAR_MULTIPLE = 1.0 / _CALIBRATION_BAR_DURATION_SEC
+
     def __init__(self, default_window_sec: float = 5.0, min_window_sec: float = 2.0, max_window_sec: float = 12.0):
         super().__init__("RollingProbeWindowNode")
+        # Fallback bounds used only when the song's expected bar duration
+        # isn't available yet (e.g. before v1's reference grid exists).
         self.default_window_sec = float(default_window_sec)
         self.min_window_sec = float(min_window_sec)
         self.max_window_sec = float(max_window_sec)
@@ -279,9 +309,10 @@ class RollingProbeWindowNode(BaseNode):
             print(f"[{self.name}] need at least one committed bar start")
             return NodeStatus.FAILURE
 
-        previous_window = self._window_sec(blackboard.get_val("bar_probe_window_sec"))
+        bounds = self._tempo_scaled_bounds(blackboard)
+        previous_window = self._window_sec(blackboard.get_val("bar_probe_window_sec"), bounds)
         result = blackboard.get_val("last_bar_probe_result", {}) or {}
-        next_window = self._adjust_window(previous_window, result)
+        next_window = self._adjust_window(previous_window, result, bounds)
         start_time = self._next_start_time(committed[-1], previous_window, result)
         active = {
             "start_time": round(start_time, 6),
@@ -292,10 +323,11 @@ class RollingProbeWindowNode(BaseNode):
             "strategy": "rolling_single_bar_probe",
         }
         policy = {
-            "default_window_sec": self.default_window_sec,
-            "min_window_sec": self.min_window_sec,
-            "max_window_sec": self.max_window_sec,
-            "step_sec": 1.0,
+            "default_window_sec": round(bounds.default, 6),
+            "min_window_sec": round(bounds.min, 6),
+            "max_window_sec": round(bounds.max, 6),
+            "step_sec": round(bounds.step, 6),
+            "tempo_scaled": bounds.tempo_scaled,
             "adjustment": self._adjustment_label(previous_window, next_window),
         }
         history = list(blackboard.get_val("bar_probe_history", []) or [])
@@ -316,19 +348,41 @@ class RollingProbeWindowNode(BaseNode):
         blackboard.set_val("bar_probe_policy", policy)
         return NodeStatus.SUCCESS
 
-    def _window_sec(self, raw) -> float:
+    def _tempo_scaled_bounds(self, blackboard: Blackboard):
+        bar_duration = None
+        try:
+            bar_duration = BarStartCandidateCommitNode()._expected_bar_duration(blackboard)
+        except Exception:
+            bar_duration = None
+        if not bar_duration or bar_duration <= 0:
+            return _ProbeWindowBounds(
+                default=self.default_window_sec,
+                min=self.min_window_sec,
+                max=self.max_window_sec,
+                step=1.0,
+                tempo_scaled=False,
+            )
+        return _ProbeWindowBounds(
+            default=bar_duration * self.DEFAULT_WINDOW_BAR_MULTIPLE,
+            min=bar_duration * self.MIN_WINDOW_BAR_MULTIPLE,
+            max=bar_duration * self.MAX_WINDOW_BAR_MULTIPLE,
+            step=bar_duration * self.STEP_BAR_MULTIPLE,
+            tempo_scaled=True,
+        )
+
+    def _window_sec(self, raw, bounds) -> float:
         try:
             value = float(raw)
         except (TypeError, ValueError):
-            value = self.default_window_sec
-        return float(np.clip(value, self.min_window_sec, self.max_window_sec))
+            value = bounds.default
+        return float(np.clip(value, bounds.min, bounds.max))
 
-    def _adjust_window(self, current: float, result: dict) -> float:
+    def _adjust_window(self, current: float, result: dict, bounds) -> float:
         status = str(result.get("status", "")).lower()
         if status in {"not_found", "failed", "uncertain"}:
-            return self._clamp(current + 1.0)
+            return self._clamp(current + bounds.step, bounds)
         if status in {"found_fast", "too_fast"}:
-            return self._clamp(current - 1.0)
+            return self._clamp(current - bounds.step, bounds)
         if status == "found":
             offset = result.get("candidate_offset_sec")
             if offset is None and result.get("candidate_time") is not None and result.get("window_start") is not None:
@@ -336,9 +390,9 @@ class RollingProbeWindowNode(BaseNode):
                     offset = float(result["candidate_time"]) - float(result["window_start"])
                 except (TypeError, ValueError):
                     offset = None
-            if offset is not None and float(offset) <= max(1.0, current * 0.35):
-                return self._clamp(current - 1.0)
-        return self._clamp(current)
+            if offset is not None and float(offset) <= max(bounds.step, current * 0.35):
+                return self._clamp(current - bounds.step, bounds)
+        return self._clamp(current, bounds)
 
     def _next_start_time(self, last_committed: float, previous_window: float, result: dict) -> float:
         status = str(result.get("status", "")).lower()
@@ -356,13 +410,13 @@ class RollingProbeWindowNode(BaseNode):
 
     def _adjustment_label(self, previous: float, current: float) -> str:
         if current > previous:
-            return "increase_by_1s"
+            return "increase"
         if current < previous:
-            return "decrease_by_1s"
+            return "decrease"
         return "keep"
 
-    def _clamp(self, value: float) -> float:
-        return float(np.clip(value, self.min_window_sec, self.max_window_sec))
+    def _clamp(self, value: float, bounds) -> float:
+        return float(np.clip(value, bounds.min, bounds.max))
 
 
 class ReliableBarAnchorNode(BaseNode):
@@ -619,18 +673,37 @@ class LookaheadDrumEventScanNode(BaseNode):
     was missing.
     """
 
-    optional_keys = ["kick_anchors", "snare_anchors", "committed_bar_starts", "lookahead_horizon_sec"]
-    output_keys = ["lookahead_drum_events"]
+    optional_keys = [
+        "kick_anchors",
+        "snare_anchors",
+        "committed_bar_starts",
+        "lookahead_horizon_sec",
+        "v1_reference_beat_grid",
+    ]
+    output_keys = ["lookahead_drum_events", "lookahead_scan_report"]
+
+    # Pass 215: horizon_sec used to be a fixed 30.0s regardless of tempo,
+    # same class of problem as Pass 214's RollingProbeWindowNode -- a
+    # slower song gets fewer bars of lookahead reach for the same wall-clock
+    # window, a faster song gets many more (and proportionally more
+    # candidate noise for LookaheadDrumAnchorSearchNode to sift through).
+    # The multiple is calibrated so a song at World is Mine's verified
+    # tempo (RollingProbeWindowNode's calibration bar duration) reproduces
+    # the previous fixed 30.0s exactly, matching Pass 214's approach.
+    HORIZON_BAR_MULTIPLE = 30.0 / RollingProbeWindowNode._CALIBRATION_BAR_DURATION_SEC
 
     def __init__(self, horizon_sec: float = 30.0, dedupe_tolerance_sec: float = 0.05):
         super().__init__("LookaheadDrumEventScanNode")
+        # Fallback horizon used only when neither an explicit
+        # lookahead_horizon_sec override nor the song's expected bar
+        # duration is available yet.
         self.horizon_sec = float(horizon_sec)
         self.dedupe_tolerance_sec = float(dedupe_tolerance_sec)
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         committed = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
         previous = committed[-1] if committed else 0.0
-        horizon = self._horizon(blackboard)
+        horizon, horizon_report = self._horizon(blackboard)
 
         events = []
         for key, base_confidence in (("kick_anchors", 0.75), ("snare_anchors", 0.6)):
@@ -640,16 +713,25 @@ class LookaheadDrumEventScanNode(BaseNode):
                 events.append({"time": round(t, 6), "confidence": base_confidence})
 
         blackboard.set_val("lookahead_drum_events", self._dedupe(events))
+        blackboard.set_val("lookahead_scan_report", horizon_report)
         return NodeStatus.SUCCESS
 
-    def _horizon(self, blackboard: Blackboard) -> float:
+    def _horizon(self, blackboard: Blackboard) -> tuple[float, dict]:
         try:
             value = float(blackboard.get_val("lookahead_horizon_sec"))
             if value > 0:
-                return value
+                return value, {"horizon_sec": round(value, 6), "source": "explicit_override"}
         except (TypeError, ValueError):
             pass
-        return self.horizon_sec
+        bar_duration = None
+        try:
+            bar_duration = BarStartCandidateCommitNode()._expected_bar_duration(blackboard)
+        except Exception:
+            bar_duration = None
+        if bar_duration and bar_duration > 0:
+            horizon = bar_duration * self.HORIZON_BAR_MULTIPLE
+            return horizon, {"horizon_sec": round(horizon, 6), "source": "tempo_scaled"}
+        return self.horizon_sec, {"horizon_sec": round(self.horizon_sec, 6), "source": "fixed_fallback"}
 
     def _normalize_anchor_times(self, raw) -> list[float]:
         if raw is None:
@@ -956,21 +1038,50 @@ class BarStartCandidateCommitNode(BaseNode):
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         committed = ManualCommittedBarStartsSeedNode()._normalize_times(blackboard.get_val("committed_bar_starts"))
         window = dict(blackboard.get_val("active_bar_probe_window", {}) or {})
-        candidates = self._normalize_candidates(blackboard.get_val("bar_start_candidates", []), window)
+        raw_candidate_input = blackboard.get_val("bar_start_candidates", [])
+        input_candidate_count = (
+            1 if isinstance(raw_candidate_input, dict) else len(raw_candidate_input or [])
+        )
+        candidates = self._normalize_candidates(raw_candidate_input, window)
         threshold = self._threshold(blackboard.get_val("candidate_commit_confidence_threshold"))
         # The probe window's own start_time is anchored at the last committed
         # bar, so that bar's own anchors are still inside the window and would
         # otherwise keep winning the confidence tie-break (earliest-time-wins)
         # against the genuinely next candidates further ahead -- silently
         # re-"committing" the same bar every tick forever with no progress.
-        eligible = self._exclude_already_committed(candidates, committed)
-        eligible = self._prefer_bar_length_plausible(eligible, committed, blackboard)
-        best = self._best_candidate(eligible)
+        after_duplicate_filter = self._exclude_already_committed(candidates, committed)
+        after_bar_gap_filter = self._prefer_bar_length_plausible(
+            after_duplicate_filter, committed, blackboard
+        )
+        eligible, consensus_report = self._aggregate_consensus_candidates(after_bar_gap_filter)
+        candidate_filter_diagnostics = {
+            "input_candidate_count": input_candidate_count,
+            "after_probe_window_count": len(candidates),
+            "after_duplicate_filter_count": len(after_duplicate_filter),
+            "after_min_bar_gap_filter_count": len(after_bar_gap_filter),
+            "after_consensus_count": len(eligible),
+            "removed_by_probe_window": max(0, input_candidate_count - len(candidates)),
+            "removed_as_duplicate": max(0, len(candidates) - len(after_duplicate_filter)),
+            "removed_by_min_bar_gap": max(0, len(after_duplicate_filter) - len(after_bar_gap_filter)),
+            "merged_by_consensus": max(0, len(after_bar_gap_filter) - len(eligible)),
+        }
+        best, arbitration_report = self._best_candidate(
+            eligible,
+            committed_bar_starts=committed,
+            blackboard=blackboard,
+            return_arbitration=True,
+            commit_threshold=threshold,
+        )
 
         report = {
+            "run_id": blackboard.get_val("barstart_v2_run_id"),
             "threshold": threshold,
-            "candidate_count": len(candidates),
+            "candidate_count": len(eligible),
+            "raw_candidate_count": len(candidates),
             "active_bar_probe_window": window,
+            "consensus_aggregation": consensus_report,
+            "candidate_arbitration": arbitration_report,
+            "candidate_filter_diagnostics": candidate_filter_diagnostics,
             "status": "NO_CANDIDATE",
         }
 
@@ -978,10 +1089,14 @@ class BarStartCandidateCommitNode(BaseNode):
             candidate_committed = self._append_unique(list(committed), best["time"])
             quality_before = _score_bar_start_list_quality(committed)
             quality_after = _score_bar_start_list_quality(candidate_committed)
+            phase_alignment = self._candidate_phase_alignment(
+                best["time"], committed, blackboard
+            )
             regresses = (
                 quality_before is not None
                 and quality_after is not None
                 and quality_after < quality_before - self.quality_drop_tolerance
+                and not phase_alignment["is_reasonable_bar_multiple"]
             )
 
             if regresses:
@@ -995,6 +1110,7 @@ class BarStartCandidateCommitNode(BaseNode):
                     "rejected_time": best["time"],
                     "quality_before": quality_before,
                     "quality_after": quality_after,
+                    "phase_alignment": phase_alignment,
                 })
                 result = self._probe_result("uncertain", window, best)
                 report.update({
@@ -1003,6 +1119,7 @@ class BarStartCandidateCommitNode(BaseNode):
                     "best_candidate": best,
                     "quality_before": quality_before,
                     "quality_after": quality_after,
+                    "phase_alignment": phase_alignment,
                 })
                 blackboard.set_val("unresolved_bar_spans", unresolved)
                 blackboard.set_val("last_bar_probe_result", result)
@@ -1016,6 +1133,7 @@ class BarStartCandidateCommitNode(BaseNode):
                     "evidence_sources": best.get("evidence_sources", []),
                     "quality_before": quality_before,
                     "quality_after": quality_after,
+                    "phase_alignment": phase_alignment,
                 })
                 blackboard.set_val("committed_bar_starts", committed)
                 blackboard.set_val("last_bar_probe_result", result)
@@ -1028,7 +1146,6 @@ class BarStartCandidateCommitNode(BaseNode):
                 "reason": reason,
                 "best_confidence": best.get("confidence") if best else None,
             }
-            unresolved.append(span)
             result_status = "uncertain" if best else "not_found"
             result = self._probe_result(result_status, window, best)
             report.update({
@@ -1036,12 +1153,57 @@ class BarStartCandidateCommitNode(BaseNode):
                 "reason": reason,
                 "best_candidate": best or {},
             })
+            classification = self._classify_decision(
+                report, candidate_filter_diagnostics
+            )
+            # A probe that only rediscovered an already committed candidate is
+            # a normal no-op, not an unresolved part of the song. Keep it in
+            # the diagnostic history below, but do not feed it to the gate.
+            if classification != "all_candidates_already_committed":
+                unresolved.append(span)
             blackboard.set_val("unresolved_bar_spans", unresolved)
             blackboard.set_val("last_bar_probe_result", result)
 
-        blackboard.set_val("bar_start_candidates", candidates)
+        classification = report.get("diagnostic_classification") or self._classify_decision(
+            report, candidate_filter_diagnostics
+        )
+        report["diagnostic_classification"] = classification
+        if report.get("status") != "COMMITTED":
+            failure_history = list(blackboard.get_val("all_probe_failures_ever", []) or [])
+            failure_history.append({
+                "start_time": window.get("start_time"),
+                "end_time": window.get("end_time"),
+                "reason": report.get("reason"),
+                "best_confidence": (
+                    report.get("best_candidate", {}) or {}
+                ).get("confidence"),
+                "diagnostic_classification": classification,
+            })
+            blackboard.set_val("all_probe_failures_ever", failure_history)
+        blackboard.set_val("bar_start_candidates", eligible)
         blackboard.set_val("bar_start_decision_report", report)
         return NodeStatus.SUCCESS
+
+    def _classify_decision(self, report: dict, filters: dict) -> str:
+        """Explain where a non-commit tick stopped without changing behavior."""
+        if report.get("status") == "COMMITTED":
+            return "committed"
+        reason = report.get("reason")
+        if reason == "quality_regression":
+            return "quality_regression"
+        if reason == "confidence_below_threshold":
+            return "best_candidate_below_threshold"
+        if filters["input_candidate_count"] == 0:
+            return "no_upstream_candidates"
+        if filters["after_probe_window_count"] == 0:
+            return "all_candidates_outside_probe_window"
+        if filters["after_duplicate_filter_count"] == 0:
+            return "all_candidates_already_committed"
+        if filters["after_min_bar_gap_filter_count"] == 0:
+            return "all_candidates_below_min_bar_gap"
+        if filters["after_consensus_count"] == 0:
+            return "all_candidates_removed_by_consensus"
+        return "no_candidate_selected"
 
     def _normalize_candidates(self, raw, window: dict) -> list[dict]:
         if isinstance(raw, dict):
@@ -1078,10 +1240,222 @@ class BarStartCandidateCommitNode(BaseNode):
             })
         return sorted(out, key=lambda item: (item["time"], -item["confidence"]))
 
-    def _best_candidate(self, candidates: list[dict]) -> dict | None:
+    def _candidate_phase_alignment(
+        self, candidate_time: float, committed: list[float], blackboard: Blackboard
+    ) -> dict:
+        """Check whether a new candidate is on a reasonable bar-length multiple.
+
+        The quality score intentionally measures the raw committed intervals and
+        must keep doing so.  A candidate can nevertheless be correct when one or
+        more intervening bars were not committed, so the final interval may be
+        two or more expected bars long.  Reuse the phase residual rule already
+        used by arbitration rather than adding a second, unrelated tolerance.
+        """
+        expected = self._expected_bar_duration(blackboard)
+        if not committed or not expected or expected <= 0:
+            return {
+                "is_reasonable_bar_multiple": False,
+                "expected_bar_duration_sec": expected,
+                "bar_multiple": None,
+                "residual_sec": None,
+                "phase_consistency_score": None,
+            }
+
+        previous = float(committed[-1])
+        delta = float(candidate_time) - previous
+        if delta <= 0:
+            return {
+                "is_reasonable_bar_multiple": False,
+                "expected_bar_duration_sec": round(float(expected), 6),
+                "bar_multiple": None,
+                "residual_sec": None,
+                "phase_consistency_score": 0.0,
+            }
+
+        score = self._phase_consistency_score(candidate_time, [previous], expected)
+        bar_multiple = max(1, int(round(delta / expected)))
+        residual = abs(delta - bar_multiple * expected)
+        return {
+            "is_reasonable_bar_multiple": score["matching_committed_bars"] > 0,
+            "expected_bar_duration_sec": round(float(expected), 6),
+            "bar_multiple": bar_multiple,
+            "residual_sec": round(float(residual), 6),
+            "phase_consistency_score": score["score"],
+        }
+
+    def _best_candidate(
+        self,
+        candidates: list[dict],
+        committed_bar_starts: list[float] | None = None,
+        blackboard: Blackboard | None = None,
+        return_arbitration: bool = False,
+        commit_threshold: float | None = None,
+    ):
         if not candidates:
-            return None
-        return max(candidates, key=lambda item: (item["confidence"], -item["time"]))
+            result = (None, {"triggered": False, "reason": "no_candidates"})
+            return result if return_arbitration else None
+
+        expected = self._expected_bar_duration(blackboard) if blackboard is not None else None
+        conflicts = self._conflicting_candidates(candidates, expected)
+        if len(conflicts) < 2 or not committed_bar_starts or not expected:
+            best = max(candidates, key=lambda item: (item["confidence"], -item["time"]))
+            result = (best, {
+                "triggered": False,
+                "reason": "no_close_conflict" if len(conflicts) < 2 else "missing_phase_model",
+                "candidate_count": len(candidates),
+            })
+            return result if return_arbitration else best
+
+        scored = []
+        for candidate in conflicts:
+            score = self._phase_consistency_score(
+                candidate["time"], committed_bar_starts, expected
+            )
+            scored.append({
+                "candidate": candidate,
+                "phase_consistency_score": score["score"],
+                "matching_committed_bars": score["matching_committed_bars"],
+                "mean_residual_sec": score["mean_residual_sec"],
+            })
+        # Phase-consistency scoring should only break ties AMONG candidates that
+        # already clear the commit threshold. Otherwise a low-confidence
+        # candidate that happens to land on a plausible bar-multiple offset can
+        # outrank a same-window, high-confidence candidate purely because the
+        # phase score was sorted first (Pass 202 arbitration bug).
+        clears_threshold = (
+            (lambda item: item["candidate"]["confidence"] >= commit_threshold)
+            if commit_threshold is not None
+            else (lambda item: True)
+        )
+        winner = max(
+            scored,
+            key=lambda item: (
+                clears_threshold(item),
+                item["phase_consistency_score"],
+                item["candidate"]["confidence"],
+                -item["candidate"]["time"],
+            ),
+        )
+        best = winner["candidate"]
+        arbitration = {
+            "triggered": True,
+            "reason": "close_candidates_phase_arbitration",
+            "expected_bar_duration_sec": round(float(expected), 6),
+            "commit_threshold": commit_threshold,
+            "candidates": scored,
+            "winner_time": best["time"],
+            "winner_phase_consistency_score": winner["phase_consistency_score"],
+            "winner_cleared_threshold": clears_threshold(winner),
+        }
+        return (best, arbitration) if return_arbitration else best
+
+    def _aggregate_consensus_candidates(self, candidates: list[dict]) -> tuple[list[dict], dict]:
+        """Merge near-identical candidates only when independent sources agree."""
+        if len(candidates) < 2:
+            return candidates, {"triggered": False, "groups": []}
+
+        groups = []
+        for candidate in sorted(candidates, key=lambda item: item["time"]):
+            if not groups or candidate["time"] - groups[-1][0]["time"] > 0.05:
+                groups.append([candidate])
+            else:
+                groups[-1].append(candidate)
+
+        output = []
+        report_groups = []
+        for group in groups:
+            source_ids = [self._candidate_source_id(item) for item in group]
+            distinct_sources = list(dict.fromkeys(source_ids))
+            evidence_sets = [
+                {str(source) for source in (item.get("evidence_sources", []) or [])}
+                for item in group
+            ]
+            independent = len(distinct_sources) >= 2 and all(
+                not (left & right)
+                for index, left in enumerate(evidence_sets)
+                for right in evidence_sets[index + 1:]
+            )
+            if not independent:
+                output.extend(group)
+                continue
+
+            weights = np.asarray([max(float(item["confidence"]), 1e-6) for item in group])
+            times = np.asarray([float(item["time"]) for item in group])
+            merged_time = float(np.average(times, weights=weights))
+            confidence = 1.0
+            for item in group:
+                confidence *= 1.0 - float(item["confidence"])
+            confidence = float(np.clip(1.0 - confidence, 0.0, 1.0))
+            evidence = []
+            for item in group:
+                for source in item.get("evidence_sources", []) or []:
+                    if source not in evidence:
+                        evidence.append(source)
+            merged = {
+                "candidate_id": "consensus:" + "+".join(str(item["candidate_id"]) for item in group),
+                "time": round(merged_time, 6),
+                "confidence": round(confidence, 6),
+                "evidence_sources": evidence,
+                "source_node": "BarStartCandidateConsensus",
+                "consensus_sources": distinct_sources,
+                "consensus_count": len(group),
+                "consensus_members": group,
+                "aggregation_reason": "independent_sources_within_50ms",
+            }
+            output.append(merged)
+            report_groups.append({
+                "time": merged["time"],
+                "member_count": len(group),
+                "distinct_sources": distinct_sources,
+                "member_times": [item["time"] for item in group],
+                "aggregated_confidence": merged["confidence"],
+            })
+        return sorted(output, key=lambda item: (item["time"], -item["confidence"])), {
+            "triggered": bool(report_groups),
+            "tolerance_sec": 0.05,
+            "groups": report_groups,
+        }
+
+    def _candidate_source_id(self, candidate: dict) -> str:
+        source_node = str(candidate.get("source_node") or "").strip()
+        if source_node and source_node != "unknown":
+            return source_node
+        sources = candidate.get("evidence_sources", []) or []
+        return str(sources[0]) if sources else "unknown"
+
+    def _conflicting_candidates(self, candidates: list[dict], expected: float | None) -> list[dict]:
+        if expected is None or expected <= 0 or len(candidates) < 2:
+            return []
+        return [
+            candidate for candidate in candidates
+            if any(
+                other is not candidate
+                and 0.05 < abs(float(candidate["time"]) - float(other["time"])) < expected
+                for other in candidates
+            )
+        ]
+
+    def _phase_consistency_score(
+        self, candidate_time: float, committed: list[float], expected: float
+    ) -> dict:
+        residuals = []
+        for previous in committed:
+            delta = float(candidate_time) - float(previous)
+            if delta <= 0:
+                continue
+            bars = max(1, int(round(delta / expected)))
+            residual = abs(delta - bars * expected)
+            residuals.append(residual)
+        if not residuals:
+            return {"score": 0.0, "matching_committed_bars": 0, "mean_residual_sec": None}
+        mean_residual = float(np.mean(residuals))
+        score = float(np.clip(1.0 - mean_residual / max(expected * 0.5, 1e-6), 0.0, 1.0))
+        matches = sum(1 for residual in residuals if residual <= expected * 0.18)
+        return {
+            "score": round(score, 6),
+            "matching_committed_bars": matches,
+            "mean_residual_sec": round(mean_residual, 6),
+        }
 
     def _exclude_already_committed(self, candidates: list[dict], committed: list[float]) -> list[dict]:
         if not committed:
@@ -2481,24 +2855,30 @@ class BarGridContinuityRepairNode(BaseNode):
         repaired = [bars[0]]
         inserted_count = 0
         removed_count = 0
+        inserted_bar_times = []
+        removed_bar_times = []
         for t in bars[1:]:
             prev = repaired[-1]
             gap = float(t - prev)
             if gap <= median_interval * self.duplicate_gap_ratio:
                 removed_count += 1
+                removed_bar_times.append(round(float(t), 6))
                 continue
             if gap >= median_interval * self.insert_gap_ratio:
                 steps = int(round(gap / median_interval))
                 insertions = max(0, steps - 1)
                 if 0 < insertions <= self.max_insertions_per_gap:
                     for step in range(1, insertions + 1):
-                        repaired.append(prev + median_interval * step)
+                        inserted_time = prev + median_interval * step
+                        repaired.append(inserted_time)
+                        inserted_bar_times.append(round(float(inserted_time), 6))
                         inserted_count += 1
             repaired.append(t)
 
         # Pass B: damp an isolated short/long bar-duration oscillation, mirroring
         # Stage 3's TempoOscillationDampingNode but at bar granularity.
         oscillation_damped = 0
+        oscillation_damped_bars = []
         for i in range(1, len(repaired) - 1):
             left = repaired[i] - repaired[i - 1]
             right = repaired[i + 1] - repaired[i]
@@ -2509,6 +2889,10 @@ class BarGridContinuityRepairNode(BaseNode):
             proposed = (repaired[i - 1] + repaired[i + 1]) / 2.0
             if abs(proposed - repaired[i]) < 0.02:
                 continue
+            oscillation_damped_bars.append({
+                "original_time": round(float(repaired[i]), 6),
+                "adjusted_time": round(float(proposed), 6),
+            })
             repaired[i] = proposed
             oscillation_damped += 1
 
@@ -2526,6 +2910,9 @@ class BarGridContinuityRepairNode(BaseNode):
             "inserted_bar_count": inserted_count,
             "removed_bar_count": removed_count,
             "oscillation_damped_count": oscillation_damped,
+            "inserted_bar_times": sorted(inserted_bar_times),
+            "removed_bar_times": sorted(removed_bar_times),
+            "oscillation_damped_bars": oscillation_damped_bars,
         })
         if status == "REPAIRED":
             print(
@@ -2650,16 +3037,46 @@ class BarStartTempoSmoothingNode(BaseNode):
         # says it is, no matter what happened upstream.
         smoothed_bars = np.where(drum_protected, bars_arr, smoothed_bars)
 
-        smoothed_count = int(np.sum(replace_mask))
+        attempted_smoothed_count = int(np.sum(replace_mask))
+        # Snapping a protected anchor back to its measured position can expose
+        # drift accumulated by earlier smoothed intervals.  That turns one
+        # valid anchor into a near-duplicate bar followed by a compensating
+        # long gap (Pass 208 observed 0.237339s / 2.85086s pairs).  A local
+        # smoother must never make the repaired grid structurally worse, so
+        # reject the whole smoothing pass when it introduces new duplicate- or
+        # skipped-bar-sized intervals compared with its input.
+        median_interval = float(np.median(intervals[valid_mask]))
+        duplicate_limit = median_interval * 0.42
+        skipped_limit = median_interval * 1.55
+
+        def _artifact_counts(values):
+            diffs = np.diff(values)
+            return (
+                int(np.sum(diffs <= duplicate_limit)),
+                int(np.sum(diffs >= skipped_limit)),
+            )
+
+        baseline_short, baseline_large = _artifact_counts(bars_arr)
+        smoothed_short, smoothed_large = _artifact_counts(smoothed_bars)
+        introduced_artifact_count = max(0, smoothed_short - baseline_short) + max(
+            0, smoothed_large - baseline_large
+        )
+        smoothing_rejected = bool(attempted_smoothed_count and introduced_artifact_count)
+        if smoothing_rejected:
+            smoothed_bars = bars_arr.copy()
+
+        smoothed_count = 0 if smoothing_rejected else attempted_smoothed_count
         drum_protected_count = int(np.sum(drum_protected))
         smoothed = sorted(round(float(t), 6) for t in smoothed_bars)
         if smoothed_count:
             blackboard.set_val("committed_bar_starts", smoothed)
 
         blackboard.set_val("bar_tempo_smoothing_report", {
-            "status": "SMOOTHED" if smoothed_count else "PASS",
+            "status": "REJECTED_GRID_ARTIFACT" if smoothing_rejected else ("SMOOTHED" if smoothed_count else "PASS"),
             "bar_count": len(smoothed),
             "smoothed_count": smoothed_count,
+            "attempted_smoothed_count": attempted_smoothed_count,
+            "introduced_artifact_count": introduced_artifact_count,
             "drum_protected_bar_count": drum_protected_count,
             "window_bars": self.window_bars,
             "tolerance_pct": self.tolerance_pct,
@@ -2914,9 +3331,10 @@ class BarStartV2QualityScoreNode(BaseNode):
     reference -- it no longer gates whether v2 is adopted.
 
     Reuses Stage 3's `_score_beat_grid_quality` on the final beat matrix, then
-    layers v2-specific penalties on top of it: unresolved bar probe spans, a
-    structurally repaired bar grid, and a downbeat rotation triggered by the
-    low-frequency verifier.
+    layers v2-specific penalties on top of it: unresolved bar probe spans and
+    a downbeat rotation triggered by the low-frequency verifier. A
+    structurally repaired bar grid is surfaced (repaired_bar_count/
+    repaired_bar_times) but is no longer scored -- see Pass 213.
     """
 
     required_keys = ["beats"]
@@ -2926,6 +3344,8 @@ class BarStartV2QualityScoreNode(BaseNode):
         "downbeat_fix_report",
         "bar_grid_repair_report",
         "unresolved_bar_spans",
+        "kick_anchors",
+        "stems",
     ]
     output_keys = ["barstart_v2_quality_score"]
 
@@ -2934,7 +3354,16 @@ class BarStartV2QualityScoreNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        base = _score_beat_grid_quality(beats)
+        # Pass 228: grounded in real kick_anchors + kick-stem downbeat-accent
+        # check instead of the bare _score_beat_grid_quality (whose only
+        # real-audio-grounded term collapses to a near-constant when called
+        # with no kick_anchors/sections, as this always did before). See
+        # docs/PASS-228-BEAT-GRID-QUALITY-SCORE-REAL-GROUNDING-TASK.md.
+        base = _score_beat_grid_grounded(
+            beats,
+            kick_anchors=blackboard.get_val("kick_anchors"),
+            kick_stem_path=(blackboard.get_val("stems", {}) or {}).get("kick"),
+        )
         score = float(base["score"])
         warnings = list(base.get("warnings", []))
 
@@ -2943,6 +3372,15 @@ class BarStartV2QualityScoreNode(BaseNode):
             score -= min(15.0, len(unresolved) * 5.0)
             warnings.append(f"unresolved_bar_spans={len(unresolved)}")
 
+        # Pass 213: bar-grid repairs are reported (count + exact positions) but
+        # no longer deducted from the score -- the previous min(8.0,
+        # repaired_count*2.0) formula had no documented rationale for either
+        # constant, and its hard cap made the score identically insensitive
+        # to 4 repaired bars vs 40. Whether a repair-heavy grid is acceptable
+        # is a promotion-gate decision (see evaluate_barstart_v2_completeness,
+        # which already reads bar_grid_repair_report/non_evidence_bar_ratio
+        # directly), not something to fold into this single number.
+        repaired_bar_times = []
         repair = blackboard.get_val("bar_grid_repair_report", {}) or {}
         if repair.get("status") == "REPAIRED":
             repaired_count = (
@@ -2951,8 +3389,15 @@ class BarStartV2QualityScoreNode(BaseNode):
                 + int(repair.get("oscillation_damped_count", 0) or 0)
             )
             if repaired_count:
-                score -= min(8.0, repaired_count * 2.0)
                 warnings.append(f"bar_grid_repairs={repaired_count}")
+                repaired_bar_times = sorted(
+                    list(repair.get("inserted_bar_times", []) or [])
+                    + list(repair.get("removed_bar_times", []) or [])
+                    + [
+                        entry.get("original_time")
+                        for entry in (repair.get("oscillation_damped_bars", []) or [])
+                    ]
+                )
 
         downbeat_fix = blackboard.get_val("downbeat_fix_report", {}) or {}
         if downbeat_fix.get("status") == "ROTATED":
@@ -2962,9 +3407,13 @@ class BarStartV2QualityScoreNode(BaseNode):
         result = {
             "score": round(float(np.clip(score, 0.0, 100.0)), 2),
             "base_score": base["score"],
+            "ungrounded_score": base.get("base_score", base["score"]),
             "tempo_stability": base["tempo_stability"],
             "downbeat_consistency": base["downbeat_consistency"],
+            "kick_downbeat_accent": base.get("kick_downbeat_accent"),
             "warnings": warnings,
+            "repaired_bar_count": len(repaired_bar_times),
+            "repaired_bar_times": repaired_bar_times,
         }
         blackboard.set_val("barstart_v2_quality_score", result)
         return NodeStatus.SUCCESS
@@ -3000,6 +3449,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
         "no_drum_phase_report",
         "lookahead_bar_candidates",
         "lookahead_anchor_report",
+        "lookahead_scan_report",
         "intervening_bar_count_candidates",
         "selected_intervening_bar_count",
         "bidirectional_alignment_report",
@@ -3010,6 +3460,8 @@ class Module3BarStartV2SummaryNode(BaseNode):
         "bar_grid_repair_report",
         "barstart_v2_quality_score",
         "full_song_loop_report",
+        "barstart_v2_run_id",
+        "barstart_v2_diagnostic_trace",
     ]
     output_keys = ["module3_outputs", "barstart_v2_report"]
 
@@ -3043,6 +3495,7 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "no_drum_phase_report": blackboard.get_val("no_drum_phase_report", {}),
             "lookahead_bar_candidates": blackboard.get_val("lookahead_bar_candidates", []),
             "lookahead_anchor_report": blackboard.get_val("lookahead_anchor_report", {}),
+            "lookahead_scan_report": blackboard.get_val("lookahead_scan_report", {}),
             "intervening_bar_count_candidates": blackboard.get_val("intervening_bar_count_candidates", []),
             "selected_intervening_bar_count": blackboard.get_val("selected_intervening_bar_count", {}),
             "bidirectional_alignment_report": blackboard.get_val("bidirectional_alignment_report", {}),
@@ -3050,13 +3503,29 @@ class Module3BarStartV2SummaryNode(BaseNode):
             "bar_start_decision_report": blackboard.get_val("bar_start_decision_report", {}),
             "unresolved_bar_spans": blackboard.get_val("unresolved_bar_spans", []),
             "full_song_loop_report": blackboard.get_val("full_song_loop_report", {}),
+            "run_id": blackboard.get_val("barstart_v2_run_id"),
+            "diagnostic_trace": blackboard.get_val("barstart_v2_diagnostic_trace", []),
             "bar_grid_repair_report": blackboard.get_val("bar_grid_repair_report", {}),
             "quality_score": blackboard.get_val("barstart_v2_quality_score", {}),
             "downbeat_fix_report": blackboard.get_val("downbeat_fix_report", {}),
             "promotion_gate": evaluate_barstart_v2_completeness(
                 unresolved_bar_spans=blackboard.get_val("unresolved_bar_spans", []),
+                carried_bar_ratio=(blackboard.get_val("full_song_loop_report", {}) or {}).get(
+                    "carried_bar_ratio"
+                ),
+                bar_grid_repair_report=blackboard.get_val("bar_grid_repair_report", {}),
+                final_bar_count=len(blackboard.get_val("committed_bar_starts", []) or []),
+                tail_extrapolated_bar_count=(
+                    blackboard.get_val("tail_extrapolated_bar_count", 0) or 0
+                ),
             ),
         }
+        outputs["barstart_v2_report"] = report
+        blackboard.set_val("barstart_v2_report", report)
+        blackboard.set_val("module3_outputs", outputs)
+        return NodeStatus.SUCCESS
+
+
 class TwoWayAnchorBacktraceNode(BaseNode):
     """
     Pass 168: 雙向確定錨點跳過與拍位反推節點 (TwoWayAnchorBacktraceNode)
@@ -3323,28 +3792,85 @@ class BarGridSanityPrunerNode(BaseNode):
         return NodeStatus.SUCCESS
 
 
-def evaluate_barstart_v2_completeness(*, unresolved_bar_spans=None):
+FALLBACK_CARRY_RATIO_THRESHOLD = 0.5
+
+
+def evaluate_barstart_v2_completeness(
+    *,
+    unresolved_bar_spans=None,
+    carried_bar_ratio=None,
+    bar_grid_repair_report=None,
+    final_bar_count=None,
+    tail_extrapolated_bar_count=None,
+):
     """Return whether v2's grid is complete enough to adopt as the main
     output.
 
-    Earlier versions gated v2 behind either a strict human-acceptance
-    promotion gate (evaluate_barstart_v2_promotion_gate) or an automatic
-    v1-vs-v2 quality-score comparison (evaluate_barstart_v2_auto_promotion_gate).
-    Both were retired once real listening tests confirmed v2 consistently
-    sounds better than v1 -- v2 is now the default output everywhere, so
-    there is nothing left to compare or get human sign-off on. The only
-    thing that can still legitimately block adoption is v2 itself failing
-    to finish: if the evidence ladder leaves unresolved bar spans, that
-    portion of the song has no real v2 answer and falling back to v1 is
-    safer than shipping a grid with known gaps.
+    A zero unresolved-span count is necessary but not sufficient: the loop can
+    reach it by carrying bars from the legacy v1 grid after repeated stalls.
+    V2 is adoptable only when it covers the song and the non-evidence bar ratio
+    stays below the conservative research threshold. The ratio supplied by the
+    full-song loop is retained for compatibility, while bars inserted by the
+    downstream grid-repair node are counted separately and together. Pass 211
+    tail extrapolation is counted in the same non-evidence pool.
     """
     unresolved_count = len(unresolved_bar_spans or [])
-    blockers = ["UNRESOLVED_BAR_SPANS_PRESENT"] if unresolved_count else []
+    try:
+        ratio = float(carried_bar_ratio) if carried_bar_ratio is not None else 0.0
+    except (TypeError, ValueError):
+        ratio = 0.0
+    ratio = float(np.clip(ratio, 0.0, 1.0))
+    repair_report = dict(bar_grid_repair_report or {})
+    try:
+        inserted_count = max(0, int(repair_report.get("inserted_bar_count", 0) or 0))
+    except (TypeError, ValueError):
+        inserted_count = 0
+    try:
+        tail_count = max(0, int(tail_extrapolated_bar_count or 0))
+    except (TypeError, ValueError):
+        tail_count = 0
+    if final_bar_count is None:
+        final_bar_count = repair_report.get("bar_count_after", 0)
+    try:
+        final_count = max(0, int(final_bar_count or 0))
+    except (TypeError, ValueError):
+        final_count = 0
+    repaired_ratio = (
+        float(np.clip(inserted_count / final_count, 0.0, 1.0))
+        if final_count else 0.0
+    )
+    non_evidence_count = inserted_count + tail_count
+    non_evidence_ratio = (
+        float(np.clip(ratio + (non_evidence_count / final_count), 0.0, 1.0))
+        if final_count else 0.0
+    )
+    blockers = []
+    if unresolved_count:
+        blockers.append("UNRESOLVED_BAR_SPANS_PRESENT")
+    if ratio > FALLBACK_CARRY_RATIO_THRESHOLD:
+        blockers.append("EXCESSIVE_FALLBACK_CARRY_RATIO")
+    if repaired_ratio > FALLBACK_CARRY_RATIO_THRESHOLD:
+        blockers.append("EXCESSIVE_BAR_GRID_REPAIR_RATIO")
+    if non_evidence_ratio > FALLBACK_CARRY_RATIO_THRESHOLD:
+        blockers.append("EXCESSIVE_NON_EVIDENCE_BAR_RATIO")
     return {
         "adoptable": not blockers,
         "status": "V2_READY" if not blockers else "V2_INCOMPLETE",
         "blockers": blockers,
         "unresolved_bar_span_count": unresolved_count,
+        "carried_bar_ratio": round(ratio, 6),
+        "carried_bar_ratio_threshold": FALLBACK_CARRY_RATIO_THRESHOLD,
+        "bar_grid_inserted_count": inserted_count,
+        "repaired_bar_ratio": round(repaired_ratio, 6),
+        "tail_extrapolated_bar_count": tail_count,
+        "tail_extrapolation_ratio": round(
+            float(np.clip(tail_count / final_count, 0.0, 1.0))
+            if final_count else 0.0,
+            6,
+        ),
+        "non_evidence_bar_count": non_evidence_count,
+        "non_evidence_bar_ratio": round(non_evidence_ratio, 6),
+        "final_bar_count": final_count,
     }
 
 
@@ -3409,12 +3935,124 @@ def build_module3_barstart_v2_probe_tick_tree() -> SequenceNode:
     ])
 
 
+class TailBarExtrapolationNode(BaseNode):
+    """Fill an evidence-poor tail from the last trusted bar only.
+
+    This is intentionally separate from the bidirectional transition nodes:
+    the audio duration is the only available right-hand boundary at the end of
+    a song. The number of bar intervals is estimated from the recent committed
+    intervals, then the entire remaining range is divided evenly so the tail
+    cannot inherit a fixed-step remainder artifact.
+    """
+
+    optional_keys = [
+        "committed_bar_starts",
+        "audio_duration_sec",
+        "y",
+        "sr",
+        "unresolved_bar_spans",
+    ]
+    output_keys = [
+        "committed_bar_starts",
+        "tail_extrapolation_report",
+        "tail_extrapolated_bars",
+    ]
+
+    def __init__(self, recent_interval_count: int = 4):
+        super().__init__("TailBarExtrapolationNode")
+        self.recent_interval_count = max(1, int(recent_interval_count))
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        bars = ManualCommittedBarStartsSeedNode()._normalize_times(
+            blackboard.get_val("committed_bar_starts")
+        )
+        duration_cap = NoDrumPhaseCarryNode()._audio_duration_cap(blackboard)
+        unresolved = list(blackboard.get_val("unresolved_bar_spans", []) or [])
+        report = {
+            "triggered": False,
+            "reason": "NOOP",
+            "anchor_time": bars[-1] if bars else None,
+            "duration_cap_sec": duration_cap,
+            "expected_bar_duration_sec": None,
+            "expected_bar_duration_source": "recent_committed_median",
+            "remaining_sec": None,
+            "extrapolated_bar_count": 0,
+            "step_sec": None,
+            "bars": [],
+        }
+        blackboard.set_val("tail_extrapolated_bars", [])
+        blackboard.set_val("tail_extrapolated_bar_count", 0)
+
+        if len(bars) < 2 or duration_cap is None:
+            report["reason"] = "MISSING_ANCHOR_OR_DURATION"
+            blackboard.set_val("tail_extrapolation_report", report)
+            return NodeStatus.SUCCESS
+
+        intervals = np.diff(np.asarray(bars, dtype=float))
+        valid = intervals[np.isfinite(intervals) & (intervals > 0.05)]
+        recent = valid[-self.recent_interval_count:]
+        expected = float(np.median(recent)) if len(recent) else None
+        remaining = float(duration_cap) - float(bars[-1])
+        report["expected_bar_duration_sec"] = round(expected, 6) if expected else None
+        report["remaining_sec"] = round(max(0.0, remaining), 6)
+
+        has_tail_failure = any(
+            span.get("reason") in {"no_candidates", "no_upstream_candidates"}
+            and self._overlaps_tail(span, bars[-1], duration_cap)
+            for span in unresolved
+        )
+        if not has_tail_failure:
+            report["reason"] = "NO_UNRESOLVED_TAIL"
+        elif expected is None or remaining <= expected * 0.5:
+            report["reason"] = "TAIL_REMAINDER_WITHIN_HALF_BAR"
+        else:
+            count = max(1, int(round(remaining / expected)))
+            step = remaining / count
+            extrapolated = [
+                round(float(bars[-1] + step * index), 6)
+                for index in range(1, count + 1)
+            ]
+            entries = [
+                {
+                    "time": time_sec,
+                    "confidence": 0.0,
+                    "evidence_sources": ["tail_extrapolation"],
+                    "source": "tail_extrapolation",
+                }
+                for time_sec in extrapolated
+            ]
+            merged = sorted(set(bars + extrapolated))
+            blackboard.set_val("committed_bar_starts", merged)
+            blackboard.set_val("tail_extrapolated_bars", entries)
+            blackboard.set_val("tail_extrapolated_bar_count", len(entries))
+            report.update({
+                "triggered": True,
+                "reason": "EXTRAPOLATED_FROM_DURATION_CAP",
+                "extrapolated_bar_count": len(entries),
+                "step_sec": round(step, 6),
+                "bars": entries,
+            })
+
+        blackboard.set_val("tail_extrapolation_report", report)
+        return NodeStatus.SUCCESS
+
+    def _overlaps_tail(self, span: dict, anchor: float, duration_cap: float) -> bool:
+        try:
+            start = float(span.get("start_time"))
+            end = float(span.get("end_time"))
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return start >= anchor - 0.05 and end >= duration_cap - 0.05
+
+
 class FullSongBarStartLoopNode(BaseNode):
     """Drives the single-bar probe/commit tick across an entire song.
 
     Stop conditions, checked once per tick:
     - `reached_audio_duration`: the last committed bar reached the known
       audio length (`audio_duration_sec`, or derived from `y`/`sr`).
+      A probe window whose own start has reached that same cap also stops the
+      loop before spending a tick outside the audio range.
     - `stalled_no_recovery`: no bar committed for `stall_limit` consecutive
       ticks *and* `NoDrumPhaseCarryNode` had nothing in `provisional_bar_starts`
       to fall back on either -- a genuine dead end (e.g. silence).
@@ -3435,7 +4073,11 @@ class FullSongBarStartLoopNode(BaseNode):
         "sr",
         "provisional_bar_starts",
     ]
-    output_keys = ["committed_bar_starts", "full_song_loop_report"]
+    output_keys = [
+        "committed_bar_starts",
+        "full_song_loop_report",
+        "barstart_v2_diagnostic_trace",
+    ]
 
     def __init__(self, max_iterations: int = 500, stall_limit: int = 3):
         super().__init__("FullSongBarStartLoopNode")
@@ -3446,8 +4088,13 @@ class FullSongBarStartLoopNode(BaseNode):
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         duration_cap = NoDrumPhaseCarryNode()._audio_duration_cap(blackboard)
+        run_id = str(blackboard.get_val("barstart_v2_run_id") or uuid4())
+        blackboard.set_val("barstart_v2_run_id", run_id)
+        initial_committed = self._normalize(blackboard.get_val("committed_bar_starts"))
+        diagnostic_trace = []
         stall_count = 0
         stall_recoveries = 0
+        carried_bar_count = 0
         iterations = 0
         stop_reason = "max_iterations_reached"
 
@@ -3463,52 +4110,286 @@ class FullSongBarStartLoopNode(BaseNode):
                 stop_reason = "reached_audio_duration"
                 break
 
+            active_window = blackboard.get_val("active_bar_probe_window", {}) or {}
+            try:
+                probe_start = float(active_window.get("start_time"))
+            except (AttributeError, TypeError, ValueError):
+                probe_start = None
+            if duration_cap is not None and probe_start is not None and probe_start >= duration_cap:
+                # The rolling window can advance after repeated no-candidate
+                # results even when the last committed bar is still just short
+                # of the cap. Once the next window starts at/after the end of
+                # the audio, running that tick would create a false unresolved
+                # span for a region that cannot contain evidence.
+                stop_reason = "reached_audio_duration"
+                break
+
+            unresolved_before_tick = list(blackboard.get_val("unresolved_bar_spans", []) or [])
             iterations += 1
             self._tick.run(blackboard, parent=self.name)
+            active_window = blackboard.get_val("active_bar_probe_window", {}) or {}
+            try:
+                probe_start = float(active_window.get("start_time"))
+            except (AttributeError, TypeError, ValueError):
+                probe_start = None
+            if duration_cap is not None and probe_start is not None and probe_start >= duration_cap:
+                # RollingProbeWindowNode discovers this boundary while
+                # creating the tick itself. Discard every mutation from that
+                # out-of-range tick so it cannot masquerade as real missing
+                # evidence (or commit a candidate outside the source audio).
+                blackboard.set_val("committed_bar_starts", before)
+                blackboard.set_val("unresolved_bar_spans", unresolved_before_tick)
+                stop_reason = "reached_audio_duration"
+                break
             after = self._normalize(blackboard.get_val("committed_bar_starts"))
+            decision = dict(blackboard.get_val("bar_start_decision_report", {}) or {})
+            carried_this_tick = 0
 
             if len(after) > len(before):
                 stall_count = 0
-                continue
+            else:
+                stall_count += 1
+                if stall_count >= self.stall_limit:
+                    provisional = self._normalize(blackboard.get_val("provisional_bar_starts"))
+                    if provisional:
+                        merged = sorted(set(after) | set(provisional))
+                        carried_this_tick = len(set(merged) - set(after))
+                        carried_bar_count += carried_this_tick
+                        blackboard.set_val("committed_bar_starts", merged)
+                        after = merged
+                        stall_recoveries += 1
+                        stall_count = 0
+                        # Pass 212: the carry jumps committed_bar_starts to a
+                        # new anchor discontinuously, but RollingProbeWindowNode
+                        # still has the pre-carry tick's failed
+                        # last_bar_probe_result on the blackboard. Left alone,
+                        # it keeps extrapolating the next window from that
+                        # stale failure's window_end instead of the new
+                        # anchor, so the search drifts further from real
+                        # content with every tick until it runs straight past
+                        # duration_cap without ever probing near the carried
+                        # position (verified: test_sdd_pass126 stalled at
+                        # 18.0s instead of reaching ~20s for exactly this
+                        # reason). Clearing it forces the next window to
+                        # re-anchor fresh at the carried committed[-1].
+                        blackboard.set_val("last_bar_probe_result", {})
+                    else:
+                        stop_reason = "stalled_no_recovery"
 
-            stall_count += 1
-            if stall_count < self.stall_limit:
-                continue
+            diagnostic_trace.append(self._tick_diagnostic(
+                run_id=run_id,
+                tick=iterations,
+                before=before,
+                after=after,
+                decision=decision,
+                window=blackboard.get_val("active_bar_probe_window", {}) or {},
+                stall_count=stall_count,
+                carried_this_tick=carried_this_tick,
+                blackboard=blackboard,
+            ))
+            if stop_reason == "stalled_no_recovery":
+                break
 
-            provisional = self._normalize(blackboard.get_val("provisional_bar_starts"))
-            if provisional:
-                merged = sorted(set(after) | set(provisional))
-                blackboard.set_val("committed_bar_starts", merged)
-                stall_recoveries += 1
-                stall_count = 0
-                continue
-
-            stop_reason = "stalled_no_recovery"
-            break
+        # Pass 171: 後處理節點旗標開關，供多版本比較 harness 獨立開關 Pass 168/169/170，
+        # 藉此在同一份程式碼上跑出多個變體、用實測數據 (而非臆測) 定位回歸來源。
+        # 未指定時三者皆預設為 True，行為與 Pass 170 完全相同。
+        postprocess_flags = blackboard.get_val("barstart_v2_postprocess_flags", {}) or {}
+        loop_committed_before_postprocess = self._normalize(
+            blackboard.get_val("committed_bar_starts")
+        )
 
         # Pass 168: 執行雙向確信錨點跳過與拍位反推，修復切分音搶拍導致的第 1 拍位移
-        TwoWayAnchorBacktraceNode().execute(blackboard)
+        if postprocess_flags.get("twoway_backtrace", True):
+            TwoWayAnchorBacktraceNode().execute(blackboard)
         # Pass 169: 執行鼓型拍位解碼與雙聲部和弦鎖定，修復重音不在第 1 拍 (反拍/雷鬼) 的相位位移
-        GroovePatternPhaseDecoderNode().execute(blackboard)
+        if postprocess_flags.get("groove_phase_decode", True):
+            GroovePatternPhaseDecoderNode().execute(blackboard)
         # Pass 170: 過濾 Ghost 殘片小節 (duration < 0.6 * global_median)，消除 BPM 跳動超過 35% 問題
-        BarGridSanityPrunerNode().execute(blackboard)
+        if postprocess_flags.get("sanity_pruner", True):
+            BarGridSanityPrunerNode().execute(blackboard)
 
+        # Pass 211: only after the normal probe and post-process path has
+        # stopped, use the duration cap as the missing right-hand anchor for
+        # an unresolved tail. This never participates in candidate selection.
+        TailBarExtrapolationNode().execute(blackboard)
+        tail_extrapolation_report = dict(
+            blackboard.get_val("tail_extrapolation_report", {}) or {}
+        )
         final = self._normalize(blackboard.get_val("committed_bar_starts"))
-        blackboard.set_val("full_song_loop_report", {
+        unresolved_before_reconciliation = list(
+            blackboard.get_val("unresolved_bar_spans", []) or []
+        )
+        unresolved = self._reconcile_unresolved_spans(
+            blackboard, final, unresolved_before_reconciliation
+        )
+        blackboard.set_val("unresolved_bar_spans", unresolved)
+        if tail_extrapolation_report.get("triggered"):
+            anchor = tail_extrapolation_report.get("anchor_time")
+            duration_cap_for_tail = tail_extrapolation_report.get("duration_cap_sec")
+            unresolved = [
+                span
+                for span in unresolved
+                if not TailBarExtrapolationNode()._overlaps_tail(
+                    span, float(anchor), float(duration_cap_for_tail)
+                )
+            ]
+            blackboard.set_val("unresolved_bar_spans", unresolved)
+        all_probe_failures_ever = list(
+            blackboard.get_val("all_probe_failures_ever", []) or []
+        )
+        carried_bar_ratio = (
+            float(np.clip(carried_bar_count / len(final), 0.0, 1.0))
+            if final else 0.0
+        )
+        diagnostic_counts = {}
+        for item in diagnostic_trace:
+            classification = item.get("diagnostic_classification", "unknown")
+            diagnostic_counts[classification] = diagnostic_counts.get(classification, 0) + 1
+        loop_report = {
+            "run_id": run_id,
             "status": "COMPLETED" if stop_reason != "max_iterations_reached" else "MAX_ITERATIONS_REACHED",
             "iterations": iterations,
             "committed_bar_count": len(final),
+            "initial_committed_bar_starts": initial_committed,
+            "loop_committed_bar_starts": loop_committed_before_postprocess,
+            "final_committed_bar_starts": final,
+            "last_committed_time": final[-1] if final else None,
+            "duration_cap_sec": duration_cap,
+            "final_probe_window": blackboard.get_val("active_bar_probe_window", {}) or {},
+            # Pass 215: snapshot of the tempo-scaled window/lookahead-horizon
+            # policy from the last tick -- was computed every tick but never
+            # reached any report that survives to the final output JSON
+            # (same class of gap Pass 213 found for bar_grid_repair_report).
+            "final_probe_policy": blackboard.get_val("bar_probe_policy", {}) or {},
+            "final_lookahead_scan_report": blackboard.get_val("lookahead_scan_report", {}) or {},
             "stall_recoveries": stall_recoveries,
+            "carried_bar_count": carried_bar_count,
+            "carried_bar_ratio": round(carried_bar_ratio, 6),
             "stop_reason": stop_reason,
-            "unresolved_span_count": len(blackboard.get_val("unresolved_bar_spans", []) or []),
-        })
+            "unresolved_span_count": len(unresolved),
+            "all_probe_failures_ever": all_probe_failures_ever,
+            "tail_extrapolation": tail_extrapolation_report,
+            "tail_extrapolated_bar_count": int(
+                blackboard.get_val("tail_extrapolated_bar_count", 0) or 0
+            ),
+            "diagnostic_classification_counts": diagnostic_counts,
+            "diagnostic_trace": diagnostic_trace,
+        }
+        blackboard.set_val("barstart_v2_diagnostic_trace", diagnostic_trace)
+        blackboard.set_val("full_song_loop_report", loop_report)
         return NodeStatus.SUCCESS
+
+    def _reconcile_unresolved_spans(
+        self,
+        blackboard: Blackboard,
+        final_committed_bar_starts: list[float],
+        unresolved_spans: list[dict] | None = None,
+    ) -> list[dict]:
+        """Drop only spans subsequently covered by a regular final-grid bar.
+
+        The probe history is intentionally left untouched in
+        ``all_probe_failures_ever``. This list is the gate-facing view: a
+        failed probe is no longer unresolved when a later final-grid interval
+        straddles the failed window's start and has the expected bar-length
+        phase. A tail span with no following bar therefore remains unresolved.
+        """
+        spans = list(
+            unresolved_spans
+            if unresolved_spans is not None
+            else blackboard.get_val("unresolved_bar_spans", []) or []
+        )
+        starts = sorted(
+            {
+                round(float(value), 6)
+                for value in (final_committed_bar_starts or [])
+                if value is not None
+            }
+        )
+        expected = BarStartCandidateCommitNode()._expected_bar_duration(blackboard)
+        if len(starts) < 2 or not expected or expected <= 0:
+            return spans
+
+        tolerance = max(0.12, float(expected) * 0.12)
+        regular_intervals = []
+        for previous, current in zip(starts, starts[1:]):
+            gap = current - previous
+            multiple = max(1, int(round(gap / expected)))
+            residual = abs(gap - multiple * expected)
+            if residual <= tolerance:
+                regular_intervals.append((previous, current))
+
+        retained = []
+        for span in spans:
+            # Pass 210's reconciliation is deliberately narrow: only a
+            # confidence miss can be superseded by a later normal commit.
+            # A no-candidate span is still evidence that the source supplied
+            # no support at that point and must remain visible to the gate.
+            if span.get("reason") != "confidence_below_threshold":
+                retained.append(span)
+                continue
+            try:
+                span_start = float(span.get("start_time"))
+            except (AttributeError, TypeError, ValueError):
+                retained.append(span)
+                continue
+            covered = any(
+                previous <= span_start <= current
+                for previous, current in regular_intervals
+            )
+            if not covered:
+                retained.append(span)
+        return retained
+
+    def _tick_diagnostic(
+        self,
+        run_id: str,
+        tick: int,
+        before: list[float],
+        after: list[float],
+        decision: dict,
+        window: dict,
+        stall_count: int,
+        carried_this_tick: int,
+        blackboard: Blackboard,
+    ) -> dict:
+        source_keys = {
+            "drum": "drum_bar_evidence_report",
+            "drum_bass": "drum_bass_evidence_report",
+            "chord": "harmonic_anchor_evidence_report",
+            "melody": "phrase_anchor_evidence_report",
+            "v1_grid": "v1_grid_evidence_report",
+            "beat_this": "beat_this_candidate_report",
+        }
+        source_reports = {}
+        for source, key in source_keys.items():
+            report = dict(blackboard.get_val(key, {}) or {})
+            source_reports[source] = {
+                "status": report.get("status"),
+                "candidate_count": report.get("candidate_count", 0),
+            }
+        return {
+            "run_id": run_id,
+            "tick": tick,
+            "window": dict(window),
+            "before_committed_bar_count": len(before),
+            "after_committed_bar_count": len(after),
+            "last_committed_time": after[-1] if after else None,
+            "stall_count": stall_count,
+            "carried_this_tick": carried_this_tick,
+            "decision_status": decision.get("status"),
+            "decision_reason": decision.get("reason"),
+            "diagnostic_classification": decision.get("diagnostic_classification", "unknown"),
+            "candidate_filter_diagnostics": decision.get("candidate_filter_diagnostics", {}),
+            "source_reports": source_reports,
+        }
 
     def _normalize(self, raw) -> list[float]:
         return ManualCommittedBarStartsSeedNode()._normalize_times(raw)
 
 
 def build_module3_barstart_v2_pipeline_tree() -> BaseNode:
-    """Pass 166: 委派呼叫主樹 build_module3_pipeline_tree()，確保獲得 Stage 3 完整的 BeatNet / v1 網格與融合資料。"""
+    """Pass 166: 委派呼叫主樹 build_module3_pipeline_tree()，確保獲得 Stage 3 完整的 BeatNet / v1 網格與融合資料。
+    Pass 175: 委派時強制 stem_mode='beat_only'，恢復 Pass 166 之前 standalone module3_barstart_v2
+    呼叫該有的輕量分軌行為（只分出節拍分析必要音色），不影響 target_stage="module3" 仍走 'full'。"""
     from pgm_craft.workflow.module3_bt import build_module3_pipeline_tree
-    return build_module3_pipeline_tree()
+    return build_module3_pipeline_tree(stem_mode="beat_only")

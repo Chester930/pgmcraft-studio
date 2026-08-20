@@ -130,6 +130,10 @@ class BTWorkflowEngine:
         manual_bar_starts=None,
         user_meter_selection=None,
         allow_temporary_bar_delta=None,
+        barstart_v2_postprocess_flags=None,
+        barstart_v2_promotion_approved=None,
+        madmom_hybrid_approved=None,
+        madmom_hybrid_micro_timing_snap_enabled=None,
     ):
         if target_stage is not None and target_stage != self.target_stage:
             self.target_stage = target_stage
@@ -150,6 +154,31 @@ class BTWorkflowEngine:
             blackboard.set_val("user_meter_selection", user_meter_selection)
         if allow_temporary_bar_delta is not None:
             blackboard.set_val("allow_temporary_bar_delta", allow_temporary_bar_delta)
+        if barstart_v2_postprocess_flags is not None:
+            # Pass 171: 讓多版本比較 harness 能獨立開關 Pass 168/169/170 後處理節點
+            blackboard.set_val("barstart_v2_postprocess_flags", barstart_v2_postprocess_flags)
+        if barstart_v2_promotion_approved is not None:
+            # Pass 211: promotion_gate.adoptable is an objective readiness
+            # signal only -- replacing legacy v1 additionally requires this
+            # explicit, caller-supplied approval (Module3BarStartV2MergeNode /
+            # BarStartV2AutoMergeNode's _barstart_v2_promotion_decision).
+            # Defaults to unset/False so every other caller keeps the
+            # existing safe (legacy-default) behavior unchanged.
+            blackboard.set_val(
+                "barstart_v2_promotion_approved", barstart_v2_promotion_approved
+            )
+        if madmom_hybrid_approved is not None:
+            # Pass 236: madmom-primary segment splice is opt-in only.  Leaving
+            # this unset preserves the existing V2 output for every caller.
+            blackboard.set_val("madmom_hybrid_approved", madmom_hybrid_approved)
+        if madmom_hybrid_micro_timing_snap_enabled is not None:
+            # Pass 246: keep the post-hybrid transient snap independently
+            # switchable for A/B verification.  When unset, the node follows
+            # madmom_hybrid_approved instead of changing legacy callers.
+            blackboard.set_val(
+                "madmom_hybrid_micro_timing_snap_enabled",
+                madmom_hybrid_micro_timing_snap_enabled,
+            )
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow (Target: {self.target_stage}) for {audio_path} ===")
         status = self.tree.run(blackboard)

@@ -592,13 +592,22 @@ class DownbeatRefineNode(BaseNode):
 class MeasureMapNode(BaseNode):
     """將 beat/downbeat 資料整理成允許變動小節長度的 measure map。"""
     required_keys = ["beats", "beat_validation"]
-    optional_keys = ["refined_beats", "downbeat_refinement", "output_dir", "project_dir"]
-    output_keys = ["measure_map", "measure_map_status", "measure_map_warnings", "measure_map_json"]
+    optional_keys = [
+        "refined_beats", "downbeat_refinement", "output_dir", "project_dir",
+        "beat_phase_protected_ranges",
+    ]
+    output_keys = ["measure_map", "measure_map_status", "measure_map_warnings", "measure_map_json", "phase_reconciliation"]
 
     FALLBACK_MEASURE_LENGTH = 4
+    # Pass 188：交界處相位跳躍會讓 anchor 前一個小節 beat_count 偏小；
+    # 當 beat_count < common_length（即不規則的少拍小節），合併給前一個（不動首尾）。
+    # 用 1.0 而不是 0.75：「少於 common_length 的中間小節」才是需要修復的，
+    # 跟 is_variable_length 的定義一致——差了任何 1 拍都算不規則。
+    SHORT_MEASURE_MERGE_THRESHOLD = 1.0
 
     def __init__(self):
         super().__init__("MeasureMapNode")
+        self.last_phase_reconciliation = []
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         beat_validation = blackboard.get_val("beat_validation", {})
@@ -609,17 +618,28 @@ class MeasureMapNode(BaseNode):
 
         downbeat_refinement = blackboard.get_val("downbeat_refinement", {})
         beats = blackboard.get_val("refined_beats", blackboard.get_val("beats"))
-        measure_map, status, warnings = self.build_measure_map(beats, beat_validation, downbeat_refinement)
+        protected_ranges = blackboard.get_val("beat_phase_protected_ranges", []) or []
+        measure_map, status, warnings = self.build_measure_map(
+            beats, beat_validation, downbeat_refinement, protected_ranges=protected_ranges,
+            stems=blackboard.get_val("stems", {}) or {},
+            stems_dir=blackboard.get_val("stems_dir", "") or "",
+        )
         blackboard.set_val("measure_map", measure_map)
         blackboard.set_val("measure_map_status", status)
         blackboard.set_val("measure_map_warnings", warnings)
+        blackboard.set_val("phase_reconciliation", self.last_phase_reconciliation)
 
         project_dir = blackboard.get_val("project_dir")
         output_dir = os.path.join(project_dir, "reports") if project_dir else blackboard.get_val("output_dir", "outputs")
         os.makedirs(output_dir, exist_ok=True)
         json_path = os.path.join(output_dir, "measure_map.json")
         with open(json_path, "w", encoding="utf-8") as f:
-            json.dump({"measure_map": measure_map, "status": status, "warnings": warnings}, f, ensure_ascii=False, indent=2)
+            json.dump({
+                "measure_map": measure_map,
+                "status": status,
+                "warnings": warnings,
+                "phase_reconciliation": self.last_phase_reconciliation,
+            }, f, ensure_ascii=False, indent=2)
 
         blackboard.set_val("measure_map_json", json_path)
 
@@ -632,20 +652,94 @@ class MeasureMapNode(BaseNode):
         print(f"[BT Node: {self.name}] Built {len(measure_map)} measures to {json_path}.")
         return NodeStatus.SUCCESS
 
-    def build_measure_map(self, beats, beat_validation=None, downbeat_refinement=None):
+    def _normalize_beats(self, beats):
+        if beats is None:
+            return []
+        rows = []
+        for row in np.asarray(beats):
+            if len(row) < 2:
+                continue
+            rows.append({"time": float(row[0]), "beat": int(row[1])})
+        return sorted(rows, key=lambda item: item["time"])
+
+    def build_measure_map(
+        self, beats, beat_validation=None, downbeat_refinement=None,
+        protected_ranges=None, stems=None, stems_dir=""
+    ):
         warnings = []
+        self.last_phase_reconciliation = []
         beat_rows = self._normalize_beats(beats)
         if not beat_rows:
             return [], "FAIL", ["沒有可用 beat，無法建立 measure map。"]
+
+        # Pass 193/194：全曲 4/4 拍連貫重排，消除碎拍與亂切點；
+        # Pass 194 修正：尊重 beat_phase_protected_ranges，不再無視錨定證據整曲重推。
+        beat_rows = self._ensure_44_phase_continuity(beat_rows, protected_ranges)
 
         downbeat_source = (downbeat_refinement or {}).get("source", "downbeat")
         using_fallback_refinement = downbeat_source.startswith("fallback")
         downbeat_indexes = [index for index, row in enumerate(beat_rows) if row["beat"] == 1]
         if len(downbeat_indexes) >= 2:
+            # Pass 197A：兩個候選 downbeat 若少於一個 4/4 小節，不能因為
+            # 兩者各自落在 protected range 就同時當成小節起點。以候選前後
+            # 多個小節的全域相位一致性仲裁，避免局部合理的錯誤相位污染整曲。
+            downbeat_indexes, reconciliation = self._reconcile_close_downbeats(
+                beat_rows, downbeat_indexes, protected_ranges
+            )
+            self.last_phase_reconciliation = reconciliation
+            if reconciliation:
+                warnings.append(
+                    f"Pass 197A 已仲裁 {len(reconciliation)} 個近距離 downbeat 衝突；"
+                    "詳細分數已寫入 measure_map.json。"
+                )
+                # 勝者確定後重新做一次局部 4/4 標號，讓勝者與下一個
+                # 確認錨點之間補回遺失的中繼 beat 1；不會對乾淨區段重推。
+                beat_rows = self._ensure_44_phase_continuity(beat_rows, protected_ranges)
+                downbeat_indexes = [
+                    index for index, row in enumerate(beat_rows) if row["beat"] == 1
+                ]
+            beat_rows, gap_reconciliation = self._interpolate_protected_gaps(
+                beat_rows, downbeat_indexes, protected_ranges
+            )
+            if gap_reconciliation:
+                self.last_phase_reconciliation.extend(gap_reconciliation)
+                warnings.append(
+                    f"Pass 197B 已插值 {len(gap_reconciliation)} 個有雙端錨點的 4/4 空隙；"
+                    "詳細端點與推定小節數已寫入 measure_map.json。"
+                )
+                downbeat_indexes = [
+                    index for index, row in enumerate(beat_rows) if row["beat"] == 1
+                ]
+            beat_rows, promotion_reconciliation = self._promote_intra_bar_downbeats(
+                beat_rows, downbeat_indexes, protected_ranges,
+                stems=stems or {}, stems_dir=stems_dir,
+            )
+            if promotion_reconciliation:
+                self.last_phase_reconciliation.extend(promotion_reconciliation)
+                warnings.append(
+                    f"Pass 198A 已升格 {len(promotion_reconciliation)} 個小節內隱藏 downbeat；"
+                    "詳細殘差與候選時間已寫入 measure_map.json。"
+                )
+                downbeat_indexes = [
+                    index for index, row in enumerate(beat_rows) if row["beat"] == 1
+                ]
+            # Pass 198 section 9.2: stage B (_interpolate_weak_evidence_gaps)
+            # was removed. Its post-interpolation conflict-cleanup demoted
+            # legitimate downstream protected anchors whenever they landed
+            # under one bar length away (no jitter margin), producing a
+            # self-reinforcing cascade that replaced ~85% of the song's
+            # downbeats with a re-guessed grid. Verified offline (see
+            # docs/PASS-198-INTRA-BAR-DOWNBEAT-PROMOTION-TASK.md section 9)
+            # that stage A alone reproduces the trusted Pass 197 baseline
+            # (114 measures, 10 irregular) with the intra-bar promotions
+            # correctly relocating a few known problem points. The removed
+            # method's source remains in git history (commit 8bf39e8) if a
+            # safer replacement is designed later.
             measure_map = self._build_from_downbeats(
                 beat_rows,
                 downbeat_indexes,
                 source="fallback_4beat" if using_fallback_refinement else "downbeat",
+                protected_ranges=protected_ranges,
             )
             status = "WARN" if using_fallback_refinement else "PASS"
             if using_fallback_refinement:
@@ -662,20 +756,400 @@ class MeasureMapNode(BaseNode):
 
         return measure_map, status, warnings
 
-    def _normalize_beats(self, beats):
-        if beats is None:
-            return []
-        rows = []
-        for row in np.asarray(beats):
-            if len(row) < 2:
-                continue
-            rows.append({"time": float(row[0]), "beat": int(row[1])})
-        return sorted(rows, key=lambda item: item["time"])
+    def _reconcile_close_downbeats(self, beat_rows, downbeat_indexes, protected_ranges=None):
+        """Pass 197A：以全域 4/4 相位一致性消解近距離 downbeat 衝突。
 
-    def _build_from_downbeats(self, beat_rows, downbeat_indexes, source="downbeat"):
+        只處理候選索引間距小於 4 的局部衝突；正常 4/4 區段完全不改動。
+        每個候選的分數來自前方最多 12 個候選與其 4 拍相位的聚合一致性，
+        而不是單一鄰居外推。以前方已確認相位作為主錨點，可避免錯誤候選
+        反過來污染後方視窗；曲首沒有前方證據時才使用後續候選的平手資訊。
+        """
+        if len(downbeat_indexes) < 2:
+            return list(downbeat_indexes), []
+
+        protected_ranges = protected_ranges or []
+        # 沒有獨立證據時，短小節可能是上游刻意保留的 pickup／變拍；
+        # Pass 197A 只仲裁「有錨點證據但相位互斥」的衝突，避免覆蓋
+        # Pass 188/195 對無保護資料的向後相容行為。
+        if not protected_ranges:
+            return list(downbeat_indexes), []
+
+        def is_protected(index):
+            time = float(beat_rows[index]["time"])
+            return any(start <= time <= end for start, end in protected_ranges)
+
+        # 用全曲 beat 時間的 robust median 作為時間尺度，避免單一異常間距
+        # 讓時間型資料在相位計算時失真。
+        times = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
+        diffs = np.diff(times)
+        diffs = diffs[diffs > 0]
+        beat_sec = float(np.median(diffs)) if len(diffs) else 0.0
+        if beat_sec <= 0:
+            beat_sec = 1.0
+
+        def consistency(index, candidates):
+            score = 0.0
+            support = 0
+            for other in candidates:
+                if other == index:
+                    continue
+                # 仲裁時只把已經發生的候選當作相位錨點；候選本身可能是
+                # 錯誤的局部重音，不能讓它用後方證據替自己投票。
+                if other > index:
+                    continue
+                distance_beats = abs(float(beat_rows[other]["time"] - beat_rows[index]["time"])) / beat_sec
+                nearest_bar = round(distance_beats / 4.0)
+                residual = abs(distance_beats - nearest_bar * 4.0)
+                # ±15% beat tolerance，遠端證據權重略降但不消失。
+                # 已確認的前方相位是仲裁的主要基準；後方證據仍納入，
+                # 但稍微降低權重，避免錯誤候選把自己包裝成「後續錨點」。
+                direction_weight = 3.0 if other < index else 1.0
+                weight = direction_weight / (1.0 + abs(other - index) / 12.0)
+                score += weight * max(0.0, 1.0 - residual / 0.6)
+                support += int(residual <= 0.6)
+            return score, support
+
+        # 真實資料回驗發現：用單一全域 median 當 beat_sec，任何一小節本身的實際
+        # 速度只要跟全域中位數差個 2-3%（真實歌曲到處都有的自然速度微幅波動），
+        # 算出來的 distance_beats 就會落在 3.85-3.99 這種「差一點點沒到 4.0」
+        # 的區間——用 `>= 4.0 - 1e-6` 判斷衝突，會把全曲幾乎每一個正常 4 拍
+        # 小節邊界都誤判成衝突（實測 65 次仲裁裡只有個位數是任務書分析的
+        # 真實衝突，其餘都是這個門檻誤傷，導致小節數從 122 崩到 114）。
+        # 真正的「不可能同時是兩個小節起點」衝突（例如任務書示範的 77.803s/
+        # 78.542s，相距僅 ~2 拍）跟自然速度波動造成的假警報在數值上有清楚
+        # 的分界，改用留有餘裕的門檻，只在明顯小於一個小節的間距時才仲裁。
+        CONFLICT_DISTANCE_BEATS_MAX = 3.0
+        remaining = list(downbeat_indexes)
+        decisions = []
+        cursor = 1
+        while cursor < len(remaining):
+            left = remaining[cursor - 1]
+            right = remaining[cursor]
+            distance_beats = (float(beat_rows[right]["time"]) - float(beat_rows[left]["time"])) / beat_sec
+            if distance_beats >= CONFLICT_DISTANCE_BEATS_MAX:
+                cursor += 1
+                continue
+
+            left_score, left_support = consistency(left, remaining)
+            right_score, right_support = consistency(right, remaining)
+            left_key = (left_score, left_support, int(is_protected(left)), -left)
+            right_key = (right_score, right_support, int(is_protected(right)), -right)
+            winner, loser = (left, right) if left_key >= right_key else (right, left)
+            remaining.remove(loser)
+            # 仲裁本身就是對候選身分的明確裁決，因此即使原候選落在
+            # protected range，也必須把它從 beat 1 改成小節內普通拍，
+            # 否則後續 measure builder 仍會把它當成第二個小節起點。
+            loser_offset = int(round(abs(float(beat_rows[loser]["time"] - beat_rows[winner]["time"])) / beat_sec))
+            beat_rows[loser]["beat"] = (loser_offset % 4) + 1
+            decisions.append({
+                "winner_time": round(float(beat_rows[winner]["time"]), 6),
+                "discarded_time": round(float(beat_rows[loser]["time"]), 6),
+                "distance_beats": round(float(distance_beats), 4),
+                "winner_score": round(float(left_score if winner == left else right_score), 4),
+                "discarded_score": round(float(right_score if loser == right else left_score), 4),
+                "winner_support": int(left_support if winner == left else right_support),
+                "discarded_support": int(right_support if loser == right else left_support),
+                "winner_protected": bool(is_protected(winner)),
+                "discarded_protected": bool(is_protected(loser)),
+                "reason": "global_44_phase_consistency",
+            })
+            cursor = max(1, cursor - 1)
+
+        return remaining, decisions
+
+    def _interpolate_protected_gaps(self, beat_rows, downbeat_indexes, protected_ranges=None):
+        """Pass 197B：只在高信心 downbeat 兩端之間補回遺失的小節起點。
+
+        這不是全曲機械式重推：兩端必須都位於 protected range，且至少
+        缺少一個完整小節；拍距與小節數也必須能以 robust median 解釋，
+        否則保留原始結果並讓上層報告不規則區段。
+        """
+        if len(downbeat_indexes) < 2 or not protected_ranges:
+            return beat_rows, []
+
+        def is_protected(index):
+            time = float(beat_rows[index]["time"])
+            return any(start <= time <= end for start, end in protected_ranges)
+
+        times = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
+        diffs = np.diff(times)
+        diffs = diffs[diffs > 0]
+        if len(diffs) == 0:
+            return beat_rows, []
+        beat_sec = float(np.median(diffs))
+        if beat_sec <= 0:
+            return beat_rows, []
+
+        decisions = []
+        for left, right in zip(downbeat_indexes, downbeat_indexes[1:]):
+            if not (is_protected(left) and is_protected(right)):
+                continue
+            distance = float(beat_rows[right]["time"] - beat_rows[left]["time"])
+            estimated_beats = distance / beat_sec
+            bars = int(round(estimated_beats / 4.0))
+            if bars < 2 or abs(estimated_beats - bars * 4.0) > 0.75:
+                continue
+            missing_bars = bars - 1
+            inserted = []
+            for bar in range(1, bars):
+                target_time = float(beat_rows[left]["time"]) + bar * 4.0 * beat_sec
+                candidate = min(
+                    range(left + 1, right),
+                    key=lambda index: abs(float(beat_rows[index]["time"]) - target_time),
+                    default=None,
+                )
+                if candidate is None:
+                    continue
+                candidate_error = abs(float(beat_rows[candidate]["time"]) - target_time) / beat_sec
+                if candidate_error > 0.75:
+                    continue
+                beat_rows[candidate]["beat"] = 1
+                inserted.append(round(float(beat_rows[candidate]["time"]), 6))
+            if inserted:
+                decisions.append({
+                    "left_anchor_time": round(float(beat_rows[left]["time"]), 6),
+                    "right_anchor_time": round(float(beat_rows[right]["time"]), 6),
+                    "inferred_bars": bars,
+                    "inserted_downbeats": inserted,
+                    "missing_bars_before": missing_bars,
+                    "reason": "protected_endpoint_gap_interpolation",
+                })
+        return beat_rows, decisions
+
+    def _promote_intra_bar_downbeats(
+        self, beat_rows, downbeat_indexes, protected_ranges=None,
+        stems=None, stems_dir="", evidence_tolerance_sec=0.05,
+    ):
+        """Pass 198A：把有量化證據支持的隱藏小節起點升格為 downbeat。
+
+        只處理受保護錨點之間、長度超過 4 拍的區段。候選必須落在
+        `start + 4 * robust_median_beat_sec` 的 0.15 拍內；沒有足夠證據
+        就不改動，避免把雜訊或真正的變拍誤判成新小節。
+        """
+        if len(downbeat_indexes) < 2 or not protected_ranges:
+            return beat_rows, []
+
+        evidence_runs = self._steady_percussion_evidence(
+            beat_rows, stems or {}, stems_dir
+        )
+
+        def is_protected(index):
+            time = float(beat_rows[index]["time"])
+            return any(start <= time <= end for start, end in protected_ranges)
+
+        times = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
+        diffs = np.diff(times)
+        diffs = diffs[diffs > 0]
+        if len(diffs) == 0:
+            return beat_rows, []
+        beat_sec = float(np.median(diffs))
+        if beat_sec <= 0:
+            return beat_rows, []
+
+        tolerance_beats = 0.15
+        promotions = []
+        working = list(downbeat_indexes)
+        promoted = set()
+        cursor = 0
+        while cursor < len(working) - 1:
+            left, right = working[cursor], working[cursor + 1]
+            if not (is_protected(left) or left in promoted):
+                cursor += 1
+                continue
+            if not is_protected(right):
+                cursor += 1
+                continue
+            span_beats = (float(beat_rows[right]["time"]) - float(beat_rows[left]["time"])) / beat_sec
+            if span_beats <= 4.0 + tolerance_beats or right <= left + 4:
+                cursor += 1
+                continue
+
+            target_time = float(beat_rows[left]["time"]) + 4.0 * beat_sec
+            candidate = min(
+                range(left + 1, right),
+                key=lambda index: abs(float(beat_rows[index]["time"]) - target_time),
+                default=None,
+            )
+            if candidate is None:
+                cursor += 1
+                continue
+            residual_sec = abs(float(beat_rows[candidate]["time"]) - target_time)
+            residual_beats = residual_sec / beat_sec
+            if residual_beats > tolerance_beats or int(beat_rows[candidate]["beat"]) == 1:
+                cursor += 1
+                continue
+
+            # Pass 198A safety gate: theoretical-grid agreement is not audio
+            # evidence.  Reuse SteadyPercussionCountAnchorNode's own onset/run
+            # logic and require the promoted point to land on a run boundary.
+            # Direct unit tests without stems intentionally retain the old
+            # deterministic grid-only behavior.
+            if evidence_runs is not None and not any(
+                min(
+                    abs(float(beat_rows[candidate]["time"]) - run["start_time"]),
+                    abs(float(beat_rows[candidate]["time"]) - run["end_time"]),
+                ) <= evidence_tolerance_sec
+                for run in evidence_runs
+            ):
+                cursor += 1
+                continue
+
+            beat_rows[candidate]["beat"] = 1
+            promoted.add(candidate)
+            promotions.append({
+                "anchor_time": round(float(beat_rows[left]["time"]), 6),
+                "promoted_time": round(float(beat_rows[candidate]["time"]), 6),
+                "next_anchor_time": round(float(beat_rows[right]["time"]), 6),
+                "target_time": round(float(target_time), 6),
+                "residual_sec": round(float(residual_sec), 6),
+                "residual_beats": round(float(residual_beats), 6),
+                "beat_sec": round(float(beat_sec), 6),
+                "reason": "intra_bar_downbeat_promotion",
+            })
+
+            # The old right anchor may now be an intra-bar beat of the new
+            # promoted bar. Remove every downbeat less than four beats after
+            # the promotion, then continue from the promoted anchor to the
+            # next surviving anchor.
+            candidate_pos = cursor + 1
+            working.insert(candidate_pos, candidate)
+            remove_positions = []
+            for position in range(candidate_pos + 1, len(working)):
+                other = working[position]
+                distance = (float(beat_rows[other]["time"]) - float(beat_rows[candidate]["time"])) / beat_sec
+                if distance >= 4.0 - tolerance_beats:
+                    break
+                if other not in promoted:
+                    beat_rows[other]["beat"] = 2
+                    remove_positions.append(position)
+            for position in reversed(remove_positions):
+                working.pop(position)
+            cursor = max(0, candidate_pos)
+
+        return beat_rows, promotions
+
+    def _steady_percussion_evidence(self, beat_rows, stems, stems_dir):
+        """Return stable percussion runs using the Pass 181-187 detector.
+
+        This deliberately calls the detector's own private methods so the
+        Phase-A gate cannot drift from the evidence logic used by the anchor
+        node.  An empty result means no usable stem was available; callers
+        then retain the legacy behavior for isolated/unit-test use.
+        """
+        if not stems and not stems_dir:
+            return None
+        try:
+            from pgm_craft.workflow.beat_tracking_bt import SteadyPercussionCountAnchorNode
+
+            detector = SteadyPercussionCountAnchorNode()
+            paths = []
+            for stem_key, rel_path in detector.STEM_CANDIDATES:
+                path = detector._resolve_stem_path(stem_key, rel_path, stems, stems_dir)
+                if path:
+                    paths.append(path)
+            whole_path = detector._resolve_stem_path(
+                "drums", detector.WHOLE_DRUM_STEM[1], stems, stems_dir
+            )
+            if whole_path:
+                paths.append(whole_path)
+            if not paths:
+                return None
+
+            timestamps = np.asarray([float(row["time"]) for row in beat_rows], dtype=float)
+            valid = np.diff(timestamps)
+            valid = valid[np.isfinite(valid) & (valid > 0.05)]
+            if len(valid) == 0:
+                return []
+            known_beat_length = float(np.median(valid))
+            runs = []
+            for path in paths:
+                onsets = detector._detect_onsets(path)
+                runs.extend(detector._find_steady_runs(onsets, known_beat_length, []))
+            return runs
+        except Exception:
+            return []
+
+    def _ensure_44_phase_continuity(self, beat_rows, protected_ranges=None):
+        """
+        Pass 193：全曲 4/4 拍相位連貫補全，消除因 Downbeat 標籤缺失所產生的
+        人造碎拍與亂切點。
+
+        Pass 194 修正：讓機械式補全尊重 `beat_phase_protected_ranges`，
+        保護區段內的錨定相位不被覆蓋。
+
+        Pass 195 修正（更根本）：Pass 193/194 都還是「從一個錨點開始，機械
+        式數 1-2-3-4 一路數到底」——只要曲子中間任何一處跟 BeatNet /
+        KickBassDownbeatVerifierNode / DownbeatRefineNode 等上游節點原本
+        已經正確判斷的重音位置對不上（不需要靠近保護區段，只要中途有任何
+        一點原本的相位選擇跟機械式計數不同），這個機械式數法就會悄悄跟真實
+        重音錯開、一路數到下一個錨點才重新對齊，沿路冒出一堆本來不存在的
+        5、6 拍怪異小節。直接比對 Pass 193/194 之前的基準（Pass 183）真實
+        資料證實：這些新冒出的不規則小節裡，只有不到一半落在保護區段邊界
+        附近，其餘都是在跟保護機制完全無關的地方，把上游本來就已經正確、
+        每 4 拍一個重音的乾淨區段整批洗掉重標。
+
+        改成只在「真的偵測到不規則」時才局部修復：
+        1. 先找出既有的所有 downbeat（beat==1）位置，不分是否在保護區段內
+           ——這些都是上游整條 Stage 3 拍點鏈已經做出的判斷，預設信任。
+        2. 只有當相鄰兩個既有 downbeat 之間的拍數**不是** `beats_per_bar`
+           的整數倍，或雖然是整數倍、但內部應該存在的中繼 downbeat 卻沒有
+           被標記（代表中間漏掉了一個重音標籤），才對這一小段做局部
+           1-2-3-4 補全——只影響這一小段本身，不會往前後任何方向擴散。
+        3. 已經乾淨、既有 downbeat 間距本來就正確的區段完全不碰，維持上游
+           原本的判斷（不管是不是在保護區段內）。
+        4. 保護區段內的標號永遠不被觸碰，即使剛好落在需要局部修復的區段裡。
+        """
+        if not beat_rows:
+            return beat_rows
+        protected_ranges = protected_ranges or []
+        beats_per_bar = 4
+
+        def _is_protected(t):
+            return any(p_start <= t <= p_end for p_start, p_end in protected_ranges)
+
+        n = len(beat_rows)
+        downbeat_idx = [i for i, r in enumerate(beat_rows) if r.get("beat") == 1]
+        if not downbeat_idx:
+            beat_rows[0]["beat"] = 1
+            downbeat_idx = [0]
+
+        # 曲首（第一個既有 downbeat 之前）殘留的拍點，沿用第一個 downbeat
+        # 往前倒推給予合理標號（保護區段內不動）。
+        first_idx = downbeat_idx[0]
+        for i in range(first_idx - 1, -1, -1):
+            if _is_protected(float(beat_rows[i]["time"])):
+                continue
+            steps_back = first_idx - i
+            beat_rows[i]["beat"] = ((0 - steps_back) % beats_per_bar) + 1
+
+        for k, start in enumerate(downbeat_idx):
+            end = downbeat_idx[k + 1] if k + 1 < len(downbeat_idx) else n
+            span = end - start
+            if span <= 0:
+                continue
+
+            needs_repair = span % beats_per_bar != 0
+            if not needs_repair and span > beats_per_bar:
+                for sub in range(beats_per_bar, span, beats_per_bar):
+                    if int(beat_rows[start + sub]["beat"]) != 1:
+                        needs_repair = True
+                        break
+            if not needs_repair:
+                continue
+
+            for offset in range(span):
+                i = start + offset
+                if _is_protected(float(beat_rows[i]["time"])):
+                    continue
+                beat_rows[i]["beat"] = (offset % beats_per_bar) + 1
+
+        return beat_rows
+
+    def _build_from_downbeats(self, beat_rows, downbeat_indexes, source="downbeat", protected_ranges=None):
         # Pass 170 fix: 過濾相鄰 downbeat 間距過小的 ghost downbeat 索引
-        # 當兩個相鄰 downbeat 之間只有 1 個 beat (duration < 0.6 * common_step)，視為 ghost 重複 downbeat
-        downbeat_indexes = self._prune_ghost_downbeats(beat_rows, downbeat_indexes)
+        # Pass 196 修正：受保護區段（beat_phase_protected_ranges）內的 downbeat
+        # 是真實證據驗證過的錨點，永遠不當 ghost 剔除。
+        downbeat_indexes = self._prune_ghost_downbeats(beat_rows, downbeat_indexes, protected_ranges)
 
         common_length = self._common_measure_length(downbeat_indexes)
         measures = []
@@ -699,12 +1173,88 @@ class MeasureMapNode(BaseNode):
                 source=source,
             ))
 
+        # Pass 188: 合併破碎小節
+        measures = self._merge_short_measures(measures, common_length, protected_ranges)
         return measures
 
-    def _prune_ghost_downbeats(self, beat_rows, downbeat_indexes):
+    def _merge_short_measures(self, measures, common_length, protected_ranges=None):
+        """
+        Pass 188 / Pass 192 修訂：將太短的「破碎小節」精確合併。
+
+        Pass 192 防膨脹保護：
+        只有當前一個小節也是短小節 (prev["beat_count"] < common_length)，且
+        合併後的 merged_count <= common_length 時才進行合併。
+        嚴格防止把原本標準 4 拍的小節膨脹搞成 5/6/7 拍的怪異小節！
+
+        Pass 196 修正：如果 `m`（將被吞併、往後接到 prev 的那個短小節）自己
+        的起點是受保護的 downbeat（`beat_phase_protected_ranges` 驗證過的
+        真實錨點），不能合併——合併後 `_measure_entry` 會用位置重新編號，
+        這個錨點的「beat 1」身分會被洗掉、變成合併小節裡的第 3、4 拍，
+        等於白白讓 Pass 196 在 `_prune_ghost_downbeats` 保住的證據，在這裡
+        又被吃掉一次。
+        """
+        if not measures or common_length < 1:
+            return measures
+        protected_ranges = protected_ranges or []
+
+        def _is_protected(t):
+            return any(p_start <= t <= p_end for p_start, p_end in protected_ranges)
+
+        changed = True
+        while changed:
+            changed = False
+            i = 1  # 從第 2 個開始（第 1 個沒有前一個可合併）
+            while i < len(measures):  # 掃描至最後一個小節
+                m = measures[i]
+                if m.get("is_incomplete"):
+                    i += 1
+                    continue
+                if _is_protected(m["start_time"]):
+                    i += 1
+                    continue
+                if m["beat_count"] < common_length:
+                    prev = measures[i - 1]
+                    # Pass 192 防膨脹保護：只有當 prev 也是短小節，且合併後不超過 common_length 時才合併
+                    if prev["beat_count"] < common_length and prev["beat_count"] + m["beat_count"] <= common_length:
+                        merged_count = prev["beat_count"] + m["beat_count"]
+                        merged_beats = prev["beats"] + [
+                            {"beat": prev["beat_count"] + j + 1, "time": b["time"]}
+                            for j, b in enumerate(m["beats"])
+                        ]
+                        measures[i - 1] = {
+                            "measure": prev["measure"],
+                            "start_time": prev["start_time"],
+                            "end_time": m["end_time"],
+                            "beat_count": merged_count,
+                            "beats": merged_beats,
+                            "is_variable_length": bool(merged_count != common_length),
+                            "is_incomplete": bool(prev["is_incomplete"]),
+                            "source": prev["source"],
+                        }
+                        measures.pop(i)
+                        changed = True
+                        break
+                i += 1
+
+        # 重新給予連續 measure 編號
+        for idx, m in enumerate(measures):
+            m["measure"] = idx + 1
+
+        return measures
+
+    def _prune_ghost_downbeats(self, beat_rows, downbeat_indexes, protected_ranges=None):
         """
         Pass 170: 過濾相鄰間距過小的重複 ghost downbeat 索引。
         當兩個相鄰 downbeat 之間的 beat 數量 < 0.6 * common_step，視為 ghost，移除後一個 downbeat。
+
+        Pass 196 修正：這個門檻是 Pass 170 時代的假設——當時 Stage 3 還沒有
+        `SteadyPercussionCountAnchorNode`（Pass 181 才引入）這種會針對局部
+        真實鼓點證據建立密集保護錨點的節點，「兩個離得很近的 downbeat 幾乎
+        一定是雜訊」在當時是合理的。但現在 `beat_phase_protected_ranges`
+        常常涵蓋大半首歌（真實資料觀測到 33 段），近距離 downbeat 候選
+        可能是兩個各自獨立、都有真實證據驗證過的保護錨點剛好相鄰，不再能
+        無差別當雜訊剔除——受保護區段內的 downbeat 永遠保留，不管間距
+        多近。
         """
         if len(downbeat_indexes) < 3:
             return downbeat_indexes
@@ -724,15 +1274,22 @@ class MeasureMapNode(BaseNode):
             common_step = 4
 
         ghost_threshold = 0.6 * common_step
+        protected_ranges = protected_ranges or []
+
+        def _is_protected(t):
+            return any(p_start <= t <= p_end for p_start, p_end in protected_ranges)
 
         pruned = [downbeat_indexes[0]]
         for i in range(1, len(downbeat_indexes)):
-            gap = downbeat_indexes[i] - pruned[-1]
-            if gap >= ghost_threshold:
-                pruned.append(downbeat_indexes[i])
-            # 若 gap < threshold，此 downbeat 為 ghost，跳過
+            idx = downbeat_indexes[i]
+            gap = idx - pruned[-1]
+            t = float(beat_rows[idx]["time"])
+            if gap >= ghost_threshold or _is_protected(t):
+                pruned.append(idx)
+            # 若 gap < threshold 且不在保護區段內，此 downbeat 為 ghost，跳過
 
         return pruned
+
 
 
     def _build_fallback_4beat(self, beat_rows):
@@ -1491,7 +2048,3 @@ class VoiceSplitMIDIExportNode(BaseNode):
 
         blackboard.set_val("voice_split_midis", split_midis)
         return NodeStatus.SUCCESS
-
-
-
-

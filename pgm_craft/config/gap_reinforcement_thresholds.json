@@ -1,0 +1,10 @@
+{
+  "_comment": "Pass 178 GapReinforcementNode 門檻參數。由 scripts/calibrate_gap_reinforcement_thresholds.py 讀取校準迴圈累積的人工標記資料計算調整建議，人工確認後手動更新此檔，不自動套用。",
+  "confirm_tolerance_sec": 0.06,
+  "window_sec": 4.0,
+  "confirm_ratio_threshold": 0.5,
+  "sample_step_sec": 0.5,
+  "min_segment_sec": 1.5,
+  "gap_pad_sec": 2.0,
+  "improvement_margin": 0.02
+}

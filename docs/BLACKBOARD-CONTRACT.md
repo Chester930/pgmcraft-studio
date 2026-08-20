@@ -163,6 +163,8 @@
 | `bidirectional_alignment_report` | `dict` | `BidirectionalBarAlignmentNode` | forward/backward projection、phase error 與 alignment status |
 | `transition_confidence_report` | `dict` | `TransitionConfidenceNode` | 進鼓後穩定觀測數與是否可升級 high confidence |
 | `bar_start_decision_report` | `dict` | `BarStartCandidateCommitNode` | 本輪候選是否 commit、採用哪個 candidate、門檻與原因 |
+| `barstart_v2_run_id` | `str` | `FullSongBarStartLoopNode` | 本次 v2 loop 的唯一識別，供逐 tick trace 與匯出報告對齊 |
+| `barstart_v2_diagnostic_trace` | `list[dict]` | `FullSongBarStartLoopNode` | 每 tick 的候選過濾數量、來源摘要、決策分類與 commit 前後狀態 |
 | `unresolved_bar_spans` | `list[dict]` | `BarStartCandidateCommitNode` | 找不到或低信心時留下的未解析搜尋區間 |
 | `last_bar_probe_result` | `dict` | `BarStartCandidateCommitNode` | 供下一輪 `RollingProbeWindowNode` 調整窗長與起點的結果 |
 | `barstart_v2_report` | `dict` | `Module3BarStartV2SummaryNode` / `PGMCraftEngine` | v2 測試流程摘要，包含 meter、bar starts、probe window、decision、promotion gate 與目前限制 |

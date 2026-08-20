@@ -22,7 +22,7 @@ def test_build_beat_stem_tree_importable():
 
 def test_build_beat_stem_tree_returns_node():
     from pgm_craft.workflow.stem_separation_bt import build_beat_stem_tree
-    from pgm_craft.workflow.bt_core import BaseNode
+    from pgm_craft.workflow.nodes import BaseNode
     tree = build_beat_stem_tree()
     assert isinstance(tree, BaseNode)
 
@@ -109,26 +109,34 @@ def test_module3_barstart_v2_pipeline_uses_beat_only():
 # ChordMelodyOnsetSplitNode 仍在 BarStartV2CoreChain（beat_only 下游）
 # ---------------------------------------------------------------------------
 
-def test_chord_melody_onset_split_node_in_barstart_v2_chain():
-    """_run_barstart_v2_comparison 產生的 BarStartV2CoreChain 仍包含 ChordMelodyOnsetSplitNode。"""
+def test_chord_melody_onset_split_node_in_barstart_v2_chain(monkeypatch):
+    """_run_barstart_v2_comparison 內部組出的 BarStartV2CoreChain 仍會執行 ChordMelodyOnsetSplitNode。
+
+    _run_barstart_v2_comparison() 回傳的是比較結果 dict，不是 SequenceNode 本身
+    （BarStartV2CoreChain 只是函式內的區域變數），所以用 monkeypatch 直接確認
+    ChordMelodyOnsetSplitNode.execute() 真的被呼叫到，而不是內省一個函式根本不
+    對外暴露的樹物件。
+    """
+    import numpy as np
     from pgm_craft.workflow.module3_bt import _run_barstart_v2_comparison
-    from pgm_craft.workflow.module3_barstart_v2_bt import ChordMelodyOnsetSplitNode
-    from pgm_craft.core.blackboard import Blackboard
+    from pgm_craft.workflow import module3_barstart_v2_bt
+    from pgm_craft.workflow.nodes import Blackboard
+
+    calls = []
+    original_execute = module3_barstart_v2_bt.ChordMelodyOnsetSplitNode.execute
+
+    def spy_execute(self, blackboard):
+        calls.append(True)
+        return original_execute(self, blackboard)
+
+    monkeypatch.setattr(module3_barstart_v2_bt.ChordMelodyOnsetSplitNode, "execute", spy_execute)
 
     bb = Blackboard()
-    chain = _run_barstart_v2_comparison(bb)  # 應回傳 SequenceNode
+    bb.set_val("beats", np.array([[i * 0.5, (i % 4) + 1] for i in range(40)], dtype=float))
 
-    def find_nodes(node, cls):
-        found = []
-        if isinstance(node, cls):
-            found.append(node)
-        if hasattr(node, "children"):
-            for c in node.children:
-                found.extend(find_nodes(c, cls))
-        return found
+    _run_barstart_v2_comparison(bb)
 
-    results = find_nodes(chain, ChordMelodyOnsetSplitNode)
-    assert len(results) >= 1, "ChordMelodyOnsetSplitNode 應在 BarStartV2CoreChain 中"
+    assert len(calls) >= 1, "ChordMelodyOnsetSplitNode 應在 BarStartV2CoreChain 中被執行"
 
 
 # ---------------------------------------------------------------------------

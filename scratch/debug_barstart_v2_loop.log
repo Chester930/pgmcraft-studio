@@ -1,0 +1,9 @@
+iter=1 before_len=2 after_len=3 before_last=2.0 after_last=3.702585 stall_count=0
+iter=2 before_len=3 after_len=3 before_last=3.702585 after_last=3.702585 stall_count=0
+iter=3 before_len=3 after_len=3 before_last=3.702585 after_last=3.702585 stall_count=1
+iter=4 before_len=3 after_len=3 before_last=3.702585 after_last=3.702585 stall_count=2
+  STALL_LIMIT_HIT provisional=[5.191043, 6.616259, 8.041361, 9.836122, 11.359184]
+iter=5 before_len=8 after_len=8 before_last=11.359184 after_last=11.359184 stall_count=0
+iter=6 before_len=8 after_len=8 before_last=11.359184 after_last=11.359184 stall_count=1
+iter=7 before_len=8 after_len=8 before_last=11.359184 after_last=11.359184 stall_count=2
+  STALL_LIMIT_HIT provisional=[]

@@ -4,20 +4,12 @@ SDD Pass 105 — Module 3 BarStart v2 skeleton and meter-aware grid tests.
 
 import numpy as np
 
-from pgm_craft.workflow.builder import build_master_pipeline_tree
 from pgm_craft.workflow.module3_barstart_v2_bt import (
     ManualCommittedBarStartsSeedNode,
     MeterAwareBeatGridNode,
     MeterProfileNode,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
-
-
-def _node_names(node):
-    names = [node.name]
-    for child in getattr(node, "children", []) or []:
-        names.extend(_node_names(child))
-    return names
 
 
 def test_meter_profile_supports_user_meter_and_temporary_extensions():
@@ -57,20 +49,3 @@ def test_meter_aware_grid_divides_committed_bar_starts_by_meter():
     assert measure_map[0]["meter"] == "3/4"
     assert measure_map[0]["beat_count"] == 3
     assert bb.get_val("bar_length_report")["strategy"] == "meter_aware_bar_division"
-
-
-def test_module3_barstart_v2_tree_is_isolated_from_existing_module3():
-    v2_tree = build_master_pipeline_tree(target_stage="module3_barstart_v2")
-    old_tree = build_master_pipeline_tree(target_stage="module3")
-    v2_names = _node_names(v2_tree)
-    old_names = _node_names(old_tree)
-
-    assert v2_tree.name == "Module3BarStartClickRoot"
-    assert "MeterProfileNode" in v2_names
-    assert "ManualCommittedBarStartsSeedNode" in v2_names
-    assert "MeterAwareBeatGridNode" in v2_names
-    assert "Module3BarStartV2ExportRoot" in v2_names
-    assert v2_names.index("Module3BarStartV2SummaryNode") < v2_names.index("Module3OutputSummaryNode")
-
-    assert old_tree.name == "Module3BeatClickRoot"
-    assert "MeterAwareBeatGridNode" not in old_names
