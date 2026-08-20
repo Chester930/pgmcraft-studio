@@ -12,6 +12,7 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 
+from .beat_tracking_bt import MicroTimingTransientSnapNode
 from .nodes import BaseNode, Blackboard, NodeStatus
 
 
@@ -535,6 +536,7 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
         "refined_beats",
         "beats",
         "madmom_hybrid_approved",
+        "madmom_hybrid_micro_timing_snap_enabled",
         "madmom_hybrid_window_bars",
         "madmom_hybrid_cv_threshold",
         "madmom_hybrid_min_span_bars",
@@ -692,6 +694,96 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
         final_grid, tail_gap_report = tail_report
         blackboard.set_val("beats", final_grid)
         blackboard.set_val("refined_beats", final_grid)
+
+        # Pass 246: reuse the already-proven legacy transient snap on the
+        # completed madmom-hybrid grid.  This remains downstream of all
+        # splice/tail decisions, so it cannot feed evidence back into V2
+        # arbitration.  The explicit flag is independently disable-able for
+        # A/B verification, while its omitted value follows hybrid approval.
+        #
+        # Pass 247: real-pipeline verification found the snap can pull an
+        # already-correct downbeat toward a louder-but-wrong nearby
+        # transient (1-2 downbeats per section moved from <50ms to 54-72ms
+        # off golden), while showing no measurable benefit on intra-bar
+        # (beat 2/3/4) accuracy in the exact zones Pass245 flagged.
+        # Downbeats are already accurate -- Pass245's own finding was
+        # specifically about intra-bar timing -- so only beat positions
+        # 2/3/4 are allowed to accept the snap; downbeat rows always keep
+        # their pre-snap (already-verified) position.
+        micro_snap_enabled = bool(
+            blackboard.get_val("madmom_hybrid_micro_timing_snap_enabled", approved)
+        )
+        micro_snap_report: dict[str, Any]
+        if micro_snap_enabled:
+            try:
+                pre_snap_grid = _as_grid(final_grid).copy()
+                MicroTimingTransientSnapNode(search_window_ms=35.0).execute(blackboard)
+                snapped_grid = _as_grid(blackboard.get_val("refined_beats"))
+                if len(snapped_grid) == len(pre_snap_grid) and len(pre_snap_grid):
+                    merged_rows = [
+                        pre_row if abs(float(pre_row[1]) - 1.0) < 1e-6 else post_row
+                        for pre_row, post_row in zip(pre_snap_grid, snapped_grid)
+                    ]
+                    final_grid = np.asarray(merged_rows, dtype=float).reshape((-1, 2))
+                else:
+                    final_grid = pre_snap_grid
+                blackboard.set_val("beats", final_grid)
+                blackboard.set_val("refined_beats", final_grid)
+                offsets = [
+                    (float(post_row[0]) - float(pre_row[0])) * 1000.0
+                    for pre_row, post_row in zip(pre_snap_grid, final_grid)
+                    if abs(float(pre_row[1]) - 1.0) >= 1e-6
+                    and abs(float(post_row[0]) - float(pre_row[0])) > 1e-9
+                ]
+                abs_offsets = [abs(value) for value in offsets]
+                micro_snap_report = {
+                    "status": "APPLIED",
+                    "enabled": True,
+                    "node": "MicroTimingTransientSnapNode",
+                    "downbeats_excluded": True,
+                    "snap_offsets_ms": offsets,
+                    "snap_offset_count": len(offsets),
+                    "nonzero_snap_count": sum(value > 1e-9 for value in abs_offsets),
+                    "mean_abs_offset_ms": round(float(np.mean(abs_offsets)), 6)
+                    if abs_offsets
+                    else 0.0,
+                    "max_abs_offset_ms": round(float(max(abs_offsets)), 6)
+                    if abs_offsets
+                    else 0.0,
+                    "snap_skip_report": dict(
+                        blackboard.get_val("snap_skip_report", {}) or {}
+                    ),
+                }
+            except Exception as exc:
+                # The hybrid output is still valid without this optional
+                # refinement; retain it and make the failure visible.
+                blackboard.set_val("beats", final_grid)
+                blackboard.set_val("refined_beats", final_grid)
+                micro_snap_report = {
+                    "status": "ERROR",
+                    "enabled": True,
+                    "node": "MicroTimingTransientSnapNode",
+                    "error": str(exc),
+                    "snap_offsets_ms": [],
+                    "snap_offset_count": 0,
+                    "nonzero_snap_count": 0,
+                    "mean_abs_offset_ms": 0.0,
+                    "max_abs_offset_ms": 0.0,
+                    "snap_skip_report": {},
+                }
+        else:
+            micro_snap_report = {
+                "status": "DISABLED_FLAG",
+                "enabled": False,
+                "node": "MicroTimingTransientSnapNode",
+                "snap_offsets_ms": [],
+                "snap_offset_count": 0,
+                "nonzero_snap_count": 0,
+                "mean_abs_offset_ms": 0.0,
+                "max_abs_offset_ms": 0.0,
+                "snap_skip_report": {},
+            }
+
         blackboard.set_val("madmom_hybrid_downbeats", _downbeat_times(final_grid))
         evidence_sources = [
             {
@@ -716,6 +808,7 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
                 "min_span_bars": min_span_bars,
                 "madmom_downbeat_count": len(downbeats),
                 "final_beat_count": int(len(final_grid)),
+                "micro_timing_snap_report": micro_snap_report,
                 "tail_evidence_gap_report": tail_gap_report,
                 "evidence_sources": evidence_sources,
             }

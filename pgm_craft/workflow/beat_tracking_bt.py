@@ -2765,7 +2765,8 @@ class MicroTimingTransientSnapNode(BaseNode):
     【毫秒級聲學瞬態 Peak 磁吸校準節點 (Micro-Timing Transient Snap Node)】
     - 讀取 stems['drums'] 44.1kHz 波形與鼓聲包絡 (Envelope)
     - 在每個 AI 推算拍點 ±35ms 微觀視窗內搜尋波形 Peak Transient
-    - 將 Click 觸發時間戳強行磁吸 (Snap) 至 0 毫秒極致真實對齊點
+    - 將 Click 觸發時間戳磁吸 (Snap) 至真實瞬態對齊點
+    - 搜尋視窗沒有高於 robust 噪聲門檻的 peak 時保持原拍點
     """
     required_keys = ["beats"]
     optional_keys = [
@@ -2835,6 +2836,7 @@ class MicroTimingTransientSnapNode(BaseNode):
         refined_rows = []
         offsets_ms = []
         skipped_exclusion_count = 0
+        skipped_no_signal_count = 0
         exclusion_zones = (
             list(blackboard.get_val("snap_exclusion_zones", []) or [])
             + list(blackboard.get_val("drum_fill_regions", []) or [])
@@ -2861,6 +2863,23 @@ class MicroTimingTransientSnapNode(BaseNode):
 
             search_region = envelope[left_idx:right_idx]
             if len(search_region) > 0:
+                # A raw argmax is unstable in silence: an all-zero window
+                # chooses its first sample and can move a beat by the full
+                # 35ms search radius.  Use a robust local noise estimate so
+                # only a meaningful transient is allowed to move the grid.
+                local_median = float(np.median(search_region))
+                local_mad = float(np.median(np.abs(search_region - local_median)))
+                robust_sigma = 1.4826 * local_mad
+                signal_threshold = max(
+                    local_median + 6.0 * robust_sigma,
+                    np.finfo(float).eps,
+                )
+                peak = float(np.max(search_region))
+                if not np.isfinite(peak) or peak <= signal_threshold:
+                    refined_rows.append([t_sec, b_num])
+                    skipped_no_signal_count += 1
+                    continue
+
                 max_rel_idx = np.argmax(search_region)
                 snapped_idx = left_idx + max_rel_idx
                 snapped_t = snapped_idx / float(sr)
@@ -2878,6 +2897,7 @@ class MicroTimingTransientSnapNode(BaseNode):
         blackboard.set_val("snap_offsets_ms", offsets_ms)
         blackboard.set_val("snap_skip_report", {
             "skipped_exclusion_count": skipped_exclusion_count,
+            "skipped_no_signal_count": skipped_no_signal_count,
             "exclusion_zone_count": len(exclusion_zones),
         })
 

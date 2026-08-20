@@ -55,6 +55,7 @@ class PGMCraftEngine:
         barstart_v2_postprocess_flags=None,
         barstart_v2_promotion_approved=None,
         madmom_hybrid_approved=None,
+        madmom_hybrid_micro_timing_snap_enabled=None,
     ):
         os.makedirs(output_dir, exist_ok=True)
         if enable_stem is not None:
@@ -76,6 +77,7 @@ class PGMCraftEngine:
             barstart_v2_postprocess_flags=barstart_v2_postprocess_flags,
             barstart_v2_promotion_approved=barstart_v2_promotion_approved,
             madmom_hybrid_approved=madmom_hybrid_approved,
+            madmom_hybrid_micro_timing_snap_enabled=madmom_hybrid_micro_timing_snap_enabled,
         )
 
         original_beats_raw = blackboard.get_val("beats")

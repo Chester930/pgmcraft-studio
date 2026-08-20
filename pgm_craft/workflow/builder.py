@@ -133,6 +133,7 @@ class BTWorkflowEngine:
         barstart_v2_postprocess_flags=None,
         barstart_v2_promotion_approved=None,
         madmom_hybrid_approved=None,
+        madmom_hybrid_micro_timing_snap_enabled=None,
     ):
         if target_stage is not None and target_stage != self.target_stage:
             self.target_stage = target_stage
@@ -170,6 +171,14 @@ class BTWorkflowEngine:
             # Pass 236: madmom-primary segment splice is opt-in only.  Leaving
             # this unset preserves the existing V2 output for every caller.
             blackboard.set_val("madmom_hybrid_approved", madmom_hybrid_approved)
+        if madmom_hybrid_micro_timing_snap_enabled is not None:
+            # Pass 246: keep the post-hybrid transient snap independently
+            # switchable for A/B verification.  When unset, the node follows
+            # madmom_hybrid_approved instead of changing legacy callers.
+            blackboard.set_val(
+                "madmom_hybrid_micro_timing_snap_enabled",
+                madmom_hybrid_micro_timing_snap_enabled,
+            )
 
         print(f"\n=== [BT Engine] Executing Behavior Tree Workflow (Target: {self.target_stage}) for {audio_path} ===")
         status = self.tree.run(blackboard)
