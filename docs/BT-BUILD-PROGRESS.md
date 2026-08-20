@@ -7,7 +7,7 @@
 
 ---
 
-## Pass 242 — 第一層修復：拼接前加「備援來源自我可信度檢查」，離線驗證確認有效，真實pipeline驗證進行中（2026-08-20）
+## Pass 242 — 第一層修復：拼接前加「備援來源自我可信度檢查」，真實pipeline驗證通過（2026-08-20）
 
 使用者確認採用先前提出的四層拆解計畫，先做風險最低的第一層。
 
@@ -39,20 +39,30 @@
 這段的表現其實一直都不差，只是Pass236-239的設計假設「V2至少更可靠」
 在這個具體段落上是錯的。
 
-**還沒做的部分**：真實完整pipeline驗證（`scratch/run_pass237_madmom_hybrid_production_verify.py`）
-已在背景啟動，尚未拿到結果就先記錄離線驗證的方向性結論——**下一次
-接手時第一件事應該是確認這次背景執行有沒有跑完、產出
-`outputs/pass237_madmom_hybrid_production_verify/pass237_production_verify.json`，
-核對真實pipeline下`madmom_hybrid_report.status`是否確實變成
-`FALLBACK_REJECTED_RIGID`（或如果之後有其他弱區段被正常拼接，
-狀態應該還是`APPLIED`但個別span標記拒絕）**，並確認Intro/Verse1/
-Chorus1仍維持Pass239已驗證的近乎完美數字（這次修改理論上不會影響
-它們，因為完全沒動偵測弱區段的邏輯，只加了拼接前的一道門檻）。
-161-176秒那段（沒被判定為弱區段、維持純madmom原樣）殘差仍然偏大
-（472-1024毫秒，跟Pass240記錄的數字一致）——這是Pass241已定案的
-V2仲裁深層問題，不在這次第一層修復的範圍內，第二、三層（重建
-golden可信度量尺、局部化`expected_bar_duration`但只套用在已知有
-問題的窄段）如果之後要繼續，才會處理到這段。
+**真實pipeline驗證結果（背景執行中途曾被工作階段中斷一次，重跑後
+完整跑完，`elapsed_sec=557.04`）**：`madmom_hybrid_report.status="FALLBACK_REJECTED_RIGID"`，
+`fallback_interval_range_sec=0.0`、`fallback_rejected_reason="rigid_interval_pattern"`
+——跟離線驗證預測完全一致，第一層的判斷邏輯在真實pipeline裡確實
+生效。用正確的121小節外部golden逐段核對：
+
+| 段落 | Pass242（新，拒絕拼接後） | Pass239（舊，仍拼接V2） | V2-only基準 |
+|---|---|---|---|
+| Intro (18) | 18/18，平均23.4ms | 18/18，平均23.4ms | 5/18，平均229.2ms |
+| Verse1 (43) | 43/43，平均18.8ms | 43/43，平均18.8ms | 15/43，平均69.6ms |
+| Chorus1 (43) | 43/43，平均18.6ms | 43/43，平均18.6ms | 6/43，平均216.0ms |
+| **Outro (20)** | **9/20，平均224.7ms** | 4/20，平均334.8ms | 1/20，平均384.0ms |
+
+Intro/Verse1/Chorus1**完全沒有變化**（這次修改確實沒有動到偵測邏輯，
+如預期）；**Outro從4/20回升到9/20，平均誤差從335ms降到225ms**——
+剛好回到Pass233純madmom（未經任何拼接）當年測到的歷史基準9/20，
+證明拒絕拼接、保留madmom原本猜測，確實比硬拼一段剛性V2資料更好。
+
+161-176秒那段（沒被madmom自己的CV判定為弱區段、本來就維持純madmom
+原樣，這次修改不會影響）殘差仍然偏大（跟Pass240/241記錄的
+472-1024毫秒一致）——這是Pass241已定案的V2仲裁深層問題，不在第一層
+修復範圍內，第二、三層（重建golden可信度量尺、局部化
+`expected_bar_duration`但只套用在已知有問題的窄段）如果之後要繼續，
+才會處理到這段。**第一層修復本身已完整驗證通過，可視為完成。**
 
 ---
 
