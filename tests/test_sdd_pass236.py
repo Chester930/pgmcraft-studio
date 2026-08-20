@@ -8,8 +8,12 @@ from pgm_craft.workflow.madmom_hybrid import (
     DEFAULT_MIN_SPAN_BARS,
     DEFAULT_WINDOW_BARS,
     MadmomPrimarySegmentSpliceNode,
+    _apply_tail_evidence_gap,
     _detect_weak_spans,
+    _downbeat_times,
+    _extrapolate_tail_downbeats,
     _splice_weak_spans_with_fallback,
+    _tail_evidence_gap_anchor,
 )
 from pgm_craft.workflow.nodes import Blackboard, NodeStatus
 
@@ -311,3 +315,107 @@ def test_node_adds_trim_offset_to_madmom_grid_before_writing_beats(monkeypatch):
         cropped_grid[:, 0] + 2.5,
     )
     assert blackboard["madmom_hybrid_report"]["trim_offset_sec"] == 2.5
+
+
+def test_tail_evidence_gap_anchor_finds_trailing_unsupported_run():
+    downbeats = [0.0, 1.5, 3.0, 4.5, 6.0, 7.5]
+    kick_anchors = [0.05, 1.52, 2.98, 4.51]  # only the first four bars
+
+    result = _tail_evidence_gap_anchor(downbeats, kick_anchors, [], min_gap_bars=2)
+
+    assert result == (3, 4.5)
+
+
+def test_tail_evidence_gap_anchor_returns_none_without_any_anchors():
+    downbeats = [0.0, 1.5, 3.0, 4.5, 6.0, 7.5]
+
+    assert _tail_evidence_gap_anchor(downbeats, [], [], min_gap_bars=2) is None
+
+
+def test_tail_evidence_gap_anchor_returns_none_when_last_bar_has_evidence():
+    downbeats = [0.0, 1.5, 3.0, 4.5]
+    kick_anchors = [0.05, 1.52, 2.98, 4.51]
+
+    assert _tail_evidence_gap_anchor(downbeats, kick_anchors, [], min_gap_bars=2) is None
+
+
+def test_extrapolate_tail_downbeats_evenly_divides_remaining():
+    bars = _extrapolate_tail_downbeats(anchor_time=10.0, duration_cap=16.0, recent_intervals=[2.0, 2.0, 2.0])
+
+    assert bars == [12.0, 14.0, 16.0]
+
+
+def test_extrapolate_tail_downbeats_empty_when_remainder_too_small():
+    bars = _extrapolate_tail_downbeats(anchor_time=10.0, duration_cap=10.8, recent_intervals=[2.0])
+
+    assert bars == []
+
+
+def test_apply_tail_evidence_gap_replaces_ungrounded_tail_with_interpolation():
+    # Pass243's real finding, reproduced in miniature: bars 0-4.5s have real
+    # kick support and evenly-spaced intervals; bars at 7.0/9.5s look like a
+    # plausible drifting continuation (madmom's own failure mode) but have
+    # no acoustic support at all -- must be replaced, not trusted.
+    grid = np.asarray(
+        [[0.0, 1.0], [1.5, 1.0], [3.0, 1.0], [4.5, 1.0], [7.0, 1.0], [9.5, 1.0]],
+        dtype=float,
+    )
+    kick_anchors = [0.05, 1.52, 2.98, 4.51]
+
+    result, report = _apply_tail_evidence_gap(
+        grid, kick_anchors, [], duration_cap=12.0, min_gap_bars=2,
+    )
+
+    assert report["triggered"] is True
+    assert report["anchor_time"] == 4.5
+    assert report["expected_bar_duration_sec"] == 1.5
+    assert report["extrapolated_bar_count"] == 5
+    downbeats = _downbeat_times(result)
+    assert downbeats == [0.0, 1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0]
+    # Every original (evidenced) row survives untouched; the ungrounded tail
+    # is fully replaced by geometrically-subdivided interpolated bars.
+    assert len(result) == 4 + 5 * 4
+
+
+def test_apply_tail_evidence_gap_noop_without_duration_cap():
+    grid = np.asarray([[0.0, 1.0], [1.5, 1.0], [3.0, 1.0]], dtype=float)
+
+    result, report = _apply_tail_evidence_gap(grid, [0.0, 1.5], [], duration_cap=None)
+
+    assert report["triggered"] is False
+    assert report["reason"] == "MISSING_DURATION_CAP_OR_GRID"
+    np.testing.assert_array_equal(result, grid)
+
+
+def test_node_extrapolates_ungrounded_tail_from_kick_anchors(monkeypatch):
+    import pgm_craft.workflow.madmom_hybrid as hybrid
+
+    grid = np.asarray(
+        [[0.0, 1.0], [1.5, 1.0], [3.0, 1.0], [4.5, 1.0], [7.0, 1.0], [9.5, 1.0]],
+        dtype=float,
+    )
+    monkeypatch.setattr(hybrid, "_run_madmom_dbn", lambda _path, **_kwargs: grid.copy())
+    blackboard = Blackboard(
+        {
+            "denoised_wav_path": "denoised.wav",
+            "madmom_hybrid_approved": True,
+            "beats": grid.copy(),
+            "refined_beats": grid.copy(),
+            "barstart_v2_grid_beats": grid.copy(),
+            # Disable the CV-based weak-span splice so this test isolates
+            # the tail-evidence-gap behavior specifically.
+            "madmom_hybrid_cv_threshold": 1.0,
+            "kick_anchors": [0.05, 1.52, 2.98, 4.51],
+            "audio_duration_sec": 12.0,
+        }
+    )
+
+    status = MadmomPrimarySegmentSpliceNode().execute(blackboard)
+
+    assert status == NodeStatus.SUCCESS
+    report = blackboard["madmom_hybrid_report"]
+    assert report["tail_evidence_gap_report"]["triggered"] is True
+    assert blackboard["madmom_hybrid_downbeats"] == [0.0, 1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0]
+    assert any(
+        entry["source"] == "tail_evidence_gap_extrapolation" for entry in report["evidence_sources"]
+    )

@@ -34,6 +34,24 @@ DEFAULT_TRANSITION_LAMBDA = 500
 # this threshold sits with wide margin on both sides, not tuned to one case.
 DEFAULT_FALLBACK_MIN_INTERVAL_RANGE_SEC = 0.01
 
+# Pass 243 found (via independent kick/bass onset detection, not madmom's own
+# output) that real percussive/bass evidence for this song thins out well
+# before the point BarStartCandidateCommitNode's own unresolved-span tracking
+# notices -- madmom's DBN keeps producing smoothly-drifting output even once
+# real acoustic grounding is gone, so the existing CV-based weak-span
+# detector (tuned to catch erratic wobble, not a smooth ungrounded drift)
+# never flags it. Rather than inventing a new drift heuristic on madmom's own
+# output (fragile, hard to calibrate without misfiring on real ritardandos
+# elsewhere), this reuses kick_anchors/snare_anchors -- the same real onset
+# arrays BarStartTempoSmoothingNode already trusts as ground truth for its
+# own drum-protection check -- as a direct evidence test, and falls back to
+# the same even-interpolation math as TailBarExtrapolationNode (Pass 211),
+# just scoped to whatever's actually exported here (madmom-primary), not
+# V2's own committed grid.
+DEFAULT_TAIL_EVIDENCE_TOLERANCE_SEC = 0.1
+DEFAULT_TAIL_MIN_GAP_BARS = 2
+DEFAULT_TAIL_RECENT_INTERVAL_COUNT = 4
+
 
 def _as_time_list(values: Any) -> list[float]:
     """Extract sorted finite event times from scalar, row, or dict data."""
@@ -356,6 +374,154 @@ def _splice_grid(
     return np.asarray(merged, dtype=float).reshape((-1, 2)), report
 
 
+def _tail_evidence_gap_anchor(
+    downbeats: Sequence[float],
+    kick_anchors: Sequence[float],
+    snare_anchors: Sequence[float],
+    tolerance_sec: float = DEFAULT_TAIL_EVIDENCE_TOLERANCE_SEC,
+    min_gap_bars: int = DEFAULT_TAIL_MIN_GAP_BARS,
+) -> tuple[int, float] | None:
+    """Find the last downbeat with real kick/snare evidence nearby, if a
+    trailing run of at least ``min_gap_bars`` downbeats after it has none.
+
+    Returns (index_into_downbeats, anchor_time) for that last-evidenced
+    downbeat, or None if there's no such trailing gap (including when the
+    whole grid has no anchors to check against at all -- silence about a
+    signal we don't have is not evidence of a gap).
+    """
+    ordered = sorted(float(v) for v in downbeats)
+    if len(ordered) < min_gap_bars + 1:
+        return None
+    anchors = sorted(
+        {round(float(v), 6) for v in list(kick_anchors or []) + list(snare_anchors or [])}
+    )
+    if not anchors:
+        return None
+
+    def _has_evidence(t: float) -> bool:
+        return any(abs(t - a) <= tolerance_sec for a in anchors)
+
+    index = len(ordered) - 1
+    while index >= 0 and not _has_evidence(ordered[index]):
+        index -= 1
+    trailing_gap_count = len(ordered) - 1 - index
+    if index < 0 or trailing_gap_count < min_gap_bars:
+        return None
+    return index, ordered[index]
+
+
+def _extrapolate_tail_downbeats(
+    anchor_time: float,
+    duration_cap: float,
+    recent_intervals: Sequence[float],
+) -> list[float]:
+    """Evenly divide [anchor_time, duration_cap] using the recent local bar
+    duration -- the exact same math as TailBarExtrapolationNode (Pass 211),
+    kept in sync deliberately: both exist to fill a genuine evidence void
+    without inventing a fake precise position, just a plausible bar count."""
+    valid = [v for v in recent_intervals if math.isfinite(v) and v > 0.05]
+    if not valid:
+        return []
+    expected = float(np.median(valid))
+    remaining = float(duration_cap) - float(anchor_time)
+    if remaining <= expected * 0.5:
+        return []
+    count = max(1, int(round(remaining / expected)))
+    step = remaining / count
+    return [round(float(anchor_time + step * i), 6) for i in range(1, count + 1)]
+
+
+def _apply_tail_evidence_gap(
+    grid: np.ndarray,
+    kick_anchors: Sequence[float],
+    snare_anchors: Sequence[float],
+    duration_cap: float | None,
+    tolerance_sec: float = DEFAULT_TAIL_EVIDENCE_TOLERANCE_SEC,
+    min_gap_bars: int = DEFAULT_TAIL_MIN_GAP_BARS,
+    recent_interval_count: int = DEFAULT_TAIL_RECENT_INTERVAL_COUNT,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Replace a trailing run of evidence-free downbeats (and their beats)
+    with an even interpolation anchored to the last real kick/snare hit."""
+    report: dict[str, Any] = {
+        "triggered": False,
+        "reason": "NOOP",
+        "anchor_time": None,
+        "duration_cap_sec": duration_cap,
+        "expected_bar_duration_sec": None,
+        "extrapolated_bar_count": 0,
+        "bars": [],
+    }
+    array = _as_grid(grid)
+    if duration_cap is None or len(array) == 0:
+        report["reason"] = "MISSING_DURATION_CAP_OR_GRID"
+        return array, report
+
+    downbeats = _downbeat_times(array)
+    gap = _tail_evidence_gap_anchor(
+        downbeats, kick_anchors, snare_anchors,
+        tolerance_sec=tolerance_sec, min_gap_bars=min_gap_bars,
+    )
+    if gap is None:
+        report["reason"] = "NO_TRAILING_EVIDENCE_GAP"
+        return array, report
+
+    anchor_index, anchor_time = gap
+    report["anchor_time"] = round(anchor_time, 6)
+    recent = downbeats[max(0, anchor_index - recent_interval_count):anchor_index + 1]
+    recent_intervals = list(np.diff(np.asarray(recent, dtype=float))) if len(recent) > 1 else []
+    extrapolated = _extrapolate_tail_downbeats(anchor_time, duration_cap, recent_intervals)
+    if not extrapolated:
+        report["reason"] = "TAIL_REMAINDER_WITHIN_HALF_BAR"
+        return array, report
+
+    expected = float(np.median(recent_intervals)) if recent_intervals else None
+    step = (
+        (float(duration_cap) - anchor_time) / len(extrapolated)
+        if extrapolated else None
+    )
+    kept = [(float(row[0]), float(row[1])) for row in array if float(row[0]) <= anchor_time + 1e-6]
+    new_rows: list[tuple[float, float]] = []
+    for index, bar_start in enumerate(extrapolated):
+        bar_end = extrapolated[index + 1] if index + 1 < len(extrapolated) else duration_cap
+        quarter = (bar_end - bar_start) / 4.0
+        for beat_position in range(4):
+            new_rows.append((round(bar_start + quarter * beat_position, 6), float(beat_position + 1)))
+    combined = sorted(kept + new_rows, key=lambda item: item[0])
+    report.update({
+        "triggered": True,
+        "reason": "EXTRAPOLATED_FROM_TRAILING_EVIDENCE_GAP",
+        "expected_bar_duration_sec": round(expected, 6) if expected else None,
+        "extrapolated_bar_count": len(extrapolated),
+        "step_sec": round(step, 6) if step else None,
+        "bars": [
+            {"time": t, "confidence": 0.0, "evidence_sources": ["tail_evidence_gap_extrapolation"]}
+            for t in extrapolated
+        ],
+    })
+    return np.asarray(combined, dtype=float).reshape((-1, 2)), report
+
+
+def _audio_duration_cap(blackboard: Blackboard) -> float | None:
+    """Same lookup as NoDrumPhaseCarryNode._audio_duration_cap -- duplicated
+    locally rather than imported to keep this opt-in module decoupled from
+    module3_barstart_v2_bt's internals."""
+    try:
+        explicit = float(blackboard.get_val("audio_duration_sec"))
+        if explicit > 0:
+            return explicit
+    except (TypeError, ValueError):
+        pass
+    y = blackboard.get_val("y")
+    sr = blackboard.get_val("sr")
+    try:
+        if y is not None and sr:
+            length = y.shape[-1] if hasattr(y, "shape") else len(y)
+            return float(length) / float(sr)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return None
+
+
 class MadmomPrimarySegmentSpliceNode(BaseNode):
     """Opt-in Pass236 post-processing node, placed after V2 merge."""
 
@@ -375,6 +541,13 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
         "madmom_hybrid_tolerance_sec",
         "madmom_hybrid_transition_lambda",
         "madmom_hybrid_min_fallback_interval_range_sec",
+        "kick_anchors",
+        "snare_anchors",
+        "audio_duration_sec",
+        "y",
+        "sr",
+        "madmom_hybrid_tail_evidence_tolerance_sec",
+        "madmom_hybrid_tail_min_gap_bars",
     ]
     output_keys = ["madmom_hybrid_report", "madmom_hybrid_downbeats"]
 
@@ -492,9 +665,42 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
             duplicate_tolerance_sec=duplicate_tolerance_sec,
             min_fallback_interval_range_sec=min_fallback_interval_range_sec,
         )
+
+        # Pass 243: the CV-based weak-span detector above catches erratic
+        # wobble, not a smooth ungrounded drift -- madmom's DBN keeps
+        # producing plausible-looking output even once real percussive
+        # evidence has actually run out near a song's end. Check directly
+        # against real kick/snare onsets (already computed pipeline-wide,
+        # not re-detected here) for a trailing run with no support at all,
+        # and fill only that with an honest even interpolation instead of
+        # trusting madmom's ungrounded guess.
+        tail_report = _apply_tail_evidence_gap(
+            final_grid,
+            blackboard.get_val("kick_anchors", []),
+            blackboard.get_val("snare_anchors", []),
+            _audio_duration_cap(blackboard),
+            tolerance_sec=float(
+                blackboard.get_val(
+                    "madmom_hybrid_tail_evidence_tolerance_sec",
+                    DEFAULT_TAIL_EVIDENCE_TOLERANCE_SEC,
+                )
+            ),
+            min_gap_bars=int(
+                blackboard.get_val("madmom_hybrid_tail_min_gap_bars", DEFAULT_TAIL_MIN_GAP_BARS)
+            ),
+        )
+        final_grid, tail_gap_report = tail_report
         blackboard.set_val("beats", final_grid)
         blackboard.set_val("refined_beats", final_grid)
         blackboard.set_val("madmom_hybrid_downbeats", _downbeat_times(final_grid))
+        evidence_sources = [
+            {
+                "source": "v2_fallback_splice",
+                "spans": [entry for entry in splice_report["replaced_spans"] if entry["fallback_inserted_count"]],
+            }
+        ]
+        if tail_gap_report["triggered"]:
+            evidence_sources.append({"source": "tail_evidence_gap_extrapolation", "spans": tail_gap_report["bars"]})
         splice_report.update(
             {
                 "approved": True,
@@ -510,12 +716,8 @@ class MadmomPrimarySegmentSpliceNode(BaseNode):
                 "min_span_bars": min_span_bars,
                 "madmom_downbeat_count": len(downbeats),
                 "final_beat_count": int(len(final_grid)),
-                "evidence_sources": [
-                    {
-                        "source": "v2_fallback_splice",
-                        "spans": [entry for entry in splice_report["replaced_spans"] if entry["fallback_inserted_count"]],
-                    }
-                ],
+                "tail_evidence_gap_report": tail_gap_report,
+                "evidence_sources": evidence_sources,
             }
         )
         blackboard.set_val("madmom_hybrid_report", splice_report)
